@@ -1,0 +1,561 @@
+<title>Fikir Akıntısı</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg-deep:#100e16;
+    --bg-surface:#1a1723;
+    --bg-panel:#211d2c;
+    --bg-panel-2:#26212f;
+    --line:#332e40;
+    --text:#e6e2ee;
+    --text-muted:#948fa3;
+    --accent:#895cf5;
+    --accent-glow:#b79bff;
+    --accent-dim:#5b3fb0;
+    --spark:#7fe3d6;
+    --font-display:'Fraunces', Georgia, serif;
+    --font-body:'IBM Plex Sans', -apple-system, sans-serif;
+    --font-mono:'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="light"]){
+      --bg-deep:#100e16; --bg-surface:#1a1723; --bg-panel:#211d2c; --bg-panel-2:#26212f;
+      --line:#332e40; --text:#e6e2ee; --text-muted:#948fa3; --accent:#895cf5;
+      --accent-glow:#b79bff; --accent-dim:#5b3fb0; --spark:#7fe3d6;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg-deep:#100e16; --bg-surface:#1a1723; --bg-panel:#211d2c; --bg-panel-2:#26212f;
+    --line:#332e40; --text:#e6e2ee; --text-muted:#948fa3; --accent:#895cf5;
+    --accent-glow:#b79bff; --accent-dim:#5b3fb0; --spark:#7fe3d6;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg-deep);}
+  body{font-family:var(--font-body);color:var(--text);}
+
+  #stage{position:fixed;inset:0;}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block;}
+  #sea{z-index:0;}
+  #graph{z-index:1;cursor:grab;}
+  #graph.dragging{cursor:grabbing;}
+
+  .hud{
+    position:absolute;
+    background:color-mix(in srgb, var(--bg-panel) 88%, transparent);
+    border:1px solid var(--line);
+    border-radius:14px;
+    backdrop-filter:blur(10px);
+    box-shadow:0 20px 60px -20px rgba(0,0,0,.6);
+  }
+
+  #titleCard{
+    top:28px;left:28px;
+    padding:20px 24px 18px;
+    max-width:340px;
+    z-index:2;
+  }
+  #titleCard h1{
+    font-family:var(--font-display);
+    font-optical-sizing:auto;
+    font-weight:500;
+    font-size:28px;
+    line-height:1.05;
+    margin:0 0 6px;
+    letter-spacing:.2px;
+    text-wrap:balance;
+    background:linear-gradient(120deg, var(--text) 40%, var(--accent-glow));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+  }
+  #titleCard p{
+    margin:0;
+    font-size:13px;
+    line-height:1.55;
+    color:var(--text-muted);
+    max-width:30ch;
+  }
+  #stats{
+    display:flex;
+    gap:18px;
+    margin-top:14px;
+    padding-top:12px;
+    border-top:1px solid var(--line);
+    font-family:var(--font-mono);
+  }
+  #stats div{display:flex;flex-direction:column;gap:2px;}
+  #stats .n{font-size:17px;font-variant-numeric:tabular-nums;color:var(--text);}
+  #stats .l{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);}
+
+  #legend{
+    bottom:28px;left:28px;
+    padding:12px 16px;
+    display:flex;
+    gap:16px;
+    z-index:2;
+    font-size:11.5px;
+    color:var(--text-muted);
+  }
+  #legend .row{display:flex;align-items:center;gap:7px;}
+  #legend .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+
+  #hint{
+    bottom:28px;right:28px;
+    padding:10px 14px;
+    z-index:2;
+    font-size:11.5px;
+    color:var(--text-muted);
+    font-family:var(--font-mono);
+  }
+
+  #detail{
+    top:28px;right:-380px;
+    width:320px;
+    padding:22px 22px 20px;
+    z-index:3;
+    transition:right .38s cubic-bezier(.2,.8,.2,1);
+  }
+  #detail.open{right:28px;}
+  #detail .folder{
+    font-family:var(--font-mono);
+    font-size:10.5px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--accent-glow);
+    margin:0 0 8px;
+  }
+  #detail h2{
+    font-family:var(--font-display);
+    font-weight:500;
+    font-size:22px;
+    line-height:1.15;
+    margin:0 0 10px;
+    text-wrap:balance;
+  }
+  #detail .snippet{
+    font-size:13px;
+    line-height:1.6;
+    color:var(--text-muted);
+    margin:0 0 16px;
+  }
+  #detail .tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;}
+  #detail .tag{
+    font-family:var(--font-mono);
+    font-size:10.5px;
+    padding:3px 9px;
+    border-radius:99px;
+    background:var(--bg-panel-2);
+    border:1px solid var(--line);
+    color:var(--text-muted);
+  }
+  #detail .meta{
+    display:flex;
+    justify-content:space-between;
+    font-family:var(--font-mono);
+    font-size:11px;
+    color:var(--text-muted);
+    padding-top:14px;
+    border-top:1px solid var(--line);
+  }
+  #detail .meta b{color:var(--text);font-weight:500;}
+  #detail .close{
+    position:absolute;top:16px;right:16px;
+    width:26px;height:26px;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg-panel-2);
+    color:var(--text-muted);cursor:pointer;font-size:14px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  #detail .close:hover{color:var(--text);border-color:var(--accent-dim);}
+
+  @media (prefers-reduced-motion: reduce){
+    * { animation-duration: 0.001ms !important; }
+  }
+</style>
+
+<div id="stage">
+  <canvas id="sea"></canvas>
+  <canvas id="graph"></canvas>
+
+  <div class="hud" id="titleCard">
+    <h1>Fikir Akıntısı</h1>
+    <p>Vault'taki notların, paylaştıkları etiketlere göre birbirine bağlandığı canlı bir harita — derin suda dalgalanan ışıklar gibi.</p>
+    <div id="stats">
+      <div><span class="n" id="statNodes">0</span><span class="l">not</span></div>
+      <div><span class="n" id="statEdges">0</span><span class="l">bağlantı</span></div>
+      <div><span class="n" id="statTags">0</span><span class="l">etiket</span></div>
+    </div>
+  </div>
+
+  <div class="hud" id="legend">
+    <div class="row"><span class="dot" style="background:var(--accent-glow);box-shadow:0 0 8px var(--accent-glow)"></span>Fikirler</div>
+    <div class="row"><span class="dot" style="background:var(--spark);box-shadow:0 0 8px var(--spark)"></span>Projeler</div>
+    <div class="row"><span class="dot" style="background:#f0a35c;box-shadow:0 0 8px #f0a35c"></span>Kişisel</div>
+  </div>
+
+  <div class="hud" id="hint">sürükle · dolaş · tıkla</div>
+
+  <div class="hud" id="detail">
+    <button class="close" id="closeDetail" aria-label="Kapat">✕</button>
+    <p class="folder" id="dFolder">Fikirler</p>
+    <h2 id="dTitle">—</h2>
+    <p class="snippet" id="dSnippet"></p>
+    <div class="tags" id="dTags"></div>
+    <div class="meta">
+      <span><b id="dWords">0</b> kelime</span>
+      <span id="dTime">—</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------------------------------------------------------------
+  // Sample vault data — mirrors the app's real folder/tag structure
+  // ---------------------------------------------------------------
+  const FOLDER_COLOR = {
+    "Fikirler": "#b79bff",
+    "Projeler": "#7fe3d6",
+    "Kişisel": "#f0a35c",
+  };
+
+  const notes = [
+    { id:"n1",  title:"Yapay Zeka Asistanı",     folder:"Fikirler", tags:["fikir","yapay-zeka","proje"], words:284, time:"12:14",
+      snippet:"Günlük notlarımı yazarken bana eşlik eden, fikirlerimi geliştirmeme yardımcı olan yerel bir yapay zeka asistanı." },
+    { id:"n2",  title:"Mobil Uygulama",          folder:"Fikirler", tags:["fikir","proje","tasarım"], words:156, time:"11:02",
+      snippet:"Kullanıcıların günlük yemek fotoğraflarını paylaştığı, 24 saat sonra kaybolan bir sosyal uygulama." },
+    { id:"n3",  title:"Oyun Fikirleri",          folder:"Fikirler", tags:["fikir","tasarım"], words:98, time:"Dün",
+      snippet:"Karanlıkta gezinen, sesle yön bulan bir keşif oyunu. Işık kaynakları düşman da olabilir." },
+    { id:"n4",  title:"Startup Notları",         folder:"Fikirler", tags:["proje","iş"], words:412, time:"Dün",
+      snippet:"Yerel modelle çalışan araçlar için küçük, odaklı bir ürün ailesi kurma fikri üzerine dağınık notlar." },
+    { id:"n5",  title:"Roadmap",                 folder:"Projeler", tags:["proje","iş"], words:203, time:"3g önce",
+      snippet:"Q1: canlı izleme. Q2: sohbet ve düzenleme onayı. Q3: grafik görünümü ve çoklu vault desteği." },
+    { id:"n6",  title:"Fikir Not Defteri",       folder:"Projeler", tags:["proje","yapay-zeka","tasarım"], words:531, time:"3g önce",
+      snippet:"Yazarken arka planda dinleyen, bütünsel bakan, gerektiğinde soru soran bir not defteri uygulaması." },
+    { id:"n7",  title:"Model Seçim Kriterleri",  folder:"Projeler", tags:["yapay-zeka","iş"], words:167, time:"5g önce",
+      snippet:"Hız mı kalite mi? Bağlam penceresi, VRAM sınırı ve düşünme maliyeti arasında bir denge tablosu." },
+    { id:"n8",  title:"Renk Paleti Denemeleri",  folder:"Kişisel", tags:["tasarım","kişisel"], words:64, time:"1h önce",
+      snippet:"Mor vurgu rengi çok sert kaçıyor olabilir mi? Daha yumuşak bir tona kaymayı dene." },
+    { id:"n9",  title:"Haftalık Plan",           folder:"Kişisel", tags:["kişisel"], words:41, time:"2h önce",
+      snippet:"Salı: model script'lerini düzelt. Perşembe: grafik görünümü prototipi." },
+    { id:"n10", title:"Okuma Listesi",           folder:"Kişisel", tags:["kişisel","yapay-zeka"], words:77, time:"1h önce",
+      snippet:"Yerel çıkarım optimizasyonu üzerine birkaç makale, MoE mimarileri hakkında bir seri." },
+    { id:"n11", title:"Sesli Not Fikri",         folder:"Fikirler", tags:["fikir","yapay-zeka"], words:112, time:"4g önce",
+      snippet:"Yazmak yerine konuşarak not düşme, sonra modelin bunu düzenli bir metne çevirmesi." },
+    { id:"n12", title:"Fiyatlandırma Notları",   folder:"Projeler", tags:["iş"], words:88, time:"6g önce",
+      snippet:"Tamamen yerel çalıştığı için sunucu maliyeti yok — bu nasıl bir avantaja çevrilir?" },
+  ];
+
+  const allTags = [...new Set(notes.flatMap(n => n.tags))];
+  document.getElementById('statNodes').textContent = notes.length;
+  document.getElementById('statTags').textContent = allTags.length;
+
+  const edges = [];
+  for (let i = 0; i < notes.length; i++){
+    for (let j = i+1; j < notes.length; j++){
+      const shared = notes[i].tags.filter(t => notes[j].tags.includes(t));
+      if (shared.length) edges.push({ a:i, b:j, weight:shared.length });
+    }
+  }
+  document.getElementById('statEdges').textContent = edges.length;
+
+  // ---------------------------------------------------------------
+  // Canvas setup
+  // ---------------------------------------------------------------
+  const seaCanvas = document.getElementById('sea');
+  const graphCanvas = document.getElementById('graph');
+  const seaCtx = seaCanvas.getContext('2d');
+  const graphCtx = graphCanvas.getContext('2d');
+
+  let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize(){
+    W = window.innerWidth; H = window.innerHeight;
+    for (const [cv, ctx] of [[seaCanvas, seaCtx], [graphCanvas, graphCtx]]){
+      cv.width = W * DPR; cv.height = H * DPR;
+      ctx.setTransform(DPR,0,0,DPR,0,0);
+    }
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------------------------------------------------------------
+  // Physics: nodes drift like plankton, edges act as weak springs
+  // ---------------------------------------------------------------
+  const nodes = notes.map((n, i) => {
+    const angle = (i / notes.length) * Math.PI * 2;
+    const r = Math.min(W,H) * 0.28;
+    return {
+      ...n,
+      x: W/2 + Math.cos(angle) * r + (Math.random()-0.5)*60,
+      y: H/2 + Math.sin(angle) * r + (Math.random()-0.5)*60,
+      vx: 0, vy: 0,
+      radius: 7 + Math.sqrt(n.words) * 0.55,
+      phase: Math.random() * Math.PI * 2,
+      freq: 0.25 + Math.random() * 0.25,
+      color: FOLDER_COLOR[n.folder] || "#b79bff",
+      dragging: false,
+    };
+  });
+
+  let hovered = null;
+  let selected = null;
+  let dragTarget = null;
+  let mouse = { x:-9999, y:-9999, down:false };
+  let t = 0;
+
+  function neighborsOf(idx){
+    const set = new Set();
+    for (const e of edges) {
+      if (e.a === idx) set.add(e.b);
+      if (e.b === idx) set.add(e.a);
+    }
+    return set;
+  }
+
+  function step(dt){
+    t += dt;
+
+    // repulsion between all pairs (small N, fine)
+    for (let i=0;i<nodes.length;i++){
+      for (let j=i+1;j<nodes.length;j++){
+        const a=nodes[i], b=nodes[j];
+        let dx=b.x-a.x, dy=b.y-a.y;
+        let dist = Math.hypot(dx,dy) || 0.01;
+        const minDist = a.radius+b.radius+70;
+        if (dist < minDist){
+          const force = (minDist-dist) / minDist * 26;
+          const fx = (dx/dist)*force, fy=(dy/dist)*force;
+          a.vx -= fx*dt; a.vy -= fy*dt;
+          b.vx += fx*dt; b.vy += fy*dt;
+        }
+      }
+    }
+
+    // spring along edges
+    for (const e of edges){
+      const a = nodes[e.a], b = nodes[e.b];
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const dist = Math.hypot(dx,dy) || 0.01;
+      const rest = 190 - e.weight*18;
+      const force = (dist-rest) * 0.55 * dt;
+      const fx=(dx/dist)*force, fy=(dy/dist)*force;
+      a.vx += fx; a.vy += fy;
+      b.vx -= fx; b.vy -= fy;
+    }
+
+    // gentle current + center pull + damping + drag + mouse repel
+    for (const n of nodes){
+      if (n !== dragTarget && !reduceMotion){
+        n.vx += Math.sin(t*n.freq + n.phase) * 6 * dt;
+        n.vy += Math.cos(t*n.freq*0.8 + n.phase) * 6 * dt;
+      }
+      n.vx += (W/2 - n.x) * 0.00025;
+      n.vy += (H/2 - n.y) * 0.00025;
+
+      const mdx = n.x-mouse.x, mdy = n.y-mouse.y;
+      const mdist = Math.hypot(mdx,mdy);
+      if (mdist < 130 && n !== dragTarget){
+        const f = (130-mdist)/130 * 22 * dt;
+        n.vx += (mdx/(mdist||1))*f;
+        n.vy += (mdy/(mdist||1))*f;
+      }
+
+      n.vx *= 0.9; n.vy *= 0.9;
+
+      if (n === dragTarget){
+        n.x += (mouse.x - n.x) * 0.32;
+        n.y += (mouse.y - n.y) * 0.32;
+      } else {
+        n.x += n.vx; n.y += n.vy;
+      }
+
+      const pad = n.radius+40;
+      n.x = Math.max(pad, Math.min(W-pad, n.x));
+      n.y = Math.max(pad, Math.min(H-pad, n.y));
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Background: drifting bioluminescent dust
+  // ---------------------------------------------------------------
+  const dust = Array.from({length:90}, () => ({
+    x: Math.random()*W, y: Math.random()*H,
+    r: Math.random()*1.6+0.4,
+    speed: Math.random()*0.15+0.02,
+    drift: Math.random()*Math.PI*2,
+    tw: Math.random()*Math.PI*2,
+  }));
+
+  function drawSea(){
+    const g = seaCtx.createRadialGradient(W*0.5,H*0.42,0, W*0.5,H*0.5, Math.max(W,H)*0.75);
+    g.addColorStop(0, '#1c1728');
+    g.addColorStop(0.55, '#130f1c');
+    g.addColorStop(1, '#0c0a12');
+    seaCtx.fillStyle = g;
+    seaCtx.fillRect(0,0,W,H);
+
+    for (const d of dust){
+      if (!reduceMotion){
+        d.y -= d.speed;
+        d.x += Math.sin(d.drift + t*0.3) * 0.12;
+        d.tw += 0.02;
+        if (d.y < -10) { d.y = H+10; d.x = Math.random()*W; }
+      }
+      const alpha = 0.15 + Math.sin(d.tw)*0.12 + 0.12;
+      seaCtx.beginPath();
+      seaCtx.fillStyle = `rgba(127,227,214,${Math.max(0,alpha)})`;
+      seaCtx.arc(d.x, d.y, d.r, 0, Math.PI*2);
+      seaCtx.fill();
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Draw graph
+  // ---------------------------------------------------------------
+  function hexToRgba(hex, a){
+    const v = hex.replace('#','');
+    const r = parseInt(v.substring(0,2),16), g = parseInt(v.substring(2,4),16), b = parseInt(v.substring(4,6),16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function drawGraph(){
+    graphCtx.clearRect(0,0,W,H);
+    const activeSet = hovered !== null ? neighborsOf(hovered) : null;
+
+    // edges
+    for (const e of edges){
+      const a = nodes[e.a], b = nodes[e.b];
+      const dim = activeSet && !(e.a===hovered || e.b===hovered);
+      const baseAlpha = 0.12 + e.weight*0.07;
+      graphCtx.strokeStyle = hexToRgba('#b79bff', dim ? baseAlpha*0.25 : baseAlpha);
+      graphCtx.lineWidth = dim ? 1 : 1 + e.weight*0.4;
+      graphCtx.beginPath();
+      graphCtx.moveTo(a.x,a.y);
+      graphCtx.lineTo(b.x,b.y);
+      graphCtx.stroke();
+
+      if (!reduceMotion && !dim){
+        const pulse = (t*0.35 + e.a*0.5) % 1;
+        const px = a.x + (b.x-a.x)*pulse;
+        const py = a.y + (b.y-a.y)*pulse;
+        graphCtx.beginPath();
+        graphCtx.fillStyle = hexToRgba('#7fe3d6', 0.7);
+        graphCtx.arc(px,py,1.6,0,Math.PI*2);
+        graphCtx.fill();
+      }
+    }
+
+    // nodes
+    for (let i=0;i<nodes.length;i++){
+      const n = nodes[i];
+      const dim = activeSet && i!==hovered && !activeSet.has(i);
+      const isHot = i===hovered || i===selected;
+
+      const glowR = n.radius * (isHot ? 3.2 : 2.2);
+      const grad = graphCtx.createRadialGradient(n.x,n.y,0,n.x,n.y,glowR);
+      grad.addColorStop(0, hexToRgba(n.color, dim?0.10:0.38));
+      grad.addColorStop(1, hexToRgba(n.color, 0));
+      graphCtx.fillStyle = grad;
+      graphCtx.beginPath();
+      graphCtx.arc(n.x,n.y,glowR,0,Math.PI*2);
+      graphCtx.fill();
+
+      graphCtx.beginPath();
+      graphCtx.fillStyle = dim ? hexToRgba(n.color,0.35) : hexToRgba(n.color, 1);
+      graphCtx.arc(n.x,n.y,n.radius,0,Math.PI*2);
+      graphCtx.fill();
+
+      if (isHot || edges.length < 40){
+        graphCtx.strokeStyle = hexToRgba('#ffffff', isHot?0.9:0);
+        graphCtx.lineWidth = 1.5;
+        if (isHot) graphCtx.stroke();
+      }
+
+      if (isHot || !activeSet){
+        graphCtx.font = "500 12.5px 'IBM Plex Sans', sans-serif";
+        graphCtx.fillStyle = dim ? 'rgba(230,226,238,0.25)' : 'rgba(230,226,238,0.92)';
+        graphCtx.textAlign = 'center';
+        graphCtx.fillText(n.title, n.x, n.y - n.radius - 10);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Interaction
+  // ---------------------------------------------------------------
+  function nodeAt(x,y){
+    for (let i=nodes.length-1;i>=0;i--){
+      const n = nodes[i];
+      if (Math.hypot(n.x-x, n.y-y) <= n.radius+6) return i;
+    }
+    return null;
+  }
+
+  graphCanvas.addEventListener('mousemove', (e) => {
+    mouse.x = e.clientX; mouse.y = e.clientY;
+    if (!dragTarget){
+      const idx = nodeAt(mouse.x, mouse.y);
+      hovered = idx;
+      graphCanvas.style.cursor = idx!==null ? 'pointer' : 'grab';
+    }
+  });
+  graphCanvas.addEventListener('mouseleave', () => { mouse.x=-9999; mouse.y=-9999; hovered=null; });
+
+  graphCanvas.addEventListener('mousedown', (e) => {
+    const idx = nodeAt(e.clientX, e.clientY);
+    if (idx!==null){ dragTarget = nodes[idx]; graphCanvas.classList.add('dragging'); }
+  });
+  window.addEventListener('mouseup', () => { dragTarget = null; graphCanvas.classList.remove('dragging'); });
+
+  graphCanvas.addEventListener('click', (e) => {
+    const idx = nodeAt(e.clientX, e.clientY);
+    if (idx!==null && !dragTarget){
+      openDetail(idx);
+    }
+  });
+
+  const detailEl = document.getElementById('detail');
+  function openDetail(idx){
+    selected = idx;
+    const n = nodes[idx];
+    document.getElementById('dFolder').textContent = n.folder;
+    document.getElementById('dFolder').style.color = n.color;
+    document.getElementById('dTitle').textContent = n.title;
+    document.getElementById('dSnippet').textContent = n.snippet;
+    document.getElementById('dWords').textContent = n.words;
+    document.getElementById('dTime').textContent = n.time;
+    const tagsEl = document.getElementById('dTags');
+    tagsEl.innerHTML = '';
+    for (const tag of n.tags){
+      const span = document.createElement('span');
+      span.className = 'tag';
+      span.textContent = '#' + tag;
+      tagsEl.appendChild(span);
+    }
+    detailEl.classList.add('open');
+  }
+  document.getElementById('closeDetail').addEventListener('click', () => {
+    detailEl.classList.remove('open');
+    selected = null;
+  });
+
+  // ---------------------------------------------------------------
+  // Loop
+  // ---------------------------------------------------------------
+  let last = performance.now();
+  function frame(now){
+    const dt = Math.min((now-last)/16.67, 2.5);
+    last = now;
+    step(dt);
+    drawSea();
+    drawGraph();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.env
+.env
+*.log
+projects/
+
+# the notes vault (private notes, assistant history, trash)
+notes/

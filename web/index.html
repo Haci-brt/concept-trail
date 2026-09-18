@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fikir Not Defteri</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d9ccff'/%3E%3Cstop offset='1' stop-color='%236d3fe0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M12 1.8 20.2 8.4 12 22.2 3.8 8.4z' fill='url(%23g)'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="stylesheet" href="/static/css/tree.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="titlebar" id="titlebar">
+      <div class="tb-left">
+        <div class="brand" id="brand"></div>
+        <button class="icon-btn" id="toggleSidebar" title="Kenar çubuğu (Ctrl+\)"></button>
+      </div>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="tb-right">
+        <div class="llm-pill" id="fastPill" title="Hızlı analiz modeli — notu izleyen küçük model"><span class="dot"></span><span class="lbl"></span></div>
+        <div class="llm-pill" id="llmPill" title="Sohbet modeli"><span class="dot"></span><span class="lbl">LLM: bağlanıyor…</span></div>
+        <button class="icon-btn" id="launchBtn" title="Modeli başlat"></button>
+        <button class="icon-btn" id="settingsBtn" title="Modeller ve anahtarlar (Ctrl+,)"></button>
+        <span class="tb-sep"></span>
+        <button class="icon-btn" id="togglePanel" title="Öneri paneli (Ctrl+Shift+\)"></button>
+        <div class="win-controls">
+          <button class="win-btn" data-win="minimize" title="Küçült"></button>
+          <button class="win-btn" data-win="maximize" title="Büyüt"></button>
+          <button class="win-btn close" data-win="close" title="Kapat"></button>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <nav class="sidebar card" id="sidebar" aria-label="Vault"></nav>
+
+      <section class="center">
+        <div class="tabstrip">
+          <div class="tabs" id="tabs" role="tablist"></div>
+          <button class="icon-btn sm add-tab" id="addTab" title="Yeni not (Ctrl+N)"></button>
+          <span class="grow"></span>
+          <div class="view-switch" id="viewSwitch">
+            <button data-view="editor" class="on" title="Editör"></button>
+            <button data-view="tree" title="Fikir ağacı (Ctrl+G)"></button>
+          </div>
+        </div>
+
+        <div class="stage" id="stage">
+          <div class="panes" id="panes" hidden>
+            <div class="editor-card card">
+              <div class="toolbar" id="toolbar"></div>
+              <div class="editor-host" id="editorHost"></div>
+            </div>
+            <div class="splitter" id="splitter" role="separator" aria-orientation="vertical"></div>
+            <div class="preview-card card">
+              <div class="preview-head" id="previewHead"></div>
+              <div class="preview-body" id="preview"><div class="md"></div></div>
+            </div>
+          </div>
+          <div class="tree-view" id="treeView" hidden></div>
+          <div class="welcome card" id="welcome" hidden></div>
+        </div>
+
+        <footer class="statusbar" id="statusbar"></footer>
+      </section>
+
+      <aside class="rightpanel" id="rightpanel">
+        <div class="hud-slot" id="hudSlot"></div>
+        <div class="history card" id="history"></div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="grip n" data-edge="top"></div><div class="grip s" data-edge="bottom"></div>
+  <div class="grip w" data-edge="left"></div><div class="grip e" data-edge="right"></div>
+  <div class="grip nw" data-edge="top-left"></div><div class="grip ne" data-edge="top-right"></div>
+  <div class="grip sw" data-edge="bottom-left"></div><div class="grip se" data-edge="bottom-right"></div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

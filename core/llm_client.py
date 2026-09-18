@@ -1,0 +1,440 @@
+"""Talks to the local ik_llama/llama-server instance (OpenAI-compatible API).
+
+Nothing here ever leaves the machine — this only calls http://127.0.0.1,
+the same local server started by run_qwen38.sh / run_flashnext.sh.
+Set FIKIR_LLM_URL to point at a different local server.
+"""
+import json
+import os
+import re
+import requests
+
+# Who serves a request is decided by server/providers.py; this module only
+# knows how to speak the OpenAI chat-completions shape to whatever it is given.
+LLM_BASE_URL = os.environ.get("FIKIR_LLM_URL", "http://127.0.0.1:8899").rstrip("/")
+FAST_BASE_URL = os.environ.get("FIKIR_FAST_URL", "http://127.0.0.1:8901").rstrip("/")
+
+MAX_CONTEXT_CHARS = 2200
+HEAD_CONTEXT_CHARS = 700
+
+# The Flash-Next checkpoint always writes a 150-280 token <think> block before
+# its real answer (see run_flashnext.sh), so every budget below has to leave
+# room for that on top of the answer itself — at 300 tokens chat replies were
+# regularly cut off mid-think and came back empty.
+MAX_QUESTIONS = 3
+# what a question is for — drives its label and colour in the UI
+QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme", "soru")
+QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
+ANALYZE_MAX_TOKENS = 900
+CHAT_MAX_TOKENS = 900
+SUMMARY_MAX_TOKENS = 1200
+
+SYSTEM_PROMPT = (
+    "/no_think\n"
+    "Sen bir proje fikri geliştirme asistanısın. Kullanıcı bir not defterine canlı olarak "
+    "yazıyor; sana notun tamamı verilecek, en yeni yazılan kısım [YENİ EKLENEN] etiketiyle "
+    "işaretli. Daha önce sorup henüz cevap alamadığın sorular varsa [AÇIK SORULAR] altında "
+    "listelenecek.\n\n"
+    "Aşağıdaki seçeneklerden SADECE BİRİNİ seç ve tam olarak belirtilen formatta yaz, "
+    "başka hiçbir şey ekleme:\n\n"
+    "1) [AÇIK SORULAR] listesindeki numaralı sorulardan biri [YENİ EKLENEN] kısmında artık "
+    "cevaplanmışsa (sadece numarayı yaz, başka hiçbir şey yazma):\n"
+    "COZULDU: <numara>\n\n"
+    "2) Kullanıcıyı kendi fikri üzerine düşündürecek SORULAR (en fazla 3 satır, her biri ayrı "
+    "satırda, [AÇIK SORULAR]'da zaten yoksa). Amacın bilgi toplamak DEĞİL; kullanıcının kendi "
+    "yazdığına yeni bir gözle bakmasını sağlamak. Her soruyu türüyle etiketle:\n"
+    "SORU[derinlestirme]: <notta yazan somut bir noktayı bir adım öteye taşıyan soru>\n"
+    "SORU[alternatif]: <'ya şöyle olsaydı' diye başka bir yol düşündüren soru>\n"
+    "SORU[sonuc]: <bu fikir gerçek olsa ne değişirdi, kim ne hissederdi>\n"
+    "SORU[kapsam]: <neyin dışarıda kalacağı, en küçük hâlinin ne olduğu>\n"
+    "SORU[ilham]: <kullanıcının aklını açacak somut bir bağlantı ya da örnek üzerinden soru>\n"
+    "SORU[netlestirme]: <SADECE gerçekten anlaşılmayan bir şey varsa>\n\n"
+    "3) Notta birebir geçen belirli bir cümle/ifade açıkça hatalı, çelişkili veya daha iyi "
+    "yazılabilirse (uydurma alıntı YAPMA, sadece notta gerçekten var olan bir kısmı kullan):\n"
+    "DUZENLEME\n"
+    "ORIJINAL: <notta birebir geçen, değiştirilecek kısa alıntı, en fazla 15 kelime>\n"
+    "ONERI: <yerine gelecek yeni metin>\n"
+    "NEDEN: <tek cümlelik kısa gerekçe>\n\n"
+    "4) SADECE yukarıdaki 1/2/3 seçeneklerinden hiçbiri gerçekten uygulanamıyorsa — yani metin "
+    "tamamen kendi içinde tutarlı, tüm temel sorular (ne/kim/nasıl) zaten cevaplanmış VE hiçbir "
+    "geliştirilebilecek nokta yoksa:\n"
+    "NET\n\n"
+    "Kurallar:\n"
+    "- Açıklama, giriş cümlesi, selamlama veya <think> bloğu YAZMA, doğrudan seçilen formatı yaz.\n"
+    "- Aynı veya çok benzer bir soruyu iki kere sorma.\n"
+    "- Her SORU satırı TEK bir şeyi sorsun; birkaç konuyu tek soruda birleştirme. Kullanıcı her "
+    "soruyu tek cümleyle cevaplayabilmeli.\n"
+    "- Sorular kısa olsun: en fazla 15 kelime. 'nasıl ve hangi ... olacak' gibi iç içe sorular sorma.\n"
+    "- FORM DOLDURTAN sorular sorma. 'Hangi platformda çalışacak', 'hedef kitlen kim', 'hangi "
+    "teknolojiyi kullanacaksın', 'ne zaman bitecek' gibi künye soruları kullanıcıyı sıkar ve "
+    "fikrini büyütmez — bunları sorma.\n"
+    "- Her soru, notta GERÇEKTEN yazan bir ayrıntıya dayansın ve mümkünse o ayrıntıyı kendi "
+    "kelimeleriyle an; başka her nota da sorulabilecek genel sorular yasak.\n"
+    "- netlestirme türünü nadiren kullan; çoğu zaman derinlestirme/alternatif/sonuc daha iyidir.\n"
+    "- Kullanıcının zaten verdiği kararı tekrar sorgulama; onun üstüne inşa et.\n"
+    "- Aynı ayrıntı hakkında ikinci kez sorma (kelimeleri değiştirmiş olsan bile).\n"
+    "- [NOTUN BÖLÜMLERİ] listesinde 'henüz soru yok' yazan bir bölüm varsa sorunu ORADAN seç; "
+    "aynı paragrafın etrafında dönme.\n"
+    "- NET seçeneğini nadiren kullan: kısa/erken taslak notlar neredeyse her zaman en az bir "
+    "soruya (2. seçenek) açıktır — şüphedeysen NET yerine SORU sor.\n"
+)
+
+CHAT_SYSTEM_PROMPT = (
+    "/no_think\n"
+    "Sen bir proje fikri geliştirme asistanısın. Kullanıcıya TEK bir soru sordun ve şimdi onun "
+    "cevabını değerlendiriyorsun. Önce kendine şunu sor: bu cevap sorduğum soruyu anlaşılır "
+    "şekilde cevaplıyor mu?\n\n"
+    "A) Cevap soruyu karşılıyorsa (kısa ya da basit olması sorun değil) tam olarak şunu yaz:\n"
+    "ANLADIM\n"
+    "NOT: <kullanıcının not defterine eklenecek metin: sorunun cevabını içeren 1-2 cümle ya da "
+    "kısa madde işaretleri>\n\n"
+    "B) Cevap gerçekten anlaşılmıyorsa — boş, konu dışı, çelişkili ya da soruyu cevapsız "
+    "bırakıyorsa — tam olarak şunu yaz:\n"
+    "SORU: <aynı konuyu netleştiren, tek cümlelik yeni soru>\n\n"
+    "Kurallar:\n"
+    "- Sadece bu iki formattan birini yaz; selamlama, açıklama veya <think> bloğu ekleme.\n"
+    "- Cevap anlaşılıyorsa ısrar etme, fazladan detay isteme: ANLADIM yaz.\n"
+    "- Sorduğun sorunun dışına çıkma, yeni konu açma.\n"
+    "- NOT satırı kullanıcının notuna aynen eklenecek: doğrudan notun dili ile yaz, "
+    "'kullanıcı dedi ki' gibi ifadeler kullanma ve uydurma bilgi ekleme."
+)
+
+CHAT_ANSWER_PROMPT = (
+    "/no_think\n"
+    "Sen bir proje fikri geliştirme asistanısın. Kullanıcıya bir soru sormuştun, ama o şimdi "
+    "SANA soru soruyor. Sırayla:\n"
+    "1) Onun sorusuna kısaca cevap ver (en fazla 3 cümle, gerekiyorsa somut bir örnek).\n"
+    "2) Sonra tek cümleyle kendi sorunu hatırlat.\n\n"
+    "Kurallar:\n"
+    "- ANLADIM ya da NOT: YAZMA; bu turda nota hiçbir şey eklenmeyecek.\n"
+    "- Bilmediğin bir şeyi uydurma; emin değilsen emin olmadığını söyle.\n"
+    "- Kısa ve doğrudan yaz, konuyu dağıtma."
+)
+
+SUMMARIZE_SYSTEM_PROMPT = (
+    "/no_think\n"
+    "Aşağıda bir kullanıcı ile bir asistan arasında, kullanıcının proje fikri hakkında geçen bir "
+    "sohbet var. Bu sohbette netleşen fikri veya kararı, kullanıcının not defterine doğrudan "
+    "eklenebilecek şekilde, akıcı ve düzenli bir Türkçe metin (gerekirse madde işaretli liste) "
+    "olarak yaz. Sohbeti özetleme; sohbetten çıkan SONUCU yaz. Başka açıklama ekleme, doğrudan "
+    "metnin kendisini yaz."
+)
+
+
+class Cancelled(Exception):
+    """The request was abandoned because its result is no longer wanted."""
+
+
+class ProviderError(Exception):
+    def __init__(self, message: str, status: int | None = None, retryable: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.retryable = retryable
+
+
+def _raise_for_api(response) -> None:
+    """A wrong key or an exhausted quota should say so, not "model did not answer"."""
+    if response.ok:
+        return
+    detail = ""
+    try:
+        body = response.json()
+        error = body.get("error")
+        detail = error.get("message") if isinstance(error, dict) else (error or body.get("message") or "")
+    except ValueError:
+        detail = (response.text or "")[:200]
+    status = response.status_code
+    friendly = {
+        401: "API anahtarı reddedildi.",
+        403: "Bu anahtarın bu modele erişimi yok.",
+        404: "Model ya da adres bulunamadı.",
+        429: "Kota ya da hız sınırına takıldı.",
+    }.get(status, f"Sağlayıcı {status} döndürdü.")
+    raise ProviderError(f"{friendly} {detail}".strip(), status=status,
+                        retryable=status == 429 or status >= 500)
+
+
+def default_provider():
+    """Stand-alone use (and the legacy PyQt app): the local chat server."""
+    from server.providers import Provider
+    return Provider(id="local-chat", label="Yerel model", base_url=LLM_BASE_URL,
+                    extras={"cache_prompt": True}, timeout=300.0)
+
+
+def is_server_up(provider=None, timeout: float = 2.0) -> bool:
+    provider = provider or default_provider()
+    url = provider.health_url
+    if url is None:
+        return True  # no health endpoint (most remote APIs): calls themselves will tell us
+    try:
+        r = requests.get(url, headers=provider.headers(), timeout=timeout)
+        return r.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def probe(provider, timeout: float = 30.0) -> str:
+    """Smallest possible real call — proves the address, key and model name work."""
+    return _complete(
+        [{"role": "user", "content": "Yalnızca 'tamam' yaz."}],
+        temperature=0.0, max_tokens=8, provider=provider, timeout=timeout,
+    ).strip()
+
+
+def note_context(full_text: str, span: list[int] | None = None) -> str:
+    """The part of the note worth sending.
+
+    Short notes go whole. For long ones: the opening (title/frontmatter, which
+    never changes, so llama.cpp's prompt cache keeps hitting) plus the section
+    being edited — instead of a sliding tail whose every keystroke invalidated
+    the cached prefix.
+    """
+    if len(full_text) <= MAX_CONTEXT_CHARS:
+        return full_text
+
+    head = full_text[:HEAD_CONTEXT_CHARS]
+    head = head[:head.rfind("\n") + 1] or head
+
+    at = span[0] if span else len(full_text)
+    heading = full_text.rfind("\n#", 0, at)
+    start = heading + 1 if heading != -1 else max(len(head), at - MAX_CONTEXT_CHARS // 2)
+    section = full_text[start:start + MAX_CONTEXT_CHARS]
+    if start <= len(head):
+        return full_text[:MAX_CONTEXT_CHARS]
+    return f"{head}\n[…]\n\n{section}"
+
+
+def _strip_think(text: str) -> str:
+    """Some local models emit a <think>...</think> reasoning block first; drop it.
+    An unclosed block means the budget ran out mid-reasoning — there is no
+    answer to show, so return nothing rather than the raw reasoning dump."""
+    lowered = text.lower()
+    if "</think>" in lowered:
+        text = text[lowered.index("</think>") + len("</think>"):]
+    elif "<think>" in lowered:
+        return ""
+    return text.strip()
+
+
+def _report_usage(on_usage, provider, usage) -> None:
+    if on_usage is not None:
+        try:
+            on_usage(provider, usage)
+        except Exception:
+            pass  # accounting must never break a reply
+
+
+def _complete(messages: list[dict], *, temperature: float, max_tokens: int, on_chunk=None,
+              provider=None, timeout: float | None = None, should_cancel=None, on_usage=None) -> str:
+    """One chat completion. With on_chunk, streams and calls on_chunk(accumulated)
+    after every delta. Servers that split reasoning into `reasoning_content` get
+    it folded back into a <think> block so callers see one uniform shape."""
+    provider = provider or default_provider()
+    timeout = timeout or provider.timeout
+    # the provider owns the details: auth header, whether a model name must be
+    # sent, and llama.cpp-only extras such as cache_prompt (which reuses the KV
+    # cache for the unchanged prefix) that a remote API would reject outright
+    payload = provider.build_payload(messages, temperature, max_tokens, on_chunk is not None)
+    headers = provider.headers()
+
+    if on_chunk is None:
+        r = requests.post(provider.chat_url, json=payload, headers=headers, timeout=timeout)
+        _raise_for_api(r)
+        body = r.json()
+        _report_usage(on_usage, provider, body.get("usage"))
+        return body["choices"][0]["message"]["content"] or ""
+
+    content = ""
+    reasoning = ""
+    with requests.post(provider.chat_url, json=payload, headers=headers, timeout=timeout, stream=True) as r:
+        _raise_for_api(r)
+        # iterate raw bytes and decode as UTF-8 ourselves: text/event-stream
+        # without a charset makes requests fall back to ISO-8859-1, which
+        # garbles every Turkish character in the reply
+        for raw_line in r.iter_lines():
+            if should_cancel is not None and should_cancel():
+                raise Cancelled()
+            line = raw_line.decode("utf-8", errors="replace")
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            if chunk.get("usage"):
+                _report_usage(on_usage, provider, chunk["usage"])
+            try:
+                delta = chunk["choices"][0]["delta"]
+            except (KeyError, IndexError):
+                continue
+            piece = delta.get("content") or ""
+            thought = delta.get("reasoning_content") or ""
+            if not piece and not thought:
+                continue
+            content += piece
+            reasoning += thought
+            if reasoning:
+                on_chunk(f"<think>{reasoning}" + (f"</think>{content}" if content else ""))
+            else:
+                on_chunk(content)
+    return content
+
+
+def _extract_field(text: str, labels: list[str]) -> str:
+    for label in labels:
+        match = re.search(rf"{label}\s*:\s*(.+)", text, re.IGNORECASE)
+        if match:
+            # stop at the next known field label so multi-line values don't bleed together
+            value = match.group(1)
+            for stop_label in ("ORIJINAL", "ORİJİNAL", "ONERI", "ÖNERİ", "NEDEN"):
+                idx = value.upper().find(f"\n{stop_label}")
+                if idx != -1:
+                    value = value[:idx]
+            return value.strip()
+    return ""
+
+
+def parse_response(raw: str) -> dict:
+    """Turn the model's tagged reply into a structured event dict."""
+    text = raw.strip()
+
+    # some checkpoints run out of max_tokens mid-<think> and never close the
+    # tag — without this guard the raw reasoning dump falls through to the
+    # "unlabeled fallback" below and gets shown to the user as if it were a
+    # real question. Silence is much safer than exposing that.
+    if "<think>" in text.lower() and "</think>" not in text.lower():
+        return {"type": "net"}
+
+    upper = text.upper()
+
+    if not text or upper.startswith("NET"):
+        return {"type": "net"}
+
+    if upper.startswith("COZULDU") or upper.startswith("ÇÖZÜLDÜ"):
+        match = re.search(r"\d+", text)
+        if not match:
+            return {"type": "net"}
+        return {"type": "resolved", "resolved_index": int(match.group())}
+
+    if upper.startswith("DUZENLEME") or upper.startswith("DÜZENLEME"):
+        original = _extract_field(text, ["ORIJINAL", "ORİJİNAL"])
+        replacement = _extract_field(text, ["ONERI", "ÖNERİ"])
+        reason = _extract_field(text, ["NEDEN"])
+        if original and replacement:
+            return {"type": "edit", "original": original, "replacement": replacement, "reason": reason}
+        return {"type": "net"}  # malformed edit — safer to say nothing than to guess
+
+    # one "SORU[tür]:" per line — several separate questions beat one question
+    # that bundles three things the user then has to untangle
+    questions: list[dict] = []
+    for line in text.splitlines():
+        match = QUESTION_RE.match(line.strip())
+        if not match:
+            continue
+        kind = (match.group(1) or "soru").strip().lower()
+        body = match.group(2).strip()
+        if body and not any(q["text"] == body for q in questions):
+            questions.append({"text": body, "kind": kind if kind in QUESTION_KINDS else "soru"})
+    if questions:
+        return {"type": "questions", "questions": questions[:MAX_QUESTIONS]}
+
+    # unlabeled fallback: treat short leftover text as a question, ignore noise
+    if len(text) > 3:
+        return {"type": "questions", "questions": [{"text": text, "kind": "soru"}]}
+    return {"type": "net"}
+
+
+def parse_chat_reply(raw: str) -> dict:
+    """Did the model understand the answer, or does it need to keep asking?
+
+    Returns {"type": "understood", "note": <text for the note>} or
+    {"type": "question", "text": <follow-up>}.
+    """
+    text = _strip_think(raw).strip()
+    if not text:
+        return {"type": "question", "text": "Bunu biraz daha açar mısın?"}
+
+    note_match = re.search(r"^\s*NOT\s*:\s*", text, re.IGNORECASE | re.MULTILINE)
+    if re.match(r"^\s*ANLADIM", text, re.IGNORECASE) or note_match:
+        note = text[note_match.end():].strip() if note_match else ""
+        return {"type": "understood", "note": note}
+
+    question_match = re.match(r"^\s*SORU\s*:?\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+    if question_match:
+        return {"type": "question", "text": question_match.group(1).strip()}
+
+    # untagged reply: a trailing question mark means it is still asking
+    if text.rstrip().endswith("?"):
+        return {"type": "question", "text": text}
+    return {"type": "understood", "note": text}
+
+
+def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
+                   on_chunk=None, provider=None, span: list[int] | None = None,
+                   should_cancel=None, on_usage=None, coverage: str = "") -> dict:
+    """Send the whole note (plus open questions) to the local model and get back
+    a structured event: a net-effect no-op, a question, a resolved question, or
+    an edit suggestion.
+
+    If on_chunk is given, the request streams and on_chunk(accumulated_text) is
+    called after every token — some local checkpoints spend 5-15s in a <think>
+    block before the real answer, and this lets the UI show that thinking live
+    instead of sitting on a dead spinner."""
+    parts = [note_context(full_text, span)]
+    if open_questions:
+        listed = "\n".join(f"{i}. {q}" for i, q in enumerate(open_questions, start=1))
+        parts.append(f"[AÇIK SORULAR]\n{listed}")
+    if coverage:
+        parts.append(f"[NOTUN BÖLÜMLERİ]\n{coverage}")
+    parts.append(f"[YENİ EKLENEN]\n{new_part}")
+
+    content = _complete(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "\n\n".join(parts)},
+        ],
+        temperature=0.3, max_tokens=ANALYZE_MAX_TOKENS, on_chunk=on_chunk,
+        provider=provider, should_cancel=should_cancel, on_usage=on_usage,
+    )
+    return parse_response(_strip_think(content))
+
+
+def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None) -> str:
+    """Multi-turn conversation about a question the assistant raised."""
+    system = f"{CHAT_SYSTEM_PROMPT}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    content = _complete(
+        [{"role": "system", "content": system}] + history,
+        temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,
+        on_usage=on_usage,
+    )
+    return _strip_think(content)
+
+
+def chat_answer(history: list[dict], note_excerpt: str, on_chunk=None, provider=None,
+                on_usage=None) -> str:
+    """The user asked something back — answer it, don't treat it as an answer."""
+    system = f"{CHAT_ANSWER_PROMPT}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    content = _complete(
+        [{"role": "system", "content": system}] + history,
+        temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,
+        on_usage=on_usage,
+    )
+    return _strip_think(content)
+
+
+def summarize_for_note(history: list[dict], provider=None, on_usage=None) -> str:
+    """Turn a resolved chat thread into note-ready text."""
+    convo = "\n".join(
+        f"{'Kullanıcı' if m['role'] == 'user' else 'Asistan'}: {m['content']}" for m in history
+    )
+    content = _complete(
+        [
+            {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT},
+            {"role": "user", "content": convo},
+        ],
+        temperature=0.3, max_tokens=SUMMARY_MAX_TOKENS, provider=provider, on_usage=on_usage,
+    )
+    return _strip_think(content)

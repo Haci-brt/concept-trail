@@ -1,0 +1,7 @@
+fastapi>=0.115
+uvicorn>=0.30
+requests>=2.31
+markdown-it-py>=3.0
+# desktop window + HUD overlay (not needed for --browser / --server)
+PyQt6>=6.7
+PyQt6-WebEngine>=6.7

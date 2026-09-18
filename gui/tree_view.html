@@ -1,0 +1,399 @@
+<title>Fikir Mercanı</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg-deep:#100e16; --bg-panel:#211d2c; --bg-panel-2:#26212f; --line:#332e40;
+    --text:#e6e2ee; --text-muted:#948fa3;
+    --root:#f3ecff; --question:#b79bff; --edit:#7fe3d6;
+    --resolved:#7fd992; --chat-user:#f0a35c; --chat-assistant:#7fc9e3;
+    --font-display:'Fraunces', Georgia, serif;
+    --font-body:'IBM Plex Sans', -apple-system, sans-serif;
+    --font-mono:'IBM Plex Mono', ui-monospace, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg-deep);}
+  body{font-family:var(--font-body);color:var(--text);}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;}
+  #sea{z-index:0;}
+  #tree{z-index:1;cursor:grab;}
+  #tree.dragging{cursor:grabbing;}
+
+  #empty{
+    position:fixed;inset:0;z-index:2;
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:8px;pointer-events:none;text-align:center;
+  }
+  #empty h1{
+    font-family:var(--font-display);font-weight:500;font-size:24px;
+    color:var(--text);margin:0;opacity:.5;text-wrap:balance;
+  }
+  #empty p{font-size:13px;color:var(--text-muted);margin:0;max-width:32ch;opacity:.65;}
+
+  .hud{
+    position:fixed;
+    background:color-mix(in srgb, var(--bg-panel) 88%, transparent);
+    border:1px solid var(--line);
+    border-radius:14px;
+    backdrop-filter:blur(10px);
+    box-shadow:0 20px 50px -20px rgba(0,0,0,.6);
+    z-index:3;
+  }
+
+  #titleCard{
+    top:20px;left:20px;padding:16px 20px 14px;max-width:280px;
+  }
+  #titleCard h1{
+    font-family:var(--font-display);font-optical-sizing:auto;font-weight:500;
+    font-size:20px;line-height:1.1;margin:0 0 4px;letter-spacing:.1px;text-wrap:balance;
+    background:linear-gradient(120deg, var(--text) 40%, var(--question));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  #titleCard p{margin:0;font-size:11.5px;color:var(--text-muted);}
+  #treeStats{
+    display:flex;gap:14px;margin-top:10px;padding-top:10px;
+    border-top:1px solid var(--line);font-family:var(--font-mono);
+  }
+  #treeStats div{display:flex;flex-direction:column;gap:1px;}
+  #treeStats .n{font-size:15px;font-variant-numeric:tabular-nums;color:var(--text);}
+  #treeStats .l{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);}
+
+  #legend{
+    bottom:20px;left:20px;padding:10px 14px;
+    display:flex;gap:14px;font-size:11px;color:var(--text-muted);
+  }
+  #legend .row{display:flex;align-items:center;gap:6px;}
+  #legend .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+
+  #detail{
+    top:20px;right:-360px;width:300px;padding:20px 20px 18px;
+    z-index:4;transition:right .38s cubic-bezier(.2,.8,.2,1);
+  }
+  #detail.open{right:20px;}
+  #detail .kind{
+    font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    margin:0 0 8px;
+  }
+  #detail p.body{font-size:13.5px;line-height:1.6;color:var(--text);margin:0;}
+  #detail .close{
+    position:absolute;top:14px;right:14px;width:24px;height:24px;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg-panel-2);color:var(--text-muted);
+    cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;
+  }
+  #detail .close:hover{color:var(--text);border-color:var(--question);}
+
+  @media (prefers-reduced-motion: reduce){ * { animation-duration: 0.001ms !important; } }
+</style>
+
+<canvas id="sea"></canvas>
+<canvas id="tree"></canvas>
+
+<div id="empty">
+  <h1>Henüz bir dal yok</h1>
+  <p>Not yazmaya devam ettikçe asistanın soruları ve önerileri burada dallanarak büyüyecek.</p>
+</div>
+
+<div class="hud" id="titleCard">
+  <h1 id="rootTitle">Not</h1>
+  <p>Yazdıkça büyüyen fikir dalları.</p>
+  <div id="treeStats">
+    <div><span class="n" id="statQ">0</span><span class="l">soru</span></div>
+    <div><span class="n" id="statE">0</span><span class="l">düzenleme</span></div>
+    <div><span class="n" id="statR">0</span><span class="l">tamam</span></div>
+  </div>
+</div>
+
+<div class="hud" id="legend">
+  <div class="row"><span class="dot" style="background:var(--root);box-shadow:0 0 6px var(--root)"></span>Not</div>
+  <div class="row"><span class="dot" style="background:var(--question);box-shadow:0 0 6px var(--question)"></span>Soru</div>
+  <div class="row"><span class="dot" style="background:var(--edit);box-shadow:0 0 6px var(--edit)"></span>Düzenleme</div>
+  <div class="row"><span class="dot" style="background:var(--resolved);box-shadow:0 0 6px var(--resolved)"></span>Tamamlandı</div>
+</div>
+
+<div class="hud" id="detail">
+  <button class="close" id="closeDetail" aria-label="Kapat">✕</button>
+  <p class="kind" id="dKind">Soru</p>
+  <p class="body" id="dBody"></p>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const COLOR = {
+    root:"#f3ecff", question:"#b79bff", edit:"#7fe3d6",
+    resolved:"#7fd992", "chat-user":"#f0a35c", "chat-assistant":"#7fc9e3",
+  };
+  const RADIUS = { root:16, question:9, edit:9, resolved:8, "chat-user":6, "chat-assistant":6 };
+  const KIND_LABEL = {
+    question:"Soru", edit:"Düzenleme", resolved:"Tamamlandı Soru",
+    "chat-user":"Sen", "chat-assistant":"Asistan", root:"Not",
+  };
+
+  let nodes = [], byId = new Map(), hovered = null, selected = null;
+
+  const seaCanvas = document.getElementById('sea');
+  const treeCanvas = document.getElementById('tree');
+  const seaCtx = seaCanvas.getContext('2d');
+  const treeCtx = treeCanvas.getContext('2d');
+  const emptyEl = document.getElementById('empty');
+  const detailEl = document.getElementById('detail');
+
+  let W=0,H=0,DPR=Math.min(window.devicePixelRatio||1,2);
+  function resize(){
+    W=window.innerWidth; H=window.innerHeight;
+    for (const [cv,ctx] of [[seaCanvas,seaCtx],[treeCanvas,treeCtx]]){
+      cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+    }
+    const root = byId.get('root');
+    if (root){ root.x = W/2; root.y = H*0.68; root.targetX = root.x; root.targetY = root.y; }
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function childrenOf(id){ return nodes.filter(n => n.parentId === id); }
+
+  function layoutChildren(parentId){
+    const parent = byId.get(parentId);
+    if (!parent) return;
+    const kids = childrenOf(parentId);
+    const spread = Math.min(2.6, 0.9 + kids.length*0.3);
+    const baseAngle = parent.depth === 0 ? -Math.PI/2 : parent.angle;
+    kids.forEach((k,i) => {
+      const t = kids.length===1 ? 0 : (i/(kids.length-1) - 0.5);
+      k.angle = baseAngle + t*spread;
+      const dist = 95 + k.depth*72;
+      k.targetX = parent.x + Math.cos(k.angle)*dist;
+      k.targetY = parent.y + Math.sin(k.angle)*dist;
+    });
+  }
+
+  function updateStats(){
+    let q=0,e=0,r=0;
+    for (const n of nodes){
+      if (n.type==='question') q++;
+      else if (n.type==='edit') e++;
+      else if (n.type==='resolved') r++;
+    }
+    document.getElementById('statQ').textContent = q;
+    document.getElementById('statE').textContent = e;
+    document.getElementById('statR').textContent = r;
+  }
+
+  window.resetTree = function(rootLabel){
+    nodes = []; byId = new Map(); hovered = null; selected = null;
+    detailEl.classList.remove('open');
+    const root = {
+      id:"root", parentId:null, label: rootLabel || "Not", type:"root", depth:0,
+      angle:-Math.PI/2, x:W/2, y:H*0.68, vx:0, vy:0, born:performance.now(),
+      targetX:W/2, targetY:H*0.68, phase:Math.random()*Math.PI*2,
+    };
+    nodes.push(root); byId.set("root", root);
+    document.getElementById('rootTitle').textContent = rootLabel || "Not";
+    emptyEl.style.display = "flex";
+    updateStats();
+  };
+
+  window.addNode = function(node){
+    if (byId.has(node.id)) return;
+    emptyEl.style.display = "none";
+    const parent = byId.get(node.parentId) || byId.get("root");
+    const n = {
+      id:node.id, parentId: parent ? parent.id : null, label:node.label, type:node.type,
+      depth: parent ? parent.depth+1 : 1, angle: parent ? parent.angle : -Math.PI/2,
+      x: parent ? parent.x + (Math.random()-0.5)*10 : W/2,
+      y: parent ? parent.y + (Math.random()-0.5)*10 : H/2,
+      vx:0, vy:0, born:performance.now(), targetX:0, targetY:0,
+      phase:Math.random()*Math.PI*2,
+    };
+    nodes.push(n); byId.set(n.id, n);
+    if (parent) layoutChildren(parent.id);
+    updateStats();
+  };
+
+  window.resolveNode = function(id){
+    const n = byId.get(id);
+    if (n){ n.type = "resolved"; n.born = performance.now(); }
+    updateStats();
+  };
+
+  window.clearAll = function(){ window.resetTree("Not"); };
+
+  // ---------------- physics (critically damped, settles instead of wandering) ----------------
+  let t = 0;
+  function step(dt){
+    t += dt;
+    for (const n of nodes){
+      if (n.parentId){
+        const p = byId.get(n.parentId);
+        if (p){
+          const dx = (p.x + (n.targetX - p.x)) - n.x;
+          const dy = (p.y + (n.targetY - p.y)) - n.y;
+          n.vx += dx*0.09*dt; n.vy += dy*0.09*dt;
+        }
+      }
+      // ambient sway only kicks in once a node has settled near its resting
+      // spot — otherwise new nodes jitter forever instead of arriving cleanly
+      if (!reduceMotion && n.type !== "root"){
+        const age = performance.now() - n.born;
+        const settle = Math.max(0, Math.min(1, (age-1200)/1800));
+        const amp = 0.9 * settle;
+        n.vx += Math.sin(t*0.35 + n.phase) * amp * dt;
+        n.vy += Math.cos(t*0.3 + n.phase) * amp * dt;
+      }
+      for (const m of nodes){
+        if (m===n) continue;
+        const dx=m.x-n.x, dy=m.y-n.y;
+        const dist=Math.hypot(dx,dy)||0.01;
+        const minDist = RADIUS[n.type]+RADIUS[m.type]+34;
+        if (dist<minDist){
+          const f=(minDist-dist)/minDist*7*dt;
+          n.vx -= (dx/dist)*f; n.vy -= (dy/dist)*f;
+        }
+      }
+      n.vx *= 0.8; n.vy *= 0.8;
+      const speed = Math.hypot(n.vx,n.vy);
+      const maxSpeed = 6;
+      if (speed > maxSpeed){ n.vx = n.vx/speed*maxSpeed; n.vy = n.vy/speed*maxSpeed; }
+      if (n.type !== "root"){ n.x += n.vx; n.y += n.vy; }
+    }
+  }
+
+  // ---------------- background ----------------
+  const dust = Array.from({length:60}, () => ({
+    x:Math.random()*W, y:Math.random()*H, r:Math.random()*1.5+0.4,
+    speed:Math.random()*0.1+0.02, drift:Math.random()*Math.PI*2, tw:Math.random()*Math.PI*2,
+  }));
+  function drawSea(){
+    const g = seaCtx.createRadialGradient(W*0.5,H*0.6,0, W*0.5,H*0.55, Math.max(W,H)*0.8);
+    g.addColorStop(0,'#1c1728'); g.addColorStop(0.55,'#130f1c'); g.addColorStop(1,'#0c0a12');
+    seaCtx.fillStyle=g; seaCtx.fillRect(0,0,W,H);
+    for (const d of dust){
+      if (!reduceMotion){
+        d.y -= d.speed; d.x += Math.sin(d.drift+t*0.25)*0.08; d.tw += 0.018;
+        if (d.y<-10){ d.y=H+10; d.x=Math.random()*W; }
+      }
+      const a = 0.13+Math.sin(d.tw)*0.09+0.09;
+      seaCtx.beginPath();
+      seaCtx.fillStyle=`rgba(127,227,214,${Math.max(0,a)})`;
+      seaCtx.arc(d.x,d.y,d.r,0,Math.PI*2); seaCtx.fill();
+    }
+  }
+
+  function hexToRgba(hex,a){
+    const v=hex.replace('#',''); const r=parseInt(v.substring(0,2),16),g=parseInt(v.substring(2,4),16),b=parseInt(v.substring(4,6),16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function drawTree(){
+    treeCtx.clearRect(0,0,W,H);
+    for (const n of nodes){
+      if (!n.parentId) continue;
+      const p = byId.get(n.parentId);
+      if (!p) continue;
+      treeCtx.strokeStyle = hexToRgba(COLOR[n.type]||COLOR.question, 0.26);
+      treeCtx.lineWidth = n.type.startsWith('chat') ? 1 : 1.6;
+      treeCtx.beginPath(); treeCtx.moveTo(p.x,p.y); treeCtx.lineTo(n.x,n.y); treeCtx.stroke();
+      if (!reduceMotion){
+        const pulse = ((t*0.28 + p.x*0.01) % 1);
+        const px = p.x + (n.x-p.x)*pulse, py = p.y + (n.y-p.y)*pulse;
+        treeCtx.beginPath();
+        treeCtx.fillStyle = hexToRgba(COLOR[n.type]||COLOR.question, 0.6);
+        treeCtx.arc(px,py,1.3,0,Math.PI*2); treeCtx.fill();
+      }
+    }
+    for (const n of nodes){
+      const age = Math.min(1, (performance.now()-n.born)/420);
+      const scale = 0.4 + age*0.6;
+      const r = RADIUS[n.type] * scale;
+      const isHot = n.id === hovered || n.id === selected;
+      const color = COLOR[n.type] || COLOR.question;
+      const glowR = r * (isHot ? 3.2 : 2.2);
+      const grad = treeCtx.createRadialGradient(n.x,n.y,0,n.x,n.y,glowR);
+      grad.addColorStop(0, hexToRgba(color, n.type==='root'?0.48:0.32));
+      grad.addColorStop(1, hexToRgba(color, 0));
+      treeCtx.fillStyle = grad;
+      treeCtx.beginPath(); treeCtx.arc(n.x,n.y,glowR,0,Math.PI*2); treeCtx.fill();
+      treeCtx.beginPath(); treeCtx.fillStyle = hexToRgba(color,1);
+      treeCtx.arc(n.x,n.y,r,0,Math.PI*2); treeCtx.fill();
+      if (isHot){
+        treeCtx.strokeStyle = 'rgba(255,255,255,0.85)'; treeCtx.lineWidth = 1.4;
+        treeCtx.beginPath(); treeCtx.arc(n.x,n.y,r+2,0,Math.PI*2); treeCtx.stroke();
+      }
+      if (n.type === 'resolved'){
+        treeCtx.strokeStyle = 'rgba(20,30,20,0.85)'; treeCtx.lineWidth = 1.4;
+        treeCtx.beginPath();
+        treeCtx.moveTo(n.x-3,n.y); treeCtx.lineTo(n.x-0.5,n.y+2.5); treeCtx.lineTo(n.x+3.5,n.y-3);
+        treeCtx.stroke();
+      }
+      if (n.type === 'root' || isHot){
+        treeCtx.font = n.type==='root' ? "600 15px 'Fraunces', serif" : "500 12px 'IBM Plex Sans', sans-serif";
+        treeCtx.fillStyle = 'rgba(230,226,238,0.95)';
+        treeCtx.textAlign = 'center';
+        const label = n.label.length > 46 ? n.label.slice(0,44)+'…' : n.label;
+        treeCtx.fillText(label, n.x, n.y - r - 10);
+      }
+    }
+  }
+
+  // ---------------- interaction ----------------
+  let mouse={x:-9999,y:-9999}, dragTarget=null;
+  function nodeAt(x,y){
+    for (let i=nodes.length-1;i>=0;i--){
+      const n=nodes[i];
+      if (Math.hypot(n.x-x,n.y-y) <= RADIUS[n.type]+6) return n;
+    }
+    return null;
+  }
+  treeCanvas.addEventListener('mousemove', e => {
+    mouse.x=e.clientX; mouse.y=e.clientY;
+    if (dragTarget){ dragTarget.x=mouse.x; dragTarget.y=mouse.y; return; }
+    const n = nodeAt(mouse.x,mouse.y);
+    hovered = n ? n.id : null;
+    treeCanvas.style.cursor = n ? 'pointer' : 'grab';
+  });
+  treeCanvas.addEventListener('mousedown', e => {
+    const n = nodeAt(e.clientX,e.clientY);
+    if (n){ dragTarget=n; treeCanvas.classList.add('dragging'); }
+  });
+  window.addEventListener('mouseup', () => { dragTarget=null; treeCanvas.classList.remove('dragging'); });
+  treeCanvas.addEventListener('mouseleave', () => { hovered=null; });
+
+  treeCanvas.addEventListener('click', e => {
+    const n = nodeAt(e.clientX,e.clientY);
+    if (n && n.type !== 'root'){ openDetail(n); }
+  });
+
+  function openDetail(n){
+    selected = n.id;
+    const kindEl = document.getElementById('dKind');
+    kindEl.textContent = KIND_LABEL[n.type] || n.type;
+    kindEl.style.color = COLOR[n.type] || COLOR.question;
+    document.getElementById('dBody').textContent = n.label;
+    detailEl.classList.add('open');
+  }
+  document.getElementById('closeDetail').addEventListener('click', () => {
+    detailEl.classList.remove('open'); selected = null;
+  });
+
+  let last=performance.now();
+  function frame(now){
+    const dt = Math.min((now-last)/16.67, 2.5);
+    last = now;
+    step(dt); drawSea(); drawTree();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // standalone preview only — the desktop app overwrites this via resetTree()/addNode()
+  if (window.location.protocol === 'file:' && !window.__EMBEDDED__){
+    resetTree("yapay-zeka-asistan.md");
+    setTimeout(() => addNode({id:'q1', parentId:'root', label:'Bu projenin hedef kitlesi kim?', type:'question'}), 400);
+    setTimeout(() => addNode({id:'q2', parentId:'root', label:'Model seçimi için hangi kriterler önemli?', type:'question'}), 1000);
+    setTimeout(() => addNode({id:'e1', parentId:'root', label:'"çok hızlı" → "10-15sn yanıt süresi"', type:'edit'}), 1600);
+    setTimeout(() => addNode({id:'c1', parentId:'q1', label:'Hobi amaçlı, kendi kullanımım için', type:'chat-user'}), 2400);
+    setTimeout(() => addNode({id:'c2', parentId:'q1', label:'Anladım, o zaman sadeliği önceliklendirelim', type:'chat-assistant'}), 3000);
+    setTimeout(() => resolveNode('q1'), 3600);
+  }
+})();
+</script>
