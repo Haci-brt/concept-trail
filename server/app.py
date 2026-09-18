@@ -124,6 +124,7 @@ class AnalyzeBody(BaseModel):
 class HudBody(BaseModel):
     event_id: str
     action: str
+    text: str | None = None     # an approved proposal, in the writer's own words
 
 
 class EventBody(BaseModel):
@@ -395,7 +396,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/assistant/hud")
     async def hud_action(body: HudBody):
-        return assistant.hud_action(body.event_id, body.action)
+        return assistant.hud_action(body.event_id, body.action, body.text)
 
     @app.post("/api/assistant/claim")
     async def claim(body: EventBody):

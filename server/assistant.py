@@ -665,7 +665,9 @@ class Assistant:
         return node
 
     # ---- HUD ----
-    def hud_action(self, event_id: str, action: str) -> dict:
+    def hud_action(self, event_id: str, action: str, text: str | None = None) -> dict:
+        """`text` is the writer's own wording: a proposal can be edited before
+        it is approved, and what goes into the note is what they left behind."""
         event = next((e for e in self.queue if e["id"] == event_id), None) or self.history.find(event_id)
         if event is None:
             raise ApiError(404, "Öneri bulunamadı.")
@@ -682,6 +684,12 @@ class Assistant:
         elif action in ("approve", "reject") and event["type"] == "summary":
             if event.get("status") != "pending":
                 raise ApiError(409, "Bu öneri zaten sonuçlandı.")
+            edited = (text or "").strip()
+            if action == "approve" and edited and edited != event.get("text"):
+                self.history.update(event, text=edited, edited=True)
+                node = self.notes.update_node(event["path"], event["node_id"], text=edited, edited=True)
+                if node:
+                    self._publish_node(event["path"], node)
             status = "approved" if action == "approve" else "rejected"
             self.history.update(event, status=status)
             self.broker.publish("history_update", event)
@@ -812,6 +820,9 @@ class Assistant:
                 summary = self.notes.add_node(rel, "summary", note_entry, parent_id=node_id,
                                               status="pending")
                 self._publish_node(rel, summary)
+                # the question has been answered: its card must not sit in front
+                # of the proposal that came out of answering it
+                self._drop_from_queue(lambda e: e["type"] == "question" and e.get("node_id") == node_id)
                 proposal = self._event("summary", rel, text=note_entry, node_id=summary["id"],
                                        question_id=node_id, question=question["text"], status="pending")
                 self._record(proposal)

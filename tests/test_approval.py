@@ -115,6 +115,38 @@ def test_rejecting_leaves_the_note_and_the_question_alone(app, monkeypatch):
     assert assistant.notes.find_node("tarif.md", question["id"])["status"] == "open"   # still yours to answer
 
 
+def test_a_proposal_can_be_reworded_before_it_is_approved(app, monkeypatch):
+    assistant, broker, _ = app
+    proposal = propose(assistant, monkeypatch, answered_question(assistant))["proposal"]
+
+    assistant.hud_action(proposal["id"], "approve", "Defterde 50 kadar aile tarifi olacak.")
+
+    sent = broker.of("append_note")
+    assert sent[0]["text"] == "Defterde 50 kadar aile tarifi olacak."     # your words, not its own
+    assert assistant.history.find(proposal["id"])["edited"] is True
+    assert assistant.notes.find_node("tarif.md", proposal["node_id"])["text"] == "Defterde 50 kadar aile tarifi olacak."
+
+
+def test_an_untouched_proposal_goes_in_as_written(app, monkeypatch):
+    assistant, broker, _ = app
+    proposal = propose(assistant, monkeypatch, answered_question(assistant))["proposal"]
+
+    assistant.hud_action(proposal["id"], "approve", proposal["text"])
+
+    assert broker.of("append_note")[0]["text"] == proposal["text"]
+    assert "edited" not in assistant.history.find(proposal["id"])
+
+
+def test_rewording_a_rejected_proposal_changes_nothing(app, monkeypatch):
+    assistant, broker, _ = app
+    proposal = propose(assistant, monkeypatch, answered_question(assistant))["proposal"]
+
+    assistant.hud_action(proposal["id"], "reject", "bambaşka bir cümle")
+
+    assert broker.of("append_note") == []
+    assert assistant.history.find(proposal["id"])["text"] == proposal["text"]
+
+
 def test_a_proposal_cannot_be_decided_twice(app, monkeypatch):
     assistant, broker, _ = app
     proposal = propose(assistant, monkeypatch, answered_question(assistant))["proposal"]

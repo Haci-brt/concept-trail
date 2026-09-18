@@ -210,6 +210,15 @@ class Bridge(QObject):
         if not self._window.isMaximized():
             start_resize(self._window, edge)
 
+    @pyqtSlot(bool)
+    def setTypingMode(self, on: bool):
+        """The HUD refuses keyboard focus so it can never swallow a keystroke
+        meant for the note. While the writer answers inside the card it has to
+        accept one — and give it straight back afterwards."""
+        typing = getattr(self._window, "set_typing", None)
+        if typing:
+            typing(bool(on))
+
     @pyqtSlot(str)
     def openExternal(self, url: str):
         target = QUrl(url)
@@ -310,8 +319,25 @@ class HudWindow(QWidget):
         self.view.setUrl(QUrl(url))
 
         self._placing = False
+        self._typing = False
         saved = QSettings().value("hud/pos")
         self._user_pos: QPoint | None = saved if isinstance(saved, QPoint) else None
+
+    def set_typing(self, on: bool):
+        """Swap the no-focus flag. Qt hides a window whose flags change, so it
+        is shown again right after — and re-raised, since it must stay on top."""
+        if self._typing == on or not self.isVisible():
+            return
+        self._typing = on
+        flags = self.windowFlags()
+        no_focus = Qt.WindowType.WindowDoesNotAcceptFocus
+        self.setWindowFlags(flags & ~no_focus if on else flags | no_focus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not on)
+        self.show()
+        self.raise_()
+        if on:
+            self.activateWindow()
+            self.view.setFocus()
 
     def apply_state(self, visible: bool, height: int):
         if not visible or height <= 0:

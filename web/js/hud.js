@@ -19,7 +19,12 @@ function report(visible) {
   desktopCall("setHudState", visible, height);
 }
 
-const card = new HudCard(host, { onChange: report });
+const card = new HudCard(host, {
+  onChange: report,
+  // the HUD refuses keyboard focus so it can never steal a keystroke; while the
+  // writer is answering inside it, the shell hands it focus and takes it back
+  onTyping: (on) => desktopCall("setTypingMode", on),
+});
 
 // once visible, fonts and wrapping can still settle — re-measure then
 new ResizeObserver(() => report(Boolean(host.firstElementChild))).observe(host);
@@ -34,7 +39,7 @@ connectEvents({
 });
 
 host.addEventListener("mousedown", (e) => {
-  if (e.button === 0 && !e.target.closest("button")) desktopCall("startMove");
+  if (e.button === 0 && !e.target.closest("button, textarea, input")) desktopCall("startMove");
 });
 
 api.get("/api/state").then((s) => { card.setStatus(s.status); card.setHud(s.hud); }).catch(() => {});

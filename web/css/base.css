@@ -319,6 +319,36 @@ kbd {
 .hud-diff ins { background: var(--green-soft); color: #bbf7d0; }
 
 .hud-actions { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
+.hud-answer { display: flex; align-items: flex-end; gap: 6px; margin-top: 11px; }
+.hud-input {
+  flex: 1;
+  min-height: 34px;
+  max-height: 120px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  resize: none;
+}
+.hud-input::placeholder { color: var(--text-faint, var(--text-muted)); }
+.hud-input:focus { outline: none; border-color: var(--accent); }
+.hud-rewrite { width: 100%; margin-top: 6px; min-height: 66px; }
+.hud-waiting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.hud-waiting span:first-of-type { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hud-actions .spacer { flex: 1; }
 .hud-progress {
   position: absolute;

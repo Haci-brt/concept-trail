@@ -711,6 +711,21 @@ body {
 .msg.proposal .p-head { display: flex; align-items: center; gap: 6px; color: var(--amber); font-size: 11.5px; font-weight: 600; }
 .msg.proposal .p-text { margin-top: 6px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .msg.proposal .p-actions { display: flex; gap: 6px; margin-top: 10px; color: var(--text-muted); font-size: 12px; }
+.msg.proposal .p-edit {
+  width: 100%;
+  min-height: 72px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.msg.proposal .p-edit:focus { outline: none; }
 .msg.proposal.done { border-color: rgba(74, 222, 128, 0.4); background: var(--green-soft); }
 .msg.proposal.dropped { border-color: var(--border-strong); background: var(--bg-raised); opacity: 0.75; }
 .msg.assistant.followup { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-softer); }
