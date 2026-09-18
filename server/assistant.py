@@ -51,7 +51,9 @@ def sections_with_spans(content: str) -> list[tuple[str, str, int, int]]:
     parts: list[tuple[str, str, int, int]] = []
     last_name, last_at, heading_at = "", 0, 0
     for match in HEADING_RE.finditer(content):
-        parts.append((last_name, content[last_at:match.start()], heading_at, match.start()))
+        # a note that opens with its own title has no intro section before it
+        if parts or content[last_at:match.start()].strip():
+            parts.append((last_name, content[last_at:match.start()], heading_at, match.start()))
         last_name = "" if len(match.group(1)) <= 1 else match.group(2).strip()
         last_at, heading_at = match.end(), match.start()
     parts.append((last_name, content[last_at:], heading_at, len(content)))
@@ -388,8 +390,10 @@ class Assistant:
         task.add_done_callback(self._tasks.discard)
 
     @staticmethod
-    def _event(kind: str, rel: str, **fields) -> dict:
-        return {"id": uuid.uuid4().hex[:12], "type": kind, "path": rel, "note": Path(rel).stem,
+    def _event(event_type: str, rel: str, **fields) -> dict:
+        # not `kind`: questions carry a kind of their own ("derinlestirme", …)
+        # and a collision here silently cost every question its history entry
+        return {"id": uuid.uuid4().hex[:12], "type": event_type, "path": rel, "note": Path(rel).stem,
                 "created": datetime.now().isoformat(timespec="seconds"), **fields}
 
     def _record(self, event: dict, hud: bool = True):
