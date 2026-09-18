@@ -17,18 +17,22 @@ FAST_BASE_URL = os.environ.get("FIKIR_FAST_URL", "http://127.0.0.1:8901").rstrip
 MAX_CONTEXT_CHARS = 2200
 HEAD_CONTEXT_CHARS = 700
 
-# The Flash-Next checkpoint always writes a 150-280 token <think> block before
-# its real answer (see run_flashnext.sh), so every budget below has to leave
-# room for that on top of the answer itself — at 300 tokens chat replies were
-# regularly cut off mid-think and came back empty.
+# Thinking models spend the first few hundred tokens reasoning before they
+# answer, and some of them cannot be talked out of it: /no_think,
+# enable_thinking=false and reasoning_budget=0 were all ignored by
+# Qwen3.6-35B-A3B (measured 2026-09-19 — 400+ tokens of English reasoning).
+# A budget that runs out mid-<think> comes back as an empty reply, which the
+# user sees as "Bunu biraz daha açar mısın?" out of nowhere. These caps are
+# only a ceiling — a model that does not think stops long before them — so
+# they are set high enough for the ones that do.
 MAX_QUESTIONS = 3
 # what a question is for — drives its label and colour in the UI
 QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme",
                   "veri", "risk", "sinir", "soru")
 QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
-ANALYZE_MAX_TOKENS = 900
-CHAT_MAX_TOKENS = 900
-SUMMARY_MAX_TOKENS = 1200
+ANALYZE_MAX_TOKENS = 1600
+CHAT_MAX_TOKENS = 2200
+SUMMARY_MAX_TOKENS = 1800
 
 # A note about building software needs a different kind of question than a note
 # about an idea: not "who would feel what", but who owns this state, what breaks
