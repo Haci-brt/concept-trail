@@ -23,15 +23,67 @@ HEAD_CONTEXT_CHARS = 700
 # regularly cut off mid-think and came back empty.
 MAX_QUESTIONS = 3
 # what a question is for — drives its label and colour in the UI
-QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme", "soru")
+QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme",
+                  "veri", "risk", "sinir", "soru")
 QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
 ANALYZE_MAX_TOKENS = 900
 CHAT_MAX_TOKENS = 900
 SUMMARY_MAX_TOKENS = 1200
 
+# A note about building software needs a different kind of question than a note
+# about an idea: not "who would feel what", but who owns this state, what breaks
+# when that call fails, where the seam between these two pieces is.
+DOMAIN_PROMPTS = {
+    "kod": (
+        "[ALAN] Bu not bir yazılım/mimari notu. Sorularını mimarinin acıdığı yerlerden sor:\n"
+        "- veri: hangi veri nerede durur, kim sahibidir, iki yerde birden tutulursa hangisi doğrudur\n"
+        "- risk: bu parça çökerse/yanıt vermezse ne olur, yarım kalan iş nasıl toparlanır\n"
+        "- sinir: iki parça arasındaki sözleşme tam olarak ne, biri değişirse diğeri nasıl bilir\n"
+        "- kapsam: bu sürümün dışında ne kalıyor, en küçük çalışan hâli ne\n"
+        "- alternatif: aynı işi yapan daha yalın bir kurgu var mı, neden o değil\n"
+        "- sonuc: bu karar altı ay sonra neyi zorlaştırır, geri alınabilir mi\n"
+        "Şu soruları SORMA: hangi dil/framework kullanacaksın, hangi veritabanı, hangi bulut, "
+        "kaç kişilik ekip — bunlar künye sorusu, mimari sorusu değil.\n"
+        "Örnek:\n"
+        "  kötü → 'Verileri nerede saklayacaksın?'\n"
+        "  iyi  → 'Kullanıcı çevrimdışıyken yazdığı not ile sunucudaki sürüm çakışırsa hangisi kazanır?'\n"
+        "  kötü → 'Hangi test aracını kullanacaksın?'\n"
+        "  iyi  → 'Bu akışın hangi adımını, arayüzü açmadan tek başına çalıştırabilirsin?'\n"
+        "Notta kod bloğu, dosya adı ya da fonksiyon adı geçiyorsa soruna onu ADIYLA al.\n"
+        "Bu notta şu üç etiketi de kullanabilirsin (türü soruya göre seç):\n"
+        "SORU[veri]: <hangi veri nerede durur, sahibi kim, çakışırsa hangisi kazanır>\n"
+        "SORU[risk]: <ne çökerse ne olur, yarım kalan iş ne olur>\n"
+        "SORU[sinir]: <iki parça arasındaki sözleşme ne, biri değişince diğeri nasıl bilir>"
+    ),
+    "fikir": "",
+}
+
+# The assistant works from the outside in: while a note is still one block of
+# text the questions are about the whole idea, and only once it has headings do
+# they go section by section. server/assistant.py decides which stage a note is
+# in and fills this in.
+STAGE_PROMPTS = {
+    "cerceve": (
+        "[AŞAMA] Bu not henüz kısa ve başlıklara ayrılmamış. Parça ayrıntısına girme; tasarımın "
+        "BÜTÜNÜNÜ soran büyük sorular sor: asıl çözülen problem ne, bu kurgunun ayakta durduğu "
+        "en kırılgan varsayım hangisi, bu iş hiç yapılmazsa ne olur, başarılı sayılması için "
+        "neyin doğru çalışması gerekir. Sınıf/fonksiyon seviyesine inme."
+    ),
+    "bolumlendirme": (
+        "[AŞAMA] Not büyüdü ama hâlâ tek parça. Sorularından BİRİ kullanıcıyı notu kendi "
+        "parçalarına ayırmaya itsin (örnek: 'Burada kaç ayrı sorumluluk var, sınırlarını nereden "
+        "geçirirdin?'). Diğerleri tasarımın bütünü hakkında olsun."
+    ),
+    "bolum": (
+        "[AŞAMA] Notun başlıkları var. Sorularını ŞU BÖLÜMDEN çıkar: “{section}”. Bölümde yazan "
+        "somut bir ifadeyi kendi kelimelerinle an, başka bölümlere atlama."
+    ),
+}
+
 SYSTEM_PROMPT = (
     "/no_think\n"
-    "Sen bir proje fikri geliştirme asistanısın. Kullanıcı bir not defterine canlı olarak "
+    "Sen, yazılım tasarlayan birinin yanında duran bir mimari danışmanısın. Kullanıcı bir not "
+    "defterine canlı olarak "
     "yazıyor; sana notun tamamı verilecek, en yeni yazılan kısım [YENİ EKLENEN] etiketiyle "
     "işaretli. Daha önce sorup henüz cevap alamadığın sorular varsa [AÇIK SORULAR] altında "
     "listelenecek.\n\n"
@@ -42,12 +94,13 @@ SYSTEM_PROMPT = (
     "COZULDU: <numara>\n\n"
     "2) Kullanıcıyı kendi fikri üzerine düşündürecek SORULAR (en fazla 3 satır, her biri ayrı "
     "satırda, [AÇIK SORULAR]'da zaten yoksa). Amacın bilgi toplamak DEĞİL; kullanıcının kendi "
-    "yazdığına yeni bir gözle bakmasını sağlamak. Her soruyu türüyle etiketle:\n"
+    "yazdığına yeni bir gözle bakmasını sağlamak. [AŞAMA] satırı hangi seviyede soracağını "
+    "söyler; ona uy. Her soruyu türüyle etiketle:\n"
     "SORU[derinlestirme]: <notta yazan somut bir noktayı bir adım öteye taşıyan soru>\n"
     "SORU[alternatif]: <'ya şöyle olsaydı' diye başka bir yol düşündüren soru>\n"
-    "SORU[sonuc]: <bu fikir gerçek olsa ne değişirdi, kim ne hissederdi>\n"
-    "SORU[kapsam]: <neyin dışarıda kalacağı, en küçük hâlinin ne olduğu>\n"
-    "SORU[ilham]: <kullanıcının aklını açacak somut bir bağlantı ya da örnek üzerinden soru>\n"
+    "SORU[sonuc]: <bu karar uygulanırsa altı ay sonra neyi zorlaştırır, geri alınabilir mi>\n"
+    "SORU[kapsam]: <neyin dışarıda kalacağı, en küçük çalışan hâlinin ne olduğu>\n"
+    "SORU[ilham]: <benzer bir sistemin aynı yerde nasıl tökezlediğinden yola çıkan soru>\n"
     "SORU[netlestirme]: <SADECE gerçekten anlaşılmayan bir şey varsa>\n\n"
     "3) Notta birebir geçen belirli bir cümle/ifade açıkça hatalı, çelişkili veya daha iyi "
     "yazılabilirse (uydurma alıntı YAPMA, sadece notta gerçekten var olan bir kısmı kullan):\n"
@@ -66,8 +119,15 @@ SYSTEM_PROMPT = (
     "soruyu tek cümleyle cevaplayabilmeli.\n"
     "- Sorular kısa olsun: en fazla 15 kelime. 'nasıl ve hangi ... olacak' gibi iç içe sorular sorma.\n"
     "- FORM DOLDURTAN sorular sorma. 'Hangi platformda çalışacak', 'hedef kitlen kim', 'hangi "
-    "teknolojiyi kullanacaksın', 'ne zaman bitecek' gibi künye soruları kullanıcıyı sıkar ve "
-    "fikrini büyütmez — bunları sorma.\n"
+    "teknolojiyi kullanacaksın', 'ne zaman bitecek', 'nasıl bir arayüz düşünüyorsun' gibi künye "
+    "soruları kullanıcıyı sıkar ve fikrini büyütmez — bunları sorma.\n"
+    "- YAVAN soru sorma. Cevabı 'evet/hayır' ya da 'şöyle olur' ile biten, kimseyi durdurup "
+    "düşündürmeyen soru yavandır. İyi soru bir GERİLİM taşır: bir bedel, bir çelişki, bir "
+    "vazgeçiş ya da beklenmedik bir sonuç. Örnek:\n"
+    "  kötü → 'Kullanıcı verilerini nasıl saklayacaksın?'\n"
+    "  iyi  → 'İki cihaz aynı kaydı aynı anda değiştirirse hangisinin yazdığı kalır?'\n"
+    "  kötü → 'Hangi mimariyi kullanacaksın?'\n"
+    "  iyi  → 'Bu modülü tek başına çalıştırmak için kaç şeyi ayağa kaldırman gerekiyor?'\n"
     "- Her soru, notta GERÇEKTEN yazan bir ayrıntıya dayansın ve mümkünse o ayrıntıyı kendi "
     "kelimeleriyle an; başka her nota da sorulabilecek genel sorular yasak.\n"
     "- netlestirme türünü nadiren kullan; çoğu zaman derinlestirme/alternatif/sonuc daha iyidir.\n"
@@ -75,33 +135,48 @@ SYSTEM_PROMPT = (
     "- Aynı ayrıntı hakkında ikinci kez sorma (kelimeleri değiştirmiş olsan bile).\n"
     "- [NOTUN BÖLÜMLERİ] listesinde 'henüz soru yok' yazan bir bölüm varsa sorunu ORADAN seç; "
     "aynı paragrafın etrafında dönme.\n"
+    "- Notun tamamı hakkında zaten konuşulduysa küçük ayrıntıya inme; hiç dokunulmamış bir "
+    "bölüm varken ayrıntı sorma.\n"
     "- NET seçeneğini nadiren kullan: kısa/erken taslak notlar neredeyse her zaman en az bir "
     "soruya (2. seçenek) açıktır — şüphedeysen NET yerine SORU sor.\n"
 )
 
 CHAT_SYSTEM_PROMPT = (
     "/no_think\n"
-    "Sen bir proje fikri geliştirme asistanısın. Kullanıcıya TEK bir soru sordun ve şimdi onun "
-    "cevabını değerlendiriyorsun. Önce kendine şunu sor: bu cevap sorduğum soruyu anlaşılır "
-    "şekilde cevaplıyor mu?\n\n"
-    "A) Cevap soruyu karşılıyorsa (kısa ya da basit olması sorun değil) tam olarak şunu yaz:\n"
+    "Sen, yazılım tasarlayan birinin yanında duran bir mimari danışmanısın. Kullanıcıya TEK bir "
+    "soru sordun, o da cevap "
+    "verdi. Sen bir sekreter değilsin: işin cevabı deftere geçirmek değil, kullanıcıyı bir "
+    "adım daha düşündürmek. Cevabı önce tart: içinde gerçekten bir KARAR var mı — bir tercih, "
+    "bir sınır, bir sayı, bir vazgeçiş? Yoksa cevap havada mı kalıyor?\n\n"
+    "A) Cevap havada kalıyorsa — 'olabilir', 'bakarız', 'güzel olur' gibi geçiştiriyorsa, soruyu "
+    "tekrar ediyorsa, gerekçesiz bir karar veriyorsa ya da notta yazan bir şeyle çelişiyorsa — "
+    "onu tartışmaya çek:\n"
+    "KARSI: <önce tek cümlelik somut karşı düşünce (neden bu cevap yetmiyor, nerede tıkanır), "
+    "sonra tek bir soru>\n\n"
+    "B) Cevap anlaşılmıyorsa (boş, konu dışı):\n"
+    "SORU: <aynı konuyu netleştiren tek cümlelik soru>\n\n"
+    "C) Cevapta gerçek bir karar VARSA ve bu karar notta zaten yazmıyorsa:\n"
     "ANLADIM\n"
-    "NOT: <kullanıcının not defterine eklenecek metin: sorunun cevabını içeren 1-2 cümle ya da "
-    "kısa madde işaretleri>\n\n"
-    "B) Cevap gerçekten anlaşılmıyorsa — boş, konu dışı, çelişkili ya da soruyu cevapsız "
-    "bırakıyorsa — tam olarak şunu yaz:\n"
-    "SORU: <aynı konuyu netleştiren, tek cümlelik yeni soru>\n\n"
+    "NOT: <notun kendi diliyle, en fazla 2 cümle>\n\n"
+    "D) Cevap net ama nota eklenecek yeni bir şey getirmiyorsa (zaten notta yazıyor ya da "
+    "yazmaya değmez) sadece şunu yaz:\n"
+    "ANLADIM\n\n"
     "Kurallar:\n"
-    "- Sadece bu iki formattan birini yaz; selamlama, açıklama veya <think> bloğu ekleme.\n"
-    "- Cevap anlaşılıyorsa ısrar etme, fazladan detay isteme: ANLADIM yaz.\n"
-    "- Sorduğun sorunun dışına çıkma, yeni konu açma.\n"
-    "- NOT satırı kullanıcının notuna aynen eklenecek: doğrudan notun dili ile yaz, "
-    "'kullanıcı dedi ki' gibi ifadeler kullanma ve uydurma bilgi ekleme."
+    "- Sadece bu formatlardan birini yaz; selamlama, açıklama veya <think> bloğu ekleme.\n"
+    "- KARSI yapıştırma bir itiraz olmasın: kullanıcının kendi cümlesindeki zayıf yeri göster.\n"
+    "- Bir cevabı iki kere aynı gerekçeyle tartışma; tartıştıysan ve kullanıcı gerekçesini "
+    "verdiyse artık kabul et.\n"
+    "- NOT satırı kullanıcının notuna aynen eklenecek: notun dili ile yaz, 'kullanıcı dedi ki' "
+    "deme, uydurma bilgi ekleme, sohbeti özetleme.\n"
+    "- NOT satırı KAPANIŞ cümlesi olmasın. 'Sonuç olarak', 'özetle', 'böylece tamamlandı' gibi "
+    "ifadeler yasak; not okunduğunda üstüne yazılacak gibi dursun.\n"
+    "- Emin değilsen nota yazdırma: D seçeneği her zaman uydurmaktan iyidir."
 )
 
 CHAT_ANSWER_PROMPT = (
     "/no_think\n"
-    "Sen bir proje fikri geliştirme asistanısın. Kullanıcıya bir soru sormuştun, ama o şimdi "
+    "Sen, yazılım tasarlayan birinin yanında duran bir mimari danışmanısın. Kullanıcıya bir soru "
+    "sormuştun, ama o şimdi "
     "SANA soru soruyor. Sırayla:\n"
     "1) Onun sorusuna kısaca cevap ver (en fazla 3 cümle, gerekiyorsa somut bir örnek).\n"
     "2) Sonra tek cümleyle kendi sorunu hatırlat.\n\n"
@@ -114,10 +189,15 @@ CHAT_ANSWER_PROMPT = (
 SUMMARIZE_SYSTEM_PROMPT = (
     "/no_think\n"
     "Aşağıda bir kullanıcı ile bir asistan arasında, kullanıcının proje fikri hakkında geçen bir "
-    "sohbet var. Bu sohbette netleşen fikri veya kararı, kullanıcının not defterine doğrudan "
-    "eklenebilecek şekilde, akıcı ve düzenli bir Türkçe metin (gerekirse madde işaretli liste) "
-    "olarak yaz. Sohbeti özetleme; sohbetten çıkan SONUCU yaz. Başka açıklama ekleme, doğrudan "
-    "metnin kendisini yaz."
+    "sohbet var. Bu sohbette VERİLEN KARARI, kullanıcının not defterine doğrudan eklenebilecek "
+    "şekilde yaz.\n\n"
+    "Kurallar:\n"
+    "- En fazla 2 cümle. Uzun yazarsan kullanıcı kendi notunu okumaz.\n"
+    "- Notun kendi diliyle yaz: 'kullanıcı', 'asistan', 'sohbette' gibi kelimeler geçmesin.\n"
+    "- Sohbeti özetleme; sohbetten çıkan kararı yaz.\n"
+    "- Kapanış cümlesi yazma ('sonuç olarak', 'özetle', 'böylece'). Metin, üstüne yazmaya devam "
+    "edilecekmiş gibi açık kalsın.\n"
+    "- Başka açıklama ekleme, doğrudan metnin kendisini yaz."
 )
 
 
@@ -348,14 +428,20 @@ def parse_response(raw: str) -> dict:
 
 
 def parse_chat_reply(raw: str) -> dict:
-    """Did the model understand the answer, or does it need to keep asking?
+    """What the assistant decided to do with the answer it was given.
 
-    Returns {"type": "understood", "note": <text for the note>} or
-    {"type": "question", "text": <follow-up>}.
+    {"type": "understood", "note": <text for the note, may be empty>},
+    {"type": "question", "text": …} or {"type": "challenge", "text": …} —
+    a challenge keeps the thread open exactly like a question, but it is the
+    assistant pushing back rather than failing to understand.
     """
     text = _strip_think(raw).strip()
     if not text:
         return {"type": "question", "text": "Bunu biraz daha açar mısın?"}
+
+    counter = re.match(r"^\s*(?:KARSI|KARŞI)\s*:?\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+    if counter:
+        return {"type": "challenge", "text": counter.group(1).strip()}
 
     note_match = re.search(r"^\s*NOT\s*:\s*", text, re.IGNORECASE | re.MULTILINE)
     if re.match(r"^\s*ANLADIM", text, re.IGNORECASE) or note_match:
@@ -374,7 +460,8 @@ def parse_chat_reply(raw: str) -> dict:
 
 def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
                    on_chunk=None, provider=None, span: list[int] | None = None,
-                   should_cancel=None, on_usage=None, coverage: str = "") -> dict:
+                   should_cancel=None, on_usage=None, coverage: str = "", stage: str = "",
+                   domain: str = "") -> dict:
     """Send the whole note (plus open questions) to the local model and get back
     a structured event: a net-effect no-op, a question, a resolved question, or
     an edit suggestion.
@@ -384,6 +471,10 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     block before the real answer, and this lets the UI show that thinking live
     instead of sitting on a dead spinner."""
     parts = [note_context(full_text, span)]
+    if domain:
+        parts.append(domain)
+    if stage:
+        parts.append(stage)
     if open_questions:
         listed = "\n".join(f"{i}. {q}" for i, q in enumerate(open_questions, start=1))
         parts.append(f"[AÇIK SORULAR]\n{listed}")
@@ -402,9 +493,21 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     return parse_response(_strip_think(content))
 
 
-def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None) -> str:
-    """Multi-turn conversation about a question the assistant raised."""
-    system = f"{CHAT_SYSTEM_PROMPT}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+SETTLE_HINT = (
+    "\n\nBu konu yeterince tartışıldı: artık KARSI yazma. Kullanıcının verdiği cevabı kabul et "
+    "ve C ya da D seçeneğini kullan."
+)
+
+
+def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None,
+               settle: bool = False, domain: str = "") -> str:
+    """Multi-turn conversation about a question the assistant raised.
+
+    `settle` goes in once the back-and-forth has run long enough: the assistant
+    keeps its judgement but stops pushing, so a thread always has an end."""
+    system = (f"{CHAT_SYSTEM_PROMPT}{SETTLE_HINT if settle else ''}"
+              f"{chr(10) + chr(10) + domain if domain else ''}"
+              f"\n\nNot bağlamı:\n{note_excerpt[-2000:]}")
     content = _complete(
         [{"role": "system", "content": system}] + history,
         temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,

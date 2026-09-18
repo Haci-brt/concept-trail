@@ -8,13 +8,10 @@ import { esc, splitSentence, toast } from "./util.js";
 const FLASH_MS = 4000;
 
 export class HudCard {
-  /** onChange(visible) fires after every render — the overlay resizes itself from it.
-   *  onTyping(on) tells the desktop shell to accept keystrokes while the writer
-   *  is answering inside the card (the HUD refuses focus the rest of the time). */
-  constructor(host, { onChange, onTyping } = {}) {
+  /** onChange(visible) fires after every render — the overlay resizes itself from it. */
+  constructor(host, { onChange } = {}) {
     this.host = host;
     this.onChange = onChange;
-    this.onTyping = onTyping;
     this.hud = { event: null, remaining: 0 };
     this.busy = null;
     this.thinking = null;
@@ -23,13 +20,8 @@ export class HudCard {
     this.editing = null;    // the proposal being reworded
     this._flashTimer = 0;
     this._lastKey = "";
-    this._typing = false;
     host.addEventListener("click", (e) => this._click(e));
     host.addEventListener("keydown", (e) => this._key(e));
-    host.addEventListener("focusin", (e) => { if (e.target.closest(".hud-input")) this._typingMode(true); });
-    host.addEventListener("focusout", (e) => {
-      if (e.target.closest(".hud-input") && !this.host.contains(e.relatedTarget)) this._typingMode(false);
-    });
   }
 
   setHud(hud) {
@@ -37,14 +29,7 @@ export class HudCard {
     const id = this.hud.event?.id;
     if (this.thread && this.thread.eventId !== id) this.thread = null;
     if (this.editing && this.editing !== id) this.editing = null;
-    if (!id) this._typingMode(false);
     this.render();
-  }
-
-  _typingMode(on) {
-    if (this._typing === on) return;
-    this._typing = on;
-    this.onTyping?.(on);
   }
 
   setStatus(status) {
@@ -141,7 +126,7 @@ export class HudCard {
     const kind = questionKind(ev);
     const [title, sub] = splitSentence(reply ? reply.text : ev.text);
     const eyebrow = reply
-      ? (reply.answered ? "Asistanın cevabı" : "Devam sorusu")
+      ? (reply.answered ? "Asistanın cevabı" : reply.challenge ? "İtiraz" : "Devam sorusu")
       : `${kind.label} <span class="spark">✦</span>`;
     const waiting = this.thread?.eventId === ev.id && this.thread.busy;
     return `<div class="hud-card kind-question tone-${kind.tone}" data-id="${esc(ev.id)}">
@@ -278,7 +263,6 @@ export class HudCard {
         ...(act === "approve" && rewritten ? { text: rewritten } : {}),
       });
       this.editing = null;
-      this._typingMode(false);
     } catch (err) {
       toast(err.message, "error");
       if (btn) btn.disabled = false;
@@ -303,7 +287,10 @@ export class HudCard {
           this.render();
         } else if (u.type === "done") {
           // when the assistant has understood, its proposal takes the card over
-          this.thread = u.proposal ? null : { eventId: ev.id, busy: false, text: u.node.text, answered: u.answered };
+          this.thread = u.proposal ? null : {
+            eventId: ev.id, busy: false, text: u.node.text,
+            answered: u.answered, challenge: u.challenge,
+          };
           this.render();
         } else if (u.type === "error") {
           this.thread = null;

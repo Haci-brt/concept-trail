@@ -192,6 +192,8 @@ kbd {
 .t-effect { background: var(--teal-soft); color: #5eead4; border-color: rgba(45, 212, 191, 0.24); }
 .t-scope { background: rgba(167, 139, 250, 0.12); color: #c4b5fd; border-color: rgba(167, 139, 250, 0.26); }
 .t-inspire { background: var(--pink-soft); color: #f9a8d4; border-color: rgba(244, 114, 182, 0.26); }
+.t-data { background: rgba(125, 211, 252, 0.12); color: #7dd3fc; border-color: rgba(125, 211, 252, 0.26); }
+.t-risk { background: var(--red-soft); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }
 .t-section { background: rgba(255, 255, 255, 0.06); color: var(--text-2); border-color: var(--border-strong); }
 
 .c-question { color: var(--accent-strong); }
@@ -206,6 +208,8 @@ kbd {
 .c-effect { color: #5eead4; }
 .c-scope { color: #c4b5fd; }
 .c-inspire { color: #f9a8d4; }
+.c-data { color: #7dd3fc; }
+.c-risk { color: #fca5a5; }
 
 /* ---------- HUD card (in-page and the desktop overlay) ---------- */
 .hud-card {

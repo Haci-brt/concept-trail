@@ -15,7 +15,12 @@ LAUNCH_SCRIPTS = {
     # gone from disk (see project_qwen38_opt memory) — it was a dead button
     # that only errored on click. Re-add once it points at a real model.
     "Qwen3.8 Flash-Next — sohbet (8899)": Path.home() / "qwen38-opt" / "run_flashnext.sh",
-    "Qwen3-4B Instruct — hızlı analiz (8901)": Path.home() / "qwen38-opt" / "run_small.sh",
+    # the CPU build has no CUDA at all, so -ngl is ignored there and an analysis
+    # takes 1-2 minutes; the ik_llama build puts the same model on the GPU and
+    # the same analysis takes under a second. Only one of these fits next to
+    # Flash-Next on 8 GB of VRAM.
+    "Qwen3-4B Instruct — hızlı analiz, GPU (8901)": Path.home() / "qwen38-opt" / "run_small_gpu.sh",
+    "Qwen3-4B Instruct — hızlı analiz, CPU (8901)": Path.home() / "qwen38-opt" / "run_small.sh",
 }
 
 

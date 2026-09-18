@@ -9,22 +9,29 @@ import { desktopCall } from "./desktop.js";
 import { HudCard } from "./hudcard.js";
 
 const host = document.getElementById("card");
-let lastReport = "";
+const STEP = 8;          // ignore sub-pixel reflow: the window must not twitch
+let lastVisible = null;
+let lastHeight = 0;
 
 function report(visible) {
-  const height = visible ? Math.ceil(document.body.scrollHeight) : 0;
-  const key = `${visible}:${height}`;
-  if (key === lastReport) return;
-  lastReport = key;
-  desktopCall("setHudState", visible, height);
+  if (!visible) {
+    if (lastVisible === false) return;
+    lastVisible = false;
+    lastHeight = 0;
+    desktopCall("setHudState", false, 0);
+    return;
+  }
+  const height = Math.ceil(document.body.scrollHeight);
+  // a card is on screen: a zero here is a measurement taken mid-render, and
+  // passing it on would hide the window for a frame — which reads as a glitch
+  if (height <= 0) return;
+  if (lastVisible === true && Math.abs(height - lastHeight) < STEP) return;
+  lastVisible = true;
+  lastHeight = height;
+  desktopCall("setHudState", true, height);
 }
 
-const card = new HudCard(host, {
-  onChange: report,
-  // the HUD refuses keyboard focus so it can never steal a keystroke; while the
-  // writer is answering inside it, the shell hands it focus and takes it back
-  onTyping: (on) => desktopCall("setTypingMode", on),
-});
+const card = new HudCard(host, { onChange: report });
 
 // once visible, fonts and wrapping can still settle — re-measure then
 new ResizeObserver(() => report(Boolean(host.firstElementChild))).observe(host);

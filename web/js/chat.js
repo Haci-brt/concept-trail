@@ -189,7 +189,11 @@ export class ChatDrawer {
           pending.className = "msg assistant";
           pending.textContent = u.node.text;
           if (u.proposal) this._proposal(u.proposal);
-          else if (!u.understood) pending.classList.add(u.answered ? "answered" : "followup");
+          else if (!u.understood) {
+            // being argued with is the point, so it must not look like a plain follow-up
+            pending.classList.add(u.answered ? "answered" : (u.challenge ? "challenge" : "followup"));
+            if (u.challenge) pending.prepend(html(`<div class="msg-tag">${icon("alert", 12)}İtiraz</div>`));
+          }
           this._scroll();
         } else if (u.type === "error") {
           pending.className = "msg error";

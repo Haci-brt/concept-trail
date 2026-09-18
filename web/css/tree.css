@@ -46,6 +46,8 @@
 .edge-g.tone-effect { --tone: #2dd4bf; }
 .edge-g.tone-scope { --tone: #c4b5fd; }
 .edge-g.tone-inspire { --tone: #f472b6; }
+.edge-g.tone-data { --tone: #7dd3fc; }
+.edge-g.tone-risk { --tone: #f87171; }
 .edge-g.leaving { opacity: 0; }
 .edge {
   fill: none;

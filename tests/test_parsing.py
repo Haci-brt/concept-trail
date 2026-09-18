@@ -95,6 +95,16 @@ def test_a_follow_up_question_keeps_the_thread_open():
         "type": "question", "text": "Kaç kayıt birikmesini bekliyorsun?"}
 
 
+def test_pushing_back_is_its_own_kind_of_reply():
+    reply = parse_chat_reply("KARSI: Bu bir karar değil. Sınırı nerede çizersin?")
+    assert reply == {"type": "challenge", "text": "Bu bir karar değil. Sınırı nerede çizersin?"}
+    assert parse_chat_reply("KARŞI: Yetmedi. Neden?")["type"] == "challenge"
+
+
+def test_understanding_with_nothing_to_add_leaves_the_note_text_empty():
+    assert parse_chat_reply("ANLADIM") == {"type": "understood", "note": ""}
+
+
 def test_an_untagged_reply_ending_in_a_question_mark_is_a_question():
     assert parse_chat_reply("Peki bunları kim dinleyecek?")["type"] == "question"
 

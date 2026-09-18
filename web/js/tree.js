@@ -39,6 +39,9 @@ export const QUESTION_KINDS = {
   kapsam: { label: "Kapsam", tone: "scope", icon: "fit" },
   ilham: { label: "İlham", tone: "inspire", icon: "sparkles" },
   netlestirme: { label: "Netleştirme", tone: "question", icon: "questionSquare" },
+  veri: { label: "Veri", tone: "data", icon: "hash" },
+  risk: { label: "Risk", tone: "risk", icon: "alert" },
+  sinir: { label: "Sınır", tone: "scope", icon: "columns" },
   soru: { label: "Soru", tone: "question", icon: "questionSquare" },
 };
 
