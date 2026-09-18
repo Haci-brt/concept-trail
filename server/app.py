@@ -23,6 +23,7 @@ from server.render import render
 from server.settings import APP_ID, LAUNCH_SCRIPTS, VERSION, WEB_DIR, Settings
 from server.store import HistoryStore, NoteStore, _atomic_write_json
 from server.vault import Vault
+from server.versions import Versions
 
 
 class LocalOnlyGuard:
@@ -63,6 +64,7 @@ class LocalOnlyGuard:
 class NoteWrite(BaseModel):
     path: str
     content: str
+    reason: str = "yazma"      # "asistan" when the editor is applying an approved write
 
 
 class CreateNote(BaseModel):
@@ -95,6 +97,11 @@ class ApplyEditBody(BaseModel):
     original: str
     replacement: str
     event_id: str
+
+
+class RestoreBody(BaseModel):
+    path: str
+    version: str
 
 
 class AppendBody(BaseModel):
@@ -151,6 +158,7 @@ def create_app(settings: Settings) -> FastAPI:
     history = HistoryStore(vault)
     broker = Broker()
     providers = ProviderRegistry()
+    versions = Versions(vault)
     assistant = Assistant(vault, notes, history, broker, providers)
     session_file = vault.meta_dir / "session.json"
 
@@ -170,6 +178,13 @@ def create_app(settings: Settings) -> FastAPI:
 
     def client_of(request: Request) -> str | None:
         return request.headers.get("x-client-id")
+
+    def _current_text(rel: str) -> str | None:
+        """What the note says right now, for the snapshot taken before a write."""
+        try:
+            return vault.read_note(rel)["content"]
+        except Exception:
+            return None
 
     # ---- app / realtime ----
     @app.get("/api/state")
@@ -275,6 +290,7 @@ def create_app(settings: Settings) -> FastAPI:
         new_rel = vault.rename(body.path, body.name)
         if new_rel != body.path:
             assistant.moved(body.path, new_rel)
+            versions.moved(body.path, new_rel)
             broker.publish("vault_changed", {"renamed": [body.path, new_rel]})
         return {"path": new_rel}
 
@@ -282,6 +298,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def move(body: MoveBody):
         new_rel = vault.move(body.path, body.dir)
         assistant.moved(body.path, new_rel)
+        versions.moved(body.path, new_rel)
         broker.publish("vault_changed", {"renamed": [body.path, new_rel]})
         return {"path": new_rel}
 
@@ -289,6 +306,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def trash(body: PathBody):
         trash_name = vault.trash(body.path)
         assistant.trashed(body.path, trash_name)
+        versions.trashed(body.path)
         broker.publish("vault_changed", {"trashed": body.path})
         return {"ok": True}
 
@@ -303,9 +321,11 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.put("/api/notes")
     def write_note(body: NoteWrite, request: Request):
+        previous = _current_text(body.path)
         result = vault.write_note(body.path, body.content)
+        snapshot = versions.save(body.path, previous, body.reason)
         broker.publish("note_changed", {**result, "client": client_of(request)})
-        return result
+        return {**result, "version": snapshot["id"] if snapshot else None}
 
     @app.post("/api/notes/create")
     def create_note(body: CreateNote):
@@ -321,8 +341,9 @@ def create_app(settings: Settings) -> FastAPI:
         if body.original not in content:
             return {"applied": False}
         result = vault.write_note(body.path, content.replace(body.original, body.replacement, 1))
+        snapshot = versions.save(body.path, content, "duzenleme")
         broker.publish("note_changed", {**result, "client": None})
-        return {"applied": True}
+        return {"applied": True, "version": snapshot["id"] if snapshot else None}
 
     @app.post("/api/notes/append")
     async def append_to_note(body: AppendBody):
@@ -332,8 +353,27 @@ def create_app(settings: Settings) -> FastAPI:
         content = vault.read_note(body.path)["content"]
         gap = "" if not content or content.endswith("\n\n") else ("\n" if content.endswith("\n") else "\n\n")
         result = vault.write_note(body.path, f"{content}{gap}{body.text.strip()}\n")
+        snapshot = versions.save(body.path, content, "asistan")
         broker.publish("note_changed", {**result, "client": None})
-        return {"applied": True}
+        return {"applied": True, "version": snapshot["id"] if snapshot else None}
+
+    @app.get("/api/notes/versions")
+    def list_versions(path: str):
+        """Earlier states of this note, newest first."""
+        return {"versions": versions.list(path)}
+
+    @app.post("/api/notes/restore")
+    def restore_version(body: RestoreBody, request: Request):
+        """Put an earlier state back — keeping the current one, so restoring is
+        itself undoable."""
+        text = versions.read(body.path, body.version)
+        current = vault.read_note(body.path)["content"]
+        if text == current:
+            return {"restored": False, "content": current}
+        result = vault.write_note(body.path, text)
+        versions.save(body.path, current, "geri")
+        broker.publish("note_changed", {**result, "client": client_of(request)})
+        return {"restored": True, "content": text, **result}
 
     @app.post("/api/render")
     def render_markdown(body: RenderBody):
