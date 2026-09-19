@@ -7,7 +7,11 @@ Set FIKIR_LLM_URL to point at a different local server.
 import json
 import os
 import re
+import time
+
 import requests
+
+from server import tools as tools_module
 
 # Who serves a request is decided by server/providers.py; this module only
 # knows how to speak the OpenAI chat-completions shape to whatever it is given.
@@ -173,6 +177,23 @@ def is_server_up(provider=None, timeout: float = 2.0) -> bool:
         return False
 
 
+def supports_tools(provider, timeout: float = 4.0) -> bool | None:
+    """Does this endpoint accept `tools`? Asks llama.cpp's /props, which reports
+    what the loaded chat template can do — no generation, no model call. Returns
+    None when the endpoint does not answer that question (most remote APIs)."""
+    if provider.health != "llama":
+        return None
+    try:
+        r = requests.get(f"{provider.base_url.rstrip('/')}/props", timeout=timeout)
+        r.raise_for_status()
+        caps = r.json().get("chat_template_caps") or {}
+    except Exception:
+        return None
+    if not caps:
+        return None
+    return bool(caps.get("supports_tools") and caps.get("supports_tool_calls"))
+
+
 def probe(provider, timeout: float = 30.0) -> str:
     """Smallest possible real call — proves the address, key and model name work."""
     return _complete(
@@ -281,6 +302,102 @@ def _complete(messages: list[dict], *, temperature: float, max_tokens: int, on_c
             else:
                 on_chunk(content)
     return content
+
+
+class ToolBudget(Exception):
+    """The loop ran out of steps or seconds before the model was finished."""
+
+
+def _one_turn(messages, *, temperature, max_tokens, provider, tools, timeout, on_usage):
+    """A single non-streaming completion that may come back asking for tools."""
+    payload = provider.build_payload(messages, temperature, max_tokens, False, tools=tools)
+    r = requests.post(provider.chat_url, json=payload, headers=provider.headers(),
+                      timeout=timeout or provider.timeout)
+    _raise_for_api(r)
+    body = r.json()
+    _report_usage(on_usage, provider, body.get("usage"))
+    return body["choices"][0]["message"]
+
+
+def complete_with_tools(messages: list[dict], *, hub, temperature: float = 0.4,
+                        max_tokens: int = CHAT_MAX_TOKENS, provider=None, tool_names=None,
+                        max_steps: int = 4, budget_s: float = 240.0, timeout: float | None = None,
+                        on_usage=None, on_step=None) -> dict:
+    """Let the model use the research tools, then answer.
+
+    The provider must declare tool support: sending `tools` to an endpoint that
+    does not understand them fails the whole request, so callers check first.
+
+    Every turn the model asks for a tool we keep its assistant message exactly
+    as it came — the ids inside it are what the results are matched to — run
+    the calls, and hand each result back as a `tool` message carrying the same
+    tool_call_id. A call that cannot be made (unknown name, malformed
+    arguments, timeout) also goes back as a tool message, so the model can
+    correct itself instead of hanging.
+
+    Returns {"content", "messages", "calls"}; `calls` is what actually ran.
+    """
+    provider = provider or default_provider()
+    if not getattr(provider, "tools", False):
+        raise ProviderError("Bu sağlayıcı araç çağrısı desteklemiyor.")
+    definitions = hub.function_tools(tool_names)
+    if not definitions:
+        raise ProviderError("Kayıtlı araç yok.")
+
+    thread = list(messages)
+    calls: list[dict] = []
+    deadline = time.monotonic() + budget_s
+    for step in range(max_steps):
+        if time.monotonic() > deadline:
+            raise ToolBudget(f"Araç bütçesi doldu ({budget_s:.0f} sn).")
+        message = _one_turn(thread, temperature=temperature, max_tokens=max_tokens,
+                            provider=provider, tools=definitions, timeout=timeout, on_usage=on_usage)
+        requested = message.get("tool_calls") or []
+        if not requested:
+            return {"content": _strip_think(message.get("content") or ""),
+                    "messages": thread + [message], "calls": calls}
+        thread.append(message)          # verbatim: the ids live in here
+        for call in requested:
+            record = _run_one_call(hub, call, on_step)
+            calls.append(record)
+            thread.append({"role": "tool", "tool_call_id": call.get("id", ""),
+                           "name": record["name"], "content": record["content"]})
+        if time.monotonic() > deadline:
+            raise ToolBudget(f"Araç bütçesi doldu ({budget_s:.0f} sn).")
+    raise ToolBudget(f"Model {max_steps} adımda araç kullanmayı bırakmadı.")
+
+
+def _run_one_call(hub, call: dict, on_step=None) -> dict:
+    """One requested call: validate, route, and never turn a failure into a
+    success. The tool's own error text goes back to the model as-is."""
+    function = call.get("function") or {}
+    name = function.get("name") or ""
+    raw_args = function.get("arguments")
+    started = time.monotonic()
+    try:
+        arguments = json.loads(raw_args) if isinstance(raw_args, str) and raw_args.strip() else (raw_args or {})
+    except json.JSONDecodeError as exc:
+        arguments, failure = {}, f"Argümanlar geçerli JSON değil: {exc}"
+    else:
+        failure = None if isinstance(arguments, dict) else "Araç argümanları bir JSON nesnesi olmalı."
+
+    if failure is None:
+        try:
+            outcome = hub.call_sync(name, arguments)
+            content = tools_module.result_for_model(name, outcome)
+            ok = outcome["ok"]
+        except Exception as exc:                       # unknown tool, bad args, timeout, dead server
+            ok, content = False, json.dumps(
+                {"tool": name, "ok": False, "error": True,
+                 "message": getattr(exc, "message", None) or str(exc)}, ensure_ascii=False)
+    else:
+        ok, content = False, json.dumps({"tool": name, "ok": False, "error": True,
+                                         "message": failure}, ensure_ascii=False)
+    record = {"id": call.get("id", ""), "name": name, "arguments": arguments, "ok": ok,
+              "seconds": round(time.monotonic() - started, 1), "content": content}
+    if on_step:
+        on_step(record)
+    return record
 
 
 def _extract_field(text: str, labels: list[str]) -> str:

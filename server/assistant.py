@@ -266,12 +266,14 @@ def thinking_preview(accumulated: str, limit: int | None = 220) -> dict:
 
 
 class Assistant:
-    def __init__(self, vault, notes, history, broker, providers: ProviderRegistry | None = None):
+    def __init__(self, vault, notes, history, broker, providers: ProviderRegistry | None = None,
+                 tool_hub=None):
         self.vault = vault
         self.notes = notes
         self.history = history
         self.broker = broker
         self.providers = providers or ProviderRegistry()
+        self.tool_hub = tool_hub
         self.budget = Budget(vault)
         self.busy: str | None = None
         self.queue: list[dict] = []

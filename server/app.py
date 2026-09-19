@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from core import llm_client
 from server.assistant import Assistant
 from server.broker import Broker
 from server.errors import ApiError
@@ -22,6 +23,7 @@ from server.providers import ProviderRegistry
 from server.render import render
 from server.settings import APP_ID, LAUNCH_SCRIPTS, VERSION, WEB_DIR, Settings
 from server.store import HistoryStore, NoteStore, _atomic_write_json
+from server.tools import ToolHub
 from server.vault import Vault
 
 
@@ -136,6 +138,11 @@ class LaunchBody(BaseModel):
     name: str | None = None
 
 
+class ToolCallBody(BaseModel):
+    name: str
+    arguments: dict | None = None
+
+
 class BindBody(BaseModel):
     role: str
     providers: list[str]
@@ -151,15 +158,20 @@ def create_app(settings: Settings) -> FastAPI:
     history = HistoryStore(vault)
     broker = Broker()
     providers = ProviderRegistry()
-    assistant = Assistant(vault, notes, history, broker, providers)
+    tool_hub = ToolHub()
+    assistant = Assistant(vault, notes, history, broker, providers, tool_hub)
     session_file = vault.meta_dir / "session.json"
 
     @asynccontextmanager
     async def lifespan(_app):
         broker.bind(asyncio.get_running_loop())
+        # the research servers are separate processes: started once here and
+        # kept open, never one per call, and shut down with the app
+        await tool_hub.start()
         assistant.start()
         yield
         await assistant.stop()
+        await tool_hub.stop()
 
     app = FastAPI(title="Fikir Not Defteri", version=VERSION, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
@@ -177,6 +189,26 @@ def create_app(settings: Settings) -> FastAPI:
         return {"app": APP_ID, "version": VERSION, "vault": vault.name,
                 "scripts": list(LAUNCH_SCRIPTS), **assistant.snapshot(),
                 "providers": providers.public()}
+
+    # ---- research tools (two MCP stdio servers) ----
+    @app.get("/api/tools")
+    async def list_tools():
+        """What was discovered at startup — names and schemas come from the
+        servers themselves — plus whether the bound providers could use them."""
+        support = {}
+        for role in ("chat", "analysis", "summary"):
+            provider = providers.pick(role)
+            if provider is None:
+                continue
+            support[role] = {"provider": provider.id, "enabled": provider.tools,
+                             "endpoint_reports": await asyncio.to_thread(llm_client.supports_tools, provider)}
+        return {**tool_hub.public(), "definitions": tool_hub.function_tools(), "providers": support}
+
+    @app.post("/api/tools/call")
+    async def call_tool(body: ToolCallBody):
+        """Run one tool by hand (no model involved). A tool that reports an
+        error comes back with ok=false — never dressed up as a success."""
+        return await tool_hub.call(body.name, body.arguments or {})
 
     # ---- model providers (what the API-key binder edits) ----
     @app.get("/api/providers")

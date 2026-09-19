@@ -137,6 +137,9 @@ export class SettingsDialog {
           <option value="max_completion_tokens"${provider.token_field === "max_completion_tokens" ? " selected" : ""}>max_completion_tokens</option>
         </select></label>
         <label>Zaman aşımı (sn)<input class="field" data-f="timeout" type="number" min="5" max="600" value="${numberOr(provider.timeout, 120)}"></label>
+        <label class="check" title="Model, web/GitHub araştırma araçlarını çağırabilsin (sağlayıcı tool calling desteklemiyorsa istek reddedilir)">
+          <input type="checkbox" data-f="tools"${provider.tools ? " checked" : ""}>Araştırma araçlarını kullanabilir
+        </label>
       </div>
       <div class="p-foot">
         <button class="btn btn-sm" data-act="test">${icon("refresh", 13)}Test et</button>
@@ -162,6 +165,7 @@ export class SettingsDialog {
         health: field("health"),
         token_field: field("token_field"),
         timeout: numberOr(field("timeout"), 120),
+        tools: card.querySelector('[data-f="tools"]').checked,
         extras: JSON.parse(card.dataset.extras || "{}"),
         enabled: !card.classList.contains("off"),
       };

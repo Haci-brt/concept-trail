@@ -45,6 +45,7 @@ class Provider:
     token_field: str = "max_tokens"              # newer OpenAI models want max_completion_tokens
     timeout: float = 120.0
     enabled: bool = True
+    tools: bool = False        # does this endpoint accept `tools` / return tool_calls?
 
     @property
     def chat_url(self) -> str:
@@ -70,7 +71,8 @@ class Provider:
     def headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
-    def build_payload(self, messages: list[dict], temperature: float, max_tokens: int, stream: bool) -> dict:
+    def build_payload(self, messages: list[dict], temperature: float, max_tokens: int, stream: bool,
+                      tools: list[dict] | None = None, tool_choice: str | None = None) -> dict:
         payload = {
             "messages": messages,
             "temperature": temperature,
@@ -80,6 +82,11 @@ class Provider:
         }
         if self.model:
             payload["model"] = self.model
+        if tools:
+            # only ever sent to a provider that declares it understands them:
+            # an endpoint that does not will reject the whole request
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
         return payload
 
     def public(self) -> dict:
@@ -87,7 +94,7 @@ class Provider:
             "id": self.id, "label": self.label, "base_url": self.base_url, "model": self.model,
             "kind": self.kind, "health": self.health, "extras": self.extras,
             "token_field": self.token_field, "timeout": self.timeout, "enabled": self.enabled,
-            "has_key": bool(self.api_key),
+            "tools": self.tools, "has_key": bool(self.api_key),
         }
         data["api_key"] = KEY_MASK if self.api_key else ""
         return data
@@ -259,6 +266,7 @@ class ProviderRegistry:
                 "token_field": raw.get("token_field") or "max_tokens",
                 "timeout": float(raw.get("timeout") or 120.0),
                 "enabled": bool(raw.get("enabled", True)),
+                "tools": bool(raw.get("tools", False)),
             })
 
         roles = {}

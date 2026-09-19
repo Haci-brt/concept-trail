@@ -826,3 +826,13 @@ body {
   .p-grid, .budget-limits { grid-template-columns: minmax(0, 1fr); }
   .role-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+.provider .check {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.provider .check input { accent-color: var(--accent); }

@@ -5,3 +5,5 @@ markdown-it-py>=3.0
 # desktop window + HUD overlay (not needed for --browser / --server)
 PyQt6>=6.7
 PyQt6-WebEngine>=6.7
+# araştırma araçları (web_search / git_search MCP sunucuları)
+mcp>=2,<3

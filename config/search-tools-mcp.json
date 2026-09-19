@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "web_search": {
+      "command": "D:/src/llm-stack/Llm-stack 2.0/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "harness.web_search.mcp_server",
+        "--root",
+        "D:/src/llm-stack/Llm-stack 2.0/runtime/web-search"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONPATH": "D:/src/llm-stack/Llm-stack 2.0"
+      }
+    },
+    "git_search": {
+      "command": "D:/src/llm-stack/Llm-stack 2.0/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "harness.git_search.mcp_server",
+        "--root",
+        "D:/src/llm-stack/Llm-stack 2.0/runtime/github-research"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONPATH": "D:/src/llm-stack/Llm-stack 2.0"
+      }
+    }
+  }
+}
