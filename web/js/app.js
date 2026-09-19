@@ -95,20 +95,24 @@ const tree = new IdeaTree($("#treeView"), {
   },
   ask: (path) => { const tab = tabByPath(path); if (tab) analyze(tab, true); },
   openNote: (path) => { openNote(path); setView("editor"); },
-  openSection: async (path, heading) => {
-    const tab = await openNote(path);
-    setView("editor");
-    let at = 0;
-    for (const line of tab.editor.value.split("\n")) {
-      const match = /^#{1,6}\s+(.*)$/.exec(line);
-      if (match && match[1].trim() === heading) {
-        tab.editor.flash([at, at + line.length], { reveal: true });
-        return;
-      }
-      at += line.length + 1;
-    }
-  },
+  openSection: (path, heading) => goToSection(path, heading),
 });
+
+/** Put the cursor on a heading in the note and flash it — used by the idea
+ *  tree and by the section strip above the preview. */
+async function goToSection(path, heading) {
+  const tab = await openNote(path);
+  setView("editor");
+  let at = 0;
+  for (const line of tab.editor.value.split("\n")) {
+    const match = /^#{1,6}\s+(.*)$/.exec(line);
+    if (match && match[1].trim() === heading) {
+      tab.editor.flash([at, at + line.length], { reveal: true });
+      return;
+    }
+    at += line.length + 1;
+  }
+}
 
 const chat = new ChatDrawer({
   beforeSend: async (path) => { const tab = tabByPath(path); if (tab) await saveTab(tab); },
@@ -873,6 +877,23 @@ async function launchModel(e, index) {
 }
 
 // ---------------------------------------------------------------- preview
+/** The note's own headings, as a strip above the preview: the column stops
+ *  being a mirror with empty space under it and becomes a way to move. */
+function outlineOf(text) {
+  const heads = [];
+  let fence = null;
+  for (const line of text.split("\n")) {
+    const f = /^\s*(```+|~~~+)/.exec(line);
+    if (f) { fence = fence ? null : f[1]; continue; }
+    if (fence) continue;
+    const m = /^(#{2,4})\s+(.+?)\s*$/.exec(line);
+    if (m) heads.push({ level: m[1].length, title: m[2] });
+  }
+  if (heads.length < 2) return "";
+  return `<div class="pv-outline">${heads.slice(0, 24).map((h) =>
+    `<button class="h${h.level}" data-heading="${esc(h.title)}" title="${esc(h.title)} bölümüne git">${esc(h.title)}</button>`).join("")}</div>`;
+}
+
 const renderPreviewSoon = debounce(() => renderPreview(), 220);
 let previewSeq = 0;
 
@@ -892,7 +913,8 @@ async function renderPreview(resetScroll = false) {
     if (seq !== previewSeq || activeTab() !== tab) return;
     const scroll = body.scrollTop;
     body.className = "preview-body";
-    body.innerHTML = `<div class="md">${html.trim() ? html : '<p class="md-empty">Önizlenecek bir şey yok — sol tarafta yazmaya başla.</p>'}</div>`;
+    body.innerHTML = outlineOf(tab.editor.value)
+      + `<div class="md">${html.trim() ? html : '<p class="md-empty">Önizlenecek bir şey yok — sol tarafta yazmaya başla.</p>'}</div>`;
     body.scrollTop = resetScroll ? 0 : scroll;
   } catch { /* keep the last good preview */ }
 }
@@ -913,6 +935,12 @@ function syncPreviewScroll(tab) {
 function wirePreview() {
   $("#preview").addEventListener("click", (e) => {
     const tab = activeTab();
+    const jump = e.target.closest("[data-heading]");
+    if (jump && tab) {
+      // the strip is for moving around the note, not for reading it twice
+      goToSection(tab.path, jump.dataset.heading);
+      return;
+    }
     const box = e.target.closest(".task-cb");
     if (box && tab) {
       e.preventDefault();

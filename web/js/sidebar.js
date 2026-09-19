@@ -31,9 +31,9 @@ export class Sidebar {
           ${icon("folder", 16)}<span class="label vault-name"></span><span class="vault-caret">${icon("chevronUp", 15)}</span>
         </div>
         <div class="vtree" role="tree"></div>
-        <div class="sb-section-head">
+        <div class="sb-section-head" title="Etiket, bir notu konusuna göre bulmanın kısa yolu. Nota eklersin, burada birikir, tıklayınca o konudaki notlar süzülür.">
           ${icon("tag", 15)}<span class="label">Etiketler</span>
-          <button class="icon-btn sm" data-act="add-tag" title="Nota etiket ekle">${icon("plus", 14)}</button>
+          <button class="icon-btn sm" data-act="add-tag" title="Açık nota etiket ekle">${icon("plus", 14)}</button>
         </div>
         <div class="tag-cloud"></div>
       </div>
@@ -102,10 +102,18 @@ export class Sidebar {
   }
 
   _renderTags() {
+    // an empty box with a plus button explains nothing: say what tags are for
+    if (!this.tags.length) {
+      this.tagsEl.innerHTML = `<button class="tag-hint" data-act="add-tag">
+        <span>Etiket, notu konusuna göre bulmanın kısa yolu.</span>
+        <span class="go">${icon("plus", 12)}Açık nota etiket ekle</span>
+      </button>`;
+      return;
+    }
     const shown = this.allTags ? this.tags : this.tags.slice(0, TAG_LIMIT);
     const hidden = this.tags.length - shown.length;
     this.tagsEl.innerHTML =
-      shown.map((t) => `<button class="tag-pill" data-tag="${esc(t.tag)}" title="#${esc(t.tag)} etiketli notlar"># ${esc(t.tag)} <span class="n">${t.count}</span></button>`).join("") +
+      shown.map((t) => `<button class="tag-pill" data-tag="${esc(t.tag)}" title="#${esc(t.tag)} etiketli notları süz"># ${esc(t.tag)} <span class="n">${t.count}</span></button>`).join("") +
       (hidden > 0 ? `<button class="tag-pill" data-act="more-tags">+${hidden}</button>` : "") +
       `<button class="tag-pill add" data-act="add-tag" title="Nota etiket ekle">${icon("plus", 13)}</button>`;
   }

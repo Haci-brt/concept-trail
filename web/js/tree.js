@@ -32,6 +32,9 @@ const TONE = {
 };
 
 // what a question is for — the label and colour it carries through the UI
+const FAR_ZOOM = 0.62;   // below this the cards are unreadable anyway
+const DOT = 15;          // the point a card collapses into
+
 export const QUESTION_KINDS = {
   derinlestirme: { label: "Derinleştirme", tone: "depth", icon: "zoomIn" },
   alternatif: { label: "Alternatif fikir", tone: "idea", icon: "lightbulb" },
@@ -245,6 +248,18 @@ export class IdeaTree {
   }
 
   // ---------- cards ----------
+  /** One line of text for a node, for the tooltip a dot shows. */
+  _plain(item) {
+    const n = item.data || {};
+    if (item.kind === "root") return this.path ? this.path.replace(/\.md$/i, "") : "Not";
+    if (item.kind === "section") return `Bölüm: ${n.name || ""}`;
+    const text = (n.text || item.name || "").replace(/\s+/g, " ").trim();
+    const prefix = item.kind === "question" ? `${questionKind(n).label}: `
+      : item.kind === "summary" ? "Nota eklenme önerisi: "
+      : item.kind === "edit" ? "Düzenleme: " : "";
+    return (prefix + text).slice(0, 160);
+  }
+
   _cardHtml(item) {
     const n = item.data || {};
     const time = n.created ? `<span class="tn-time">${formatClock(n.created)}</span>` : "";
@@ -336,6 +351,7 @@ export class IdeaTree {
       el.className = `tn tn-${item.kind}`;
       el.dataset.id = item.id;
       el.style.width = `${{ root: ROOT_W, section: SECTION_W }[item.kind] || NODE_W}px`;
+      el.style.setProperty("--n", this.cards.size % 12);
       this.cardLayer.append(el);
       card = { el, x: parentCard?.x ?? 0, y: parentCard?.y ?? 0, h: 0, sig: "", entering: true, parentId: parentCard?.id };
       this.cards.set(item.id, card);
@@ -346,6 +362,7 @@ export class IdeaTree {
       const kindClass = item.kind === "question" ? ` k-${questionKind(item.data).tone}` : "";
       card.el.className = `tn tn-${item.kind}${kindClass}${this.selected === item.id ? " selected" : ""}${this.busy && item.kind === "root" ? " busy" : ""}`;
       card.el.innerHTML = this._cardHtml(item);
+      card.el.title = this._plain(item);        // the whole label of a far-view dot
       card.sig = sig;
     }
     card.el.classList.toggle("selected", this.selected === item.id);
@@ -487,11 +504,29 @@ export class IdeaTree {
     this._applyView();
   }
 
-  _drawEdge(item, card, parentCard, initialDepth) {
-    const x1 = parentCard.x + parentCard.w, y1 = parentCard.y + parentCard.h / 2;
-    const x2 = card.x, y2 = card.y + card.h / 2;
+  /** Recompute every edge in place — used when the view crosses into (or out
+   *  of) the far view, where the endpoints move from card edges to dots. */
+  _redrawEdges() {
+    for (const edge of this.edges.values()) {
+      if (!edge.ends) continue;
+      const d = this._edgePath(edge.ends.card, edge.ends.parentCard);
+      edge.base.style.d = `path("${d}")`;
+      edge.flow.style.d = `path("${d}")`;
+    }
+  }
+
+  _edgePath(card, parentCard) {
+    const w = this.far ? DOT : parentCard.w;
+    const ph = this.far ? DOT : parentCard.h;
+    const ch = this.far ? DOT : card.h;
+    const x1 = parentCard.x + w, y1 = parentCard.y + ph / 2;
+    const x2 = card.x, y2 = card.y + ch / 2;
     const dx = Math.max(40, (x2 - x1) * 0.55);
-    const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  }
+
+  _drawEdge(item, card, parentCard, initialDepth) {
+    const d = this._edgePath(card, parentCard);
     const tone = item.kind === "question" ? questionKind(item.data).tone : (TONE[item.kind] || "question");
     const flowing = item.kind === "question" || item.kind === "ghost";
     let edge = this.edges.get(item.id);
@@ -506,6 +541,7 @@ export class IdeaTree {
       this.svg.append(g);
       edge = { g, base, flow };
       this.edges.set(item.id, edge);
+      edge.ends = { card, parentCard };
       for (const p of [base, flow]) { p.style.transition = "none"; p.style.d = `path("${d}")`; }
       g.setAttribute("class", `edge-g tone-${tone}${flowing ? " flowing" : ""}${item.kind === "ghost" ? " ghost" : ""}`);
       base.style.strokeDashoffset = "1";
@@ -518,6 +554,7 @@ export class IdeaTree {
       });
     } else {
       edge.g.setAttribute("class", `edge-g tone-${tone}${flowing ? " flowing" : ""}${item.kind === "ghost" ? " ghost" : ""}`);
+      edge.ends = { card, parentCard };
       edge.base.style.d = `path("${d}")`;
       edge.flow.style.d = `path("${d}")`;
     }
@@ -540,6 +577,12 @@ export class IdeaTree {
     this.viewport.style.backgroundSize = `${grid}px ${grid}px, 100% 100%`;
     this.viewport.style.backgroundPosition = `${x}px ${y}px, 0 0`;
     this.host.querySelector(".zoom-val").textContent = `${Math.round(k * 100)}%`;
+    const far = k < FAR_ZOOM;
+    if (far !== this.far) {
+      this.far = far;
+      this.host.classList.toggle("far", far);
+      this._redrawEdges();     // the threads now meet the dots, not the cards
+    }
     if (glide) {
       clearTimeout(this._glideTimer);
       this._glideTimer = setTimeout(() => { this.world.classList.remove("glide"); this.viewport.classList.remove("glide"); }, 560);
@@ -639,6 +682,21 @@ export class IdeaTree {
   _click(e) {
     const act = e.target.closest("[data-act]")?.dataset.act;
     const cardEl = e.target.closest(".tn");
+    if (this.far) {
+      const dot = e.target.closest(".tn");
+      if (dot) {
+        // come back down to the point you pointed at
+        const card = this.cards.get(dot.dataset.id);
+        if (card) {
+          const r = this.viewport.getBoundingClientRect();
+          this.view.x = r.width / 2 - (card.x + DOT / 2) * 1;
+          this.view.y = r.height / 2 - (card.y + DOT / 2) * 1;
+          this.selected = dot.dataset.id;
+          this._zoomTo(1);
+          return;
+        }
+      }
+    }
     if (act === "zoom-in") return this._zoomBy(1.2);
     if (act === "zoom-out") return this._zoomBy(1 / 1.2);
     if (act === "fit") return this.fit(true);

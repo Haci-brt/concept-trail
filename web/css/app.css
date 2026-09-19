@@ -296,7 +296,7 @@ body {
 }
 .splitter:hover::after, .splitter.dragging::after { background: var(--accent-border); }
 
-.editor-card, .preview-card { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.editor-card, .preview-card { container-type: inline-size; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .editor-card { border-top-left-radius: 4px; }
 
 .toolbar {
@@ -436,16 +436,16 @@ body {
 .pv-tab.on { background: var(--accent-softer); border-color: rgba(139, 92, 246, 0.3); color: var(--text); }
 .pv-tab.on .ico { color: var(--accent-bright); }
 .preview-head .grow { flex: 1; }
-.preview-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 20px 26px 40vh; }
+.preview-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 18vh; }
 .preview-body.source { font-family: var(--font-mono); font-size: 12.5px; white-space: pre-wrap; color: var(--text-2); line-height: 1.7; }
 
 /* rendered markdown */
-.md { color: var(--text-2); font-size: 14.5px; line-height: 1.7; max-width: 760px; overflow-wrap: break-word; }
+.md { color: var(--text-2); font-size: 14px; line-height: 1.62; max-width: 760px; overflow-wrap: break-word; }
 .md > :first-child { margin-top: 0; }
-.md h1, .md h2, .md h3, .md h4 { color: var(--text); font-family: var(--font-display); line-height: 1.25; margin: 1.3em 0 0.5em; }
-.md h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.3px; }
-.md h2 { font-size: 20px; font-weight: 650; }
-.md h3 { font-size: 16.5px; font-weight: 600; }
+.md h1, .md h2, .md h3, .md h4 { color: var(--text); font-family: var(--font-display); line-height: 1.25; margin: 1.05em 0 0.4em; }
+.md h1 { font-size: clamp(18px, 3.2cqw + 12px, 26px); font-weight: 700; letter-spacing: -0.3px; }
+.md h2 { font-size: clamp(15.5px, 2cqw + 11px, 20px); font-weight: 650; }
+.md h3 { font-size: clamp(14px, 1cqw + 11px, 16.5px); font-weight: 600; }
 .md p { margin: 0.55em 0; }
 .md a { color: var(--accent-bright); text-decoration: underline; text-decoration-color: rgba(196, 181, 253, 0.35); text-underline-offset: 2px; }
 .md strong { color: var(--text); }
@@ -965,3 +965,49 @@ body {
   background: var(--accent);
   opacity: 0.55;
 }
+
+/* ---------- section strip: what the preview column is for besides mirroring ---------- */
+.pv-outline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.pv-outline button {
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.pv-outline button:hover { border-color: var(--border-strong); color: var(--text); background: var(--bg-hover); }
+.pv-outline button.h3 { opacity: 0.75; font-size: 11px; }
+
+/* ---------- tags: say what they are before there are any ---------- */
+.tag-hint {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+.tag-hint:hover { border-color: var(--accent); color: var(--text-2); }
+.tag-hint .go { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-bright); }

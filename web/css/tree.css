@@ -319,3 +319,60 @@
   .tv-legend { display: none; }
   .seg { display: none; }
 }
+
+/* ---------- far view: the note as a constellation ----------
+   Below ~60% zoom the words are unreadable anyway, so the cards stop
+   pretending to be readable and become points of light on their threads.
+   Nothing moves position: the same graph, seen from further away. */
+.tree-view.far .tn {
+  width: 15px !important;
+  height: 15px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--tone, var(--accent));
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.1), 0 0 14px 2px rgba(167, 139, 250, 0.22);
+  opacity: 0.9;
+  overflow: hidden;
+  cursor: zoom-in;
+  animation: dot-breathe 7s ease-in-out infinite;
+  animation-delay: calc(var(--n, 0) * -0.55s);
+  transition: transform 0.3s var(--ease-out), box-shadow 0.3s, opacity 0.3s;
+}
+.tree-view.far .tn > * { display: none; }
+@keyframes dot-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.88; }
+  50%      { transform: scale(1.16); opacity: 1; }
+}
+.tree-view.far .tn:hover {
+  animation-play-state: paused;
+  transform: scale(1.5);
+  box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.16), 0 0 22px 5px rgba(167, 139, 250, 0.38);
+  opacity: 1;
+}
+.tree-view.far .tn.selected {
+  box-shadow: 0 0 0 3px var(--accent), 0 0 20px 4px rgba(167, 139, 250, 0.45);
+}
+/* the root and sections stay a touch larger: the shape of the note is its spine */
+.tree-view.far .tn-root { width: 22px !important; height: 22px; --tone: var(--accent-bright); }
+.tree-view.far .tn-section { width: 18px !important; height: 18px; --tone: #8b7fb0; }
+.tree-view.far .tn-question { --tone: #a78bfa; }
+.tree-view.far .tn-question.k-depth { --tone: #60a5fa; }
+.tree-view.far .tn-question.k-idea { --tone: #fbbf24; }
+.tree-view.far .tn-question.k-effect { --tone: #2dd4bf; }
+.tree-view.far .tn-question.k-scope { --tone: #c4b5fd; }
+.tree-view.far .tn-question.k-inspire { --tone: #f472b6; }
+.tree-view.far .tn-summary { --tone: #fbbf24; }
+.tree-view.far .tn-edit { --tone: #93c5fd; }
+.tree-view.far .tn-resolved, .tree-view.far .tn-thread { --tone: #4ade80; opacity: 0.55; }
+.tree-view.far .tn-ghost { --tone: #6f6885; opacity: 0.4; }
+
+/* threads: thinner, quieter, and slowly flowing */
+.tree-view.far .edge { stroke-width: 1.1; stroke-opacity: 0.45; }
+.tree-view.far .edge-flow { stroke-opacity: 0.5; animation-duration: 6s; }
+.tree-view.far .edge-g.leaving { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-view.far .tn { animation: none; }
+}
