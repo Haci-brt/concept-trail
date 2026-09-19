@@ -116,33 +116,16 @@ export class ChatDrawer {
       <div class="p-text"></div>
       <div class="p-actions">
         <button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}Nota ekle</button>
-        <button class="btn btn-sm" data-act="edit" title="Kendi sözlerinle yaz">${icon("pencil", 13)}Düzenle</button>
         <button class="btn btn-sm" data-act="reject">Vazgeç</button>
       </div>
     </div>`);
-    const body = card.querySelector(".p-text");
-    body.textContent = event.text;
+    card.querySelector(".p-text").textContent = event.text;
     card.addEventListener("click", async (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (!act) return;
-      if (act === "edit") {
-        // rewrite it before it goes in: what you leave here is what the note gets
-        const box = html('<textarea class="p-edit" rows="3"></textarea>');
-        box.value = body.textContent;
-        body.replaceWith(box);
-        card.querySelector('[data-act="edit"]').remove();
-        card.querySelector('[data-act="approve"]').lastChild.textContent = "Böyle ekle";
-        box.focus();
-        box.setSelectionRange(box.value.length, box.value.length);
-        return;
-      }
-      const rewritten = card.querySelector(".p-edit")?.value.trim();
       card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       try {
-        await api.post("/api/assistant/hud", {
-          event_id: event.id, action: act,
-          ...(act === "approve" && rewritten ? { text: rewritten } : {}),
-        });
+        await api.post("/api/assistant/hud", { event_id: event.id, action: act });
         card.classList.add(act === "approve" ? "done" : "dropped");
         card.querySelector(".p-actions").innerHTML =
           act === "approve" ? "Nota eklendi." : "Nota eklenmedi.";
@@ -189,11 +172,7 @@ export class ChatDrawer {
           pending.className = "msg assistant";
           pending.textContent = u.node.text;
           if (u.proposal) this._proposal(u.proposal);
-          else if (!u.understood) {
-            // being argued with is the point, so it must not look like a plain follow-up
-            pending.classList.add(u.answered ? "answered" : (u.challenge ? "challenge" : "followup"));
-            if (u.challenge) pending.prepend(html(`<div class="msg-tag">${icon("alert", 12)}İtiraz</div>`));
-          }
+          else if (!u.understood) pending.classList.add(u.answered ? "answered" : "followup");
           this._scroll();
         } else if (u.type === "error") {
           pending.className = "msg error";

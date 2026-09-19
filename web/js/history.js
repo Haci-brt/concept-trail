@@ -1,6 +1,4 @@
-// The right panel. Not a log: a short list of what is waiting for you in the
-// note you have open. Everything that is already settled moves out of the way
-// into a fold you can open when you want it.
+// "Öneri Geçmişi": every question, edit, resolution and summary, newest first.
 import { openMenu } from "./dialogs.js";
 import { icon } from "./icons.js";
 import { questionKind } from "./tree.js";
@@ -14,6 +12,15 @@ export const KINDS = {
   checked: { label: "İncelendi", icon: "eye", tone: "checked" },
 };
 
+const FILTERS = [
+  ["all", "Tümü"],
+  ["question", "Sorular"],
+  ["edit", "Düzenlemeler"],
+  ["resolved", "Tamamlananlar"],
+  ["summary", "Nota eklenenler"],
+  ["checked", "İncelemeler"],
+];
+
 const STATUS_CHIP = {
   open: ["chip-open", "Açık"],
   resolved: ["chip-done", "Çözüldü"],
@@ -22,29 +29,20 @@ const STATUS_CHIP = {
   rejected: ["chip-rejected", "Reddedildi"],
 };
 
-/** Waiting on you, most pressing first: a proposal blocks the note until you
- *  decide; a question only waits. Within a rank, the newest comes first. */
-const RANK = { summary: 0, edit: 1, question: 2 };
-
-function waiting(e) {
-  if (e.type === "summary" || e.type === "edit") return e.status === "pending";
-  return e.type === "question" && e.status === "open";
-}
-
 export class HistoryPanel {
   constructor(root, handlers) {
     this.root = root;
     this.h = handlers;
     this.items = [];
-    this.allNotes = false;     // this note only, unless you ask for the vault
-    this.showDone = false;
+    this.filter = "all";
+    this.onlyCurrent = false;
     this.currentPath = null;
 
     root.innerHTML = `
       <div class="history-head">
-        ${icon("sparkles", 17)}
-        <span class="title">Asistan</span>
-        <button class="select-btn" data-act="scope"><span class="flabel">Bu not</span>${icon("chevronDown", 14)}</button>
+        ${icon("history", 17)}
+        <span class="title">Öneri Geçmişi</span>
+        <button class="select-btn" data-act="filter"><span class="flabel">Tümü</span>${icon("chevronDown", 14)}</button>
       </div>
       <div class="history-list" role="list"></div>`;
     this.listEl = root.querySelector(".history-list");
@@ -66,47 +64,31 @@ export class HistoryPanel {
 
   setCurrentPath(path) {
     this.currentPath = path;
-    if (!this.allNotes) this.render();
+    if (this.onlyCurrent) this.render();
   }
 
-  _mine() {
-    // "İncelendi" fires on every quiet pass of the model; it is noise, never news
-    return this.items.filter((e) => e.type !== "checked"
-      && (this.allNotes || e.path === this.currentPath));
+  _visible() {
+    // "İncelendi" fires on every quiet pass of the model; keep it out of "Tümü" so it doesn't bury real suggestions
+    return this.items.filter((e) =>
+      (this.filter === "all" ? e.type !== "checked" : e.type === this.filter) &&
+      (!this.onlyCurrent || e.path === this.currentPath));
   }
 
   render() {
-    this.root.querySelector(".flabel").textContent = this.allNotes ? "Tüm notlar" : "Bu not";
-    const mine = this._mine();
-    const open = mine.filter(waiting).sort((a, b) =>
-      (RANK[a.type] ?? 9) - (RANK[b.type] ?? 9) || b.created.localeCompare(a.created));
-    const done = mine.filter((e) => !waiting(e));
-
-    if (!open.length && !done.length) {
+    const label = FILTERS.find(([k]) => k === this.filter)[1];
+    this.root.querySelector(".flabel").textContent = this.onlyCurrent ? `${label} · bu not` : label;
+    const items = this._visible();
+    if (!items.length) {
       this.listEl.innerHTML = `<div class="h-empty">
         <span class="tile t-question">${icon("sparkles", 20)}</span>
-        <div>${this.allNotes || !this.currentPath
-          ? "Yazmaya başla — asistanın soruları burada birikecek."
-          : "Bu notta bekleyen bir şey yok."}</div>
+        <div>${this.items.length ? "Bu filtrede öneri yok." : "Yazmaya başla — asistanın soruları ve önerileri burada birikecek."}</div>
       </div>`;
       return;
     }
-
-    const parts = [];
-    if (open.length) {
-      parts.push(`<div class="h-section">Sıradaki ${open.length > 1 ? `<span class="h-num">${open.length}</span>` : ""}</div>`);
-      parts.push(open.map((e) => this._item(e)).join(""));
-    }
-    if (done.length) {
-      parts.push(`<button class="h-fold${this.showDone ? " open" : ""}" data-act="fold">
-        ${icon("chevronRight", 13)}<span>Biten ${done.length}</span>
-      </button>`);
-      if (this.showDone) parts.push(done.slice(0, 60).map((e) => this._item(e, true)).join(""));
-    }
-    this.listEl.innerHTML = parts.join("");
+    this.listEl.innerHTML = items.slice(0, 200).map((e) => this._item(e)).join("");
   }
 
-  _item(e, settled = false) {
+  _item(e) {
     // a question carries what it was for ("Derinleştirme", "Alternatif fikir", …)
     const kind = e.type === "question" ? questionKind(e) : (KINDS[e.type] || KINDS.question);
     let text = e.text || "";
@@ -114,20 +96,24 @@ export class HistoryPanel {
     const chip = STATUS_CHIP[e.status];
     let actions = "";
     if (e.type === "question" && e.status === "open") {
-      actions = `<span class="h-actions"><span class="btn btn-sm" data-act="chat">${icon("message", 13)}Cevapla</span></span>`;
-    } else if ((e.type === "summary" || e.type === "edit") && e.status === "pending") {
+      actions = `<span class="h-actions"><span class="btn btn-sm" data-act="chat">${icon("message", 13)}Sohbet</span></span>`;
+    } else if (e.type === "summary" && e.status === "pending") {
       actions = `<span class="h-actions">
-        <span class="btn btn-sm btn-accent" data-act="approve" title="${e.type === "edit" ? "Onayla" : "Nota ekle"}">${icon("check", 13)}</span>
+        <span class="btn btn-sm btn-accent" data-act="approve" title="Nota ekle">${icon("check", 13)}</span>
         <span class="btn btn-sm" data-act="reject" title="Vazgeç">${icon("x", 13)}</span></span>`;
+    } else if (e.type === "edit" && e.status === "pending") {
+      actions = `<span class="h-actions">
+        <span class="btn btn-sm btn-accent" data-act="approve" title="Onayla">${icon("check", 13)}</span>
+        <span class="btn btn-sm" data-act="reject" title="Reddet">${icon("x", 13)}</span></span>`;
     }
-    return `<button class="h-item${settled ? " settled" : ""}" role="listitem" data-id="${esc(e.id)}">
+    return `<button class="h-item" role="listitem" data-id="${esc(e.id)}">
       <span class="tile t-${kind.tone}">${icon(kind.icon, 18)}</span>
       <span class="h-main">
         <span class="h-top"><span class="h-kind c-${kind.tone}">${kind.label}</span><span class="h-time">${formatClock(e.created)}</span></span>
         <span class="h-text">${esc(text)}</span>
         <span class="h-meta">
           ${chip ? `<span class="chip ${chip[0]}">${chip[1]}</span>` : ""}
-          ${this.allNotes ? `<span class="note">${esc(e.note)}</span>` : ""}
+          <span class="note">${esc(e.note)}</span>
           ${actions}
         </span>
       </span>
@@ -135,17 +121,16 @@ export class HistoryPanel {
   }
 
   _click(ev) {
-    if (ev.target.closest('[data-act="scope"]')) {
+    if (ev.target.closest('[data-act="filter"]')) {
       const r = ev.target.closest(".select-btn").getBoundingClientRect();
       openMenu(r.left, r.bottom + 4, [
-        { label: "Bu not", checked: !this.allNotes, action: () => { this.allNotes = false; this.render(); } },
-        { label: "Tüm notlar", checked: this.allNotes, action: () => { this.allNotes = true; this.render(); } },
+        ...FILTERS.map(([key, label]) => ({
+          label, checked: this.filter === key,
+          action: () => { this.filter = key; this.render(); },
+        })),
+        "sep",
+        { label: "Sadece açık not", checked: this.onlyCurrent, action: () => { this.onlyCurrent = !this.onlyCurrent; this.render(); } },
       ]);
-      return;
-    }
-    if (ev.target.closest('[data-act="fold"]')) {
-      this.showDone = !this.showDone;
-      this.render();
       return;
     }
     const item = ev.target.closest(".h-item");

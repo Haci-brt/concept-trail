@@ -75,26 +75,15 @@ export function splitSentence(text) {
 }
 
 let toastHost;
-/** `action` puts a button in the toast — "Geri al" right where the change happened. */
-export function toast(message, kind = "info", ms = 3200, action = null) {
+export function toast(message, kind = "info", ms = 3200) {
   toastHost ??= document.body.appendChild(html('<div class="toasts" role="status" aria-live="polite"></div>'));
-  const el = html(`<div class="toast toast-${kind}${action ? " has-act" : ""}">
-    <span>${esc(message)}</span>
-    ${action ? `<button class="toast-act" type="button">${esc(action.label)}</button>` : ""}
-  </div>`);
-  let timer;
-  const dismiss = () => {
-    clearTimeout(timer);
-    el.classList.remove("in");
-    setTimeout(() => el.remove(), 250);
-  };
-  if (action) {
-    el.querySelector(".toast-act").onclick = () => { dismiss(); action.run(); };
-  }
+  const el = html(`<div class="toast toast-${kind}">${esc(message)}</div>`);
   toastHost.appendChild(el);
   requestAnimationFrame(() => el.classList.add("in"));
-  timer = setTimeout(dismiss, ms);
-  return dismiss;
+  setTimeout(() => {
+    el.classList.remove("in");
+    setTimeout(() => el.remove(), 250);
+  }, ms);
 }
 
 export const isMac = navigator.platform.toUpperCase().includes("MAC");

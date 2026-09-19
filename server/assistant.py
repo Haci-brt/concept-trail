@@ -51,9 +51,7 @@ def sections_with_spans(content: str) -> list[tuple[str, str, int, int]]:
     parts: list[tuple[str, str, int, int]] = []
     last_name, last_at, heading_at = "", 0, 0
     for match in HEADING_RE.finditer(content):
-        # a note that opens with its own title has no intro section before it
-        if parts or content[last_at:match.start()].strip():
-            parts.append((last_name, content[last_at:match.start()], heading_at, match.start()))
+        parts.append((last_name, content[last_at:match.start()], heading_at, match.start()))
         last_name = "" if len(match.group(1)) <= 1 else match.group(2).strip()
         last_at, heading_at = match.end(), match.start()
     parts.append((last_name, content[last_at:], heading_at, len(content)))
@@ -93,35 +91,6 @@ def _same_topic(new: set[str], old: set[str]) -> bool:
         return False
     shared = len(new & old)
     return shared >= 2 and shared / min(len(new), len(old)) >= 0.5
-
-
-FRAME_CHARS = 700        # under this a note is still one thought, not a structure
-
-# Words that only turn up when someone is designing software. Two hits is
-# enough: one stray "servis" in a note about a café should not turn the
-# assistant into an architecture reviewer.
-def note_domain(content: str) -> str:
-    """Which repertoire of questions this note gets.
-
-    This is a notebook for people designing software, so architecture is the
-    default, not a mode you switch into. `tur: fikir` in the frontmatter is the
-    way out for a note that is not about building anything."""
-    meta = split_frontmatter(content)[0]
-    declared = fold(str(meta.get("tur") or meta.get("tip") or "")).strip()
-    return "fikir" if declared in ("fikir", "genel", "not", "gunluk") else "kod"
-
-
-def stage_for(content: str, focus: str) -> str:
-    """Ask about the whole idea first, and only go heading by heading once the
-    writer has actually made headings. Diving into details too early is what
-    makes the questions feel like a form."""
-    body = split_frontmatter(content)[1]
-    headings = [name for name, _, _, _ in sections_with_spans(body) if name]
-    if headings:
-        return llm_client.STAGE_PROMPTS["bolum"].format(section=focus or headings[0])
-    if len(body.strip()) < FRAME_CHARS:
-        return llm_client.STAGE_PROMPTS["cerceve"]
-    return llm_client.STAGE_PROMPTS["bolumlendirme"]
 
 
 def section_coverage(content: str, nodes: list[dict]) -> str:
@@ -419,10 +388,8 @@ class Assistant:
         task.add_done_callback(self._tasks.discard)
 
     @staticmethod
-    def _event(event_type: str, rel: str, **fields) -> dict:
-        # not `kind`: questions carry a kind of their own ("derinlestirme", …)
-        # and a collision here silently cost every question its history entry
-        return {"id": uuid.uuid4().hex[:12], "type": event_type, "path": rel, "note": Path(rel).stem,
+    def _event(kind: str, rel: str, **fields) -> dict:
+        return {"id": uuid.uuid4().hex[:12], "type": kind, "path": rel, "note": Path(rel).stem,
                 "created": datetime.now().isoformat(timespec="seconds"), **fields}
 
     def _record(self, event: dict, hud: bool = True):
@@ -587,7 +554,6 @@ class Assistant:
                 result = await asyncio.to_thread(
                     llm_client.ask_about_note, content, new_part, [n["text"] for n in open_nodes],
                     on_chunk, provider, span, cancelled, self.budget.record, coverage,
-                    stage_for(content, focus), llm_client.DOMAIN_PROMPTS[note_domain(content)],
                 )
             except llm_client.Cancelled:
                 return
@@ -695,9 +661,7 @@ class Assistant:
         return node
 
     # ---- HUD ----
-    def hud_action(self, event_id: str, action: str, text: str | None = None) -> dict:
-        """`text` is the writer's own wording: a proposal can be edited before
-        it is approved, and what goes into the note is what they left behind."""
+    def hud_action(self, event_id: str, action: str) -> dict:
         event = next((e for e in self.queue if e["id"] == event_id), None) or self.history.find(event_id)
         if event is None:
             raise ApiError(404, "Öneri bulunamadı.")
@@ -714,12 +678,6 @@ class Assistant:
         elif action in ("approve", "reject") and event["type"] == "summary":
             if event.get("status") != "pending":
                 raise ApiError(409, "Bu öneri zaten sonuçlandı.")
-            edited = (text or "").strip()
-            if action == "approve" and edited and edited != event.get("text"):
-                self.history.update(event, text=edited, edited=True)
-                node = self.notes.update_node(event["path"], event["node_id"], text=edited, edited=True)
-                if node:
-                    self._publish_node(event["path"], node)
             status = "approved" if action == "approve" else "rejected"
             self.history.update(event, status=status)
             self.broker.publish("history_update", event)
@@ -734,9 +692,6 @@ class Assistant:
                         self.resolve(event["path"], event["question_id"], by="chat")
                     except ApiError:
                         pass
-                # a note that has just grown is the worst moment to fall silent:
-                # look at it again so the new lines open the next thread
-                self.check_now(delay=3.0)
         elif action in ("approve", "reject"):
             if event["type"] != "edit":
                 raise ApiError(400, "Bu bir düzenleme önerisi değil.")
@@ -806,14 +761,9 @@ class Assistant:
             # saving happens here rather than in the generator, so the reply
             # is kept even if the page is closed while the model is writing
             call = llm_client.chat_answer if user_asked else llm_client.chat_reply
-            # after a few rounds the assistant stops arguing and takes the answer
-            extra = ({} if user_asked else
-                     {"settle": asked_before >= MAX_FOLLOWUPS,
-                      "domain": llm_client.DOMAIN_PROMPTS[note_domain(note_text)]})
             try:
                 raw = await asyncio.to_thread(call, messages, note_text, on_chunk,
-                                              self.provider_for("chat", rel), self.budget.record,
-                                              **extra)
+                                              self.provider_for("chat", rel), self.budget.record)
             except Exception:
                 self.check_now()
                 await updates.put(("error", "Model yanıt vermedi, model çalışıyor mu kontrol et."))
@@ -829,24 +779,27 @@ class Assistant:
                 return
 
             result = llm_client.parse_chat_reply(raw)
-            # a challenge is the assistant disagreeing, not failing to understand:
-            # same effect on the thread (it stays open, nothing is written), but
-            # the card says so, because being argued with is the point
-            if result["type"] in ("question", "challenge"):
-                challenge = result["type"] == "challenge"
+            # it may keep asking until the answer makes sense, but not forever
+            if result["type"] == "question" and asked_before < MAX_FOLLOWUPS:
                 node = self.notes.add_node(rel, "chat-assistant", result["text"], parent_id=node_id,
-                                           mode="question", challenge=challenge)
+                                           mode="question")
                 self._publish_node(rel, node)
-                await updates.put(("done", {"node": node, "understood": False, "challenge": challenge}))
+                await updates.put(("done", {"node": node, "understood": False}))
                 return
 
-            # no NOT: block means there was nothing worth adding — the thread is
-            # done and the note stays as the writer left it
             note_entry = result.get("note", "").strip()
+            if not note_entry:
+                # gave up asking (or answered without a NOT: block) — write up the thread as it stands
+                try:
+                    note_entry = (await asyncio.to_thread(llm_client.summarize_for_note, messages,
+                                                          self.provider_for("summary", rel),
+                                                          self.budget.record)).strip()
+                except Exception:
+                    note_entry = ""
+
             node = self.notes.add_node(
                 rel, "chat-assistant",
-                "Anladım — şunu notuna eklemeyi öneriyorum." if note_entry
-                else "Anladım; nota eklenecek yeni bir şey yok.",
+                "Anladım — şunu notuna eklemeyi öneriyorum." if note_entry else "Anladım.",
                 parent_id=node_id, mode="understood")
             self._publish_node(rel, node)
             proposal = None
@@ -855,9 +808,6 @@ class Assistant:
                 summary = self.notes.add_node(rel, "summary", note_entry, parent_id=node_id,
                                               status="pending")
                 self._publish_node(rel, summary)
-                # the question has been answered: its card must not sit in front
-                # of the proposal that came out of answering it
-                self._drop_from_queue(lambda e: e["type"] == "question" and e.get("node_id") == node_id)
                 proposal = self._event("summary", rel, text=note_entry, node_id=summary["id"],
                                        question_id=node_id, question=question["text"], status="pending")
                 self._record(proposal)

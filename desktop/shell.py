@@ -295,13 +295,8 @@ class HudWindow(QWidget):
     def __init__(self, url: str, shell: "DesktopShell"):
         super().__init__()
         self._shell = shell
-        # No WindowDoesNotAcceptFocus: that flag makes the card impossible to
-        # type into, and toggling it at runtime hides and re-shows the window —
-        # which looked like the HUD vanishing under the click. WA_ShowWithout-
-        # Activating is what actually matters: it appears without stealing the
-        # keyboard, and only a deliberate click hands focus to it.
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-                            | Qt.WindowType.WindowStaysOnTopHint)
+                            | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setWindowTitle(f"{APP_NAME} HUD")
@@ -319,17 +314,14 @@ class HudWindow(QWidget):
         self._user_pos: QPoint | None = saved if isinstance(saved, QPoint) else None
 
     def apply_state(self, visible: bool, height: int):
-        """Resize in place; only move and raise when the card first appears.
-        Re-placing on every update made the window jump around while the
-        assistant streamed its thinking into the card."""
         if not visible or height <= 0:
             self.hide()
             return
         self.setFixedHeight(max(40, min(height, 640)))
+        self._place()
         if not self.isVisible():
-            self._place()
             self.show()
-            self.raise_()
+        self.raise_()
 
     def _place(self):
         self._placing = True

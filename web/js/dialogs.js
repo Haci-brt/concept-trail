@@ -92,53 +92,6 @@ export function confirmDialog({ title, message, confirmText = "Onayla", danger =
   });
 }
 
-const VERSION_ICONS = { asistan: "sparkles", duzenleme: "pencil", geri: "history", yazma: "file" };
-
-/** Earlier states of one note; resolves with the id to restore, or null. */
-export function versionsDialog({ name, versions }) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (result, close) => {
-      if (done) return;
-      done = true;
-      close();
-      resolve(result);
-    };
-    const rows = versions.map((v) => `
-      <button class="version" data-id="${esc(v.id)}">
-        <span class="tile t-${v.reason === "asistan" || v.reason === "duzenleme" ? "summary" : "checked"}">
-          ${icon(VERSION_ICONS[v.reason] || "file", 16)}
-        </span>
-        <span class="version-main">
-          <span class="version-label">${esc(v.label)}</span>
-          <span class="version-time">${esc(formatWhen(v.created))} · ${Math.round(v.size / 100) / 10} KB</span>
-        </span>
-        <span class="btn btn-sm">Geri yükle</span>
-      </button>`).join("");
-    const { dialog, close } = modal(
-      `<div class="dialog wide" role="dialog" aria-modal="true">
-        <h2>Sürüm geçmişi</h2>
-        <p>“${esc(name)}” notunun daha önceki hâlleri. Geri yüklemek şimdiki hâli silmez — o da listeye eklenir.</p>
-        <div class="version-list">${rows || '<div class="h-empty"><div>Bu notun henüz kayıtlı bir önceki hâli yok.</div></div>'}</div>
-        <div class="actions"><button class="btn btn-ghost" data-act="cancel">Kapat</button></div>
-      </div>`,
-      { onKey: (e, closeFn) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(null, closeFn); } } },
-    );
-    dialog.querySelector('[data-act="cancel"]').onclick = () => finish(null, close);
-    dialog.querySelectorAll(".version").forEach((row) => {
-      row.onclick = () => finish(row.dataset.id, close);
-    });
-  });
-}
-
-function formatWhen(iso) {
-  const date = new Date(iso);
-  const today = new Date().toDateString() === date.toDateString();
-  return today
-    ? `bugün ${date.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`
-    : date.toLocaleString("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-}
-
 const SHORTCUTS = [
   ["Not ara / komutlar", "Ctrl P"],
   ["Yeni not", "Ctrl N · Ctrl Alt N"],

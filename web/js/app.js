@@ -3,7 +3,7 @@
 import { api, clientId, connectEvents } from "./api.js";
 import { ChatDrawer } from "./chat.js";
 import { desktopCall, desktopHud, desktopReady, isDesktop, openExternal } from "./desktop.js";
-import { confirmDialog, openMenu, promptDialog, shortcutsDialog, versionsDialog } from "./dialogs.js";
+import { confirmDialog, openMenu, promptDialog, shortcutsDialog } from "./dialogs.js";
 import { MarkdownEditor } from "./editor.js";
 import { HistoryPanel } from "./history.js";
 import { HudCard } from "./hudcard.js";
@@ -690,7 +690,7 @@ function onEdit(tab) {
   scheduleAnalyze(tab);
 }
 
-function saveTab(tab, reason = "yazma") {
+function saveTab(tab) {
   clearTimeout(tab.saveTimer);
   tab.chain = tab.chain.then(async () => {
     if (tab.closed) return;
@@ -700,10 +700,9 @@ function saveTab(tab, reason = "yazma") {
       return;
     }
     try {
-      const result = await api.put("/api/notes", { path: tab.path, content, reason });
+      const result = await api.put("/api/notes", { path: tab.path, content });
       tab.saved = content;
       tab.mtime = result.mtime;
-      tab.lastVersion = result.version || null;   // what "Geri al" would restore
       tab.lastSaved = new Date();
       const node = flatNotes().find((n) => n.path === tab.path);
       if (node) node.mtime = result.mtime;
@@ -784,8 +783,8 @@ async function applyApprovedEdit(event) {
     const { ok } = await api.post("/api/assistant/claim", { event_id: event.id });
     if (!ok) return;
     if (tab.editor.applyEdit(event.original, event.replacement)) {
-      await saveTab(tab, "duzenleme");
-      undoable("Düzenleme uygulandı.", event.path, tab.lastVersion);
+      toast("Düzenleme uygulandı. Geri almak için Ctrl+Z.", "success");
+      saveTab(tab);
     } else {
       toast("Önerilen metin notta artık bulunamadı.", "error");
     }
@@ -794,10 +793,10 @@ async function applyApprovedEdit(event) {
   // give pages that have the note open a moment to claim it first
   await new Promise((r) => setTimeout(r, 400));
   try {
-    const { applied, version } = await api.post("/api/notes/apply-edit", {
+    const { applied } = await api.post("/api/notes/apply-edit", {
       path: event.path, original: event.original, replacement: event.replacement, event_id: event.id,
     });
-    if (applied) undoable(`Düzenleme “${event.note}” notuna uygulandı.`, event.path, version);
+    if (applied) toast(`Düzenleme “${event.note}” notuna uygulandı.`, "success");
   } catch (err) {
     toast(err.message, "error");
   }
@@ -809,55 +808,16 @@ async function appendAssistantText(event) {
   if (tab) {
     const { ok } = await api.post("/api/assistant/claim", { event_id: event.id });
     if (!ok) return;
-    await saveTab(tab);                    // your own unsaved writing first, so that
-    tab.editor.appendText(event.text);     // undoing takes back only the assistant's part
-    await saveTab(tab, "asistan");
-    undoable("Asistan sonucu notuna ekledi.", event.path, tab.lastVersion);
+    tab.editor.appendText(event.text);
+    saveTab(tab);
+    toast("Asistan sonucu notuna ekledi.", "success");
     return;
   }
   // give pages that have the note open a moment to claim it first
   await new Promise((r) => setTimeout(r, 400));
   try {
-    const { applied, version } = await api.post("/api/notes/append",
-      { path: event.path, text: event.text, event_id: event.id });
-    if (applied) undoable(`Asistan sonucu “${event.note}” notuna ekledi.`, event.path, version);
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-/** A toast that can put the note back the way it was. */
-function undoable(message, path, version) {
-  // long enough to read the note, notice the addition and change your mind
-  toast(message, "success", version ? 12000 : 3200,
-        version ? { label: "Geri al", run: () => restoreVersion(path, version) } : null);
-}
-
-async function restoreVersion(path, version) {
-  try {
-    const result = await api.post("/api/notes/restore", { path, version });
-    const tab = tabByPath(path);
-    if (tab) {
-      tab.saved = result.content;
-      tab.mtime = result.mtime ?? tab.mtime;
-      tab.lastVersion = null;
-      tab.editor.setValue(result.content);
-      if (tab.dirty) { tab.dirty = false; renderTabs(); }
-      if (tab.id === state.activeId) { renderPreview(); renderStatus(); }
-    }
-    toast(result.restored ? "Not eski hâline döndü." : "Not zaten o hâldeydi.", "success");
-  } catch (err) {
-    toast(`Geri alınamadı: ${err.message}`, "error");
-  }
-}
-
-async function showVersions(tab) {
-  if (!tab) return;
-  await saveTab(tab);
-  try {
-    const { versions } = await api.get("/api/notes/versions", { path: tab.path });
-    const choice = await versionsDialog({ name: tab.name, versions });
-    if (choice) await restoreVersion(tab.path, choice);
+    const { applied } = await api.post("/api/notes/append", { path: event.path, text: event.text, event_id: event.id });
+    if (applied) toast(`Asistan sonucu “${event.note}” notuna ekledi.`, "success");
   } catch (err) {
     toast(err.message, "error");
   }
@@ -1051,7 +1011,6 @@ function commands() {
   if (tab) {
     list.push(
       { label: "Notu yeniden adlandır", icon: "rename", action: () => renameItem(tab.path, tab.name, "note") },
-      { label: "Sürüm geçmişi", icon: "history", action: () => showVersions(tab) },
       { label: "Nota etiket ekle", icon: "tag", action: addTag },
       { label: "Notu çöpe taşı", icon: "trash", action: () => trashItem(tab.path, tab.name, "note") },
     );
