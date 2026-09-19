@@ -22,7 +22,7 @@ from server.errors import ApiError
 from server.budget import Budget
 from server.providers import ProviderRegistry
 from server.settings import LAUNCH_SCRIPTS
-from server.store import now_iso
+from server.store import MAX_ASSISTANT_TEXTS, now_iso
 from server.vault import fold, split_frontmatter
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -646,6 +646,25 @@ class Assistant:
                                      section=section))
 
     # ---- questions ----
+    def remember_written(self, rel: str, text: str) -> None:
+        """Keep the exact wording of something the writer approved into the
+        note, so the editor can show whose sentence it was."""
+        text = (text or "").strip()
+        if not text:
+            return
+        with self.notes.lock:
+            state = self.notes.load(rel)
+            written = state.setdefault("assistant_text", [])
+            if text in written:
+                return
+            written.append(text)
+            del written[:-MAX_ASSISTANT_TEXTS]
+            self.notes.save(rel)
+        self.broker.publish("written", {"path": rel, "texts": list(written)})
+
+    def written(self, rel: str) -> list[str]:
+        return list(self.notes.load(rel).get("assistant_text") or [])
+
     def resolve(self, rel: str, node_id: str, by: str = "user") -> dict:
         node = self.notes.find_node(rel, node_id)
         if node is None or node["type"] != "question":
@@ -688,6 +707,7 @@ class Assistant:
                 self._publish_node(event["path"], node)
             self._drop_from_queue(lambda e: e["id"] == event_id)
             if action == "approve":
+                self.remember_written(event["path"], event["text"])
                 self.broker.publish("append_note", event)
                 if event.get("question_id"):
                     try:
@@ -707,6 +727,7 @@ class Assistant:
                 self._publish_node(event["path"], node)
             self._drop_from_queue(lambda e: e["id"] == event_id)
             if action == "approve":
+                self.remember_written(event["path"], event.get("replacement", ""))
                 self.broker.publish("apply_edit", event)
         else:
             raise ApiError(400, "Bilinmeyen işlem.")

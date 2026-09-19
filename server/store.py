@@ -26,6 +26,9 @@ def _atomic_write_json(path: Path, data) -> None:
     os.replace(tmp, path)
 
 
+MAX_ASSISTANT_TEXTS = 60     # a long note's worth; the oldest drop off
+
+
 def empty_state() -> dict:
     return {"version": 2, "counter": 0, "nodes": [], "analyzed_text": "", "last_question": ""}
 

@@ -378,7 +378,11 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/assistant/nodes")
     def get_nodes(path: str):
-        return {"nodes": notes.load(path)["nodes"], "busy": assistant.busy == path}
+        state = notes.load(path)
+        # `written` is what the assistant put in the note with your approval;
+        # the editor uses it to keep its words visually apart from yours
+        return {"nodes": state["nodes"], "busy": assistant.busy == path,
+                "written": list(state.get("assistant_text") or [])}
 
     @app.post("/api/assistant/analyze")
     async def analyze(body: AnalyzeBody):

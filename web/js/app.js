@@ -58,7 +58,18 @@ const sidebar = new Sidebar($("#sidebar"), {
   expandedChanged: () => saveSession(),
 });
 
+/** Which sentences in this note came from the assistant (with your approval). */
+async function loadWritten(tab) {
+  try {
+    const { written } = await api.get("/api/assistant/nodes", { path: tab.path });
+    if (!tab.closed) tab.editor.setWritten(written || []);
+  } catch { /* a note with no assistant history simply has none */ }
+}
+
 const historyPanel = new HistoryPanel($("#history"), {
+  // answering from the panel writes to the note first, so the model sees what
+  // is actually on the page rather than the last autosave
+  beforeSend: async (path) => { const tab = tabByPath(path); if (tab) await saveTab(tab); },
   select: async (event, act) => {
     if (act === "chat") return openChat(event.path, event.node_id);
     if (act === "approve" || act === "reject") return hudAction(event.id, act);
@@ -619,6 +630,7 @@ function createTab(note) {
   $("#editorHost").append(tab.editor.root);
   state.tabs.push(tab);
   renderTabs();
+  loadWritten(tab);
   return tab;
 }
 
@@ -1083,6 +1095,7 @@ function connect() {
     },
     history_update: (event) => { historyPanel.update(event); renderViewSwitch(); },
     node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); },
+    written: ({ path, texts }) => { const tab = tabByPath(path); if (tab) tab.editor.setWritten(texts); },
     apply_edit: (event) => applyApprovedEdit(event),
     append_note: (event) => appendAssistantText(event),
     open_chat: (event) => openChat(event.path, event.node_id),

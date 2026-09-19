@@ -62,12 +62,29 @@ function blockLine(line, addClass) {
   return inline(line);
 }
 
-export function renderLines(text, flash) {
+/** Ranges of `text` that the assistant wrote (and you approved). Recomputed
+ *  from the exact wording: edit the sentence and it becomes yours again. */
+export function assistantRanges(text, written) {
+  const ranges = [];
+  for (const snippet of written || []) {
+    const needle = (snippet || "").trim();
+    if (needle.length < 12) continue;          // too short to identify anything
+    let at = text.indexOf(needle);
+    while (at !== -1) {
+      ranges.push([at, at + needle.length]);
+      at = text.indexOf(needle, at + needle.length);
+    }
+  }
+  return ranges;
+}
+
+export function renderLines(text, flash, written) {
   const lines = text.split("\n");
   const out = new Array(lines.length);
   let inFront = lines.length > 1 && lines[0].trim() === "---" && lines.slice(1).some((l) => l.trim() === "---");
   let fence = null;
   let offset = 0;
+  const ai = assistantRanges(text, written);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     let cls = "ln";
@@ -99,7 +116,10 @@ export function renderLines(text, flash) {
     const start = offset, end = offset + line.length;
     offset = end + 1;
     if (flash && line.trim() && end >= flash[0] && start < flash[1]) cls += " flash";
-    out[i] = `<div class="${cls}"><span class="tx">${body}</span></div>`;
+    const byAi = line.trim() && ai.some(([a, b]) => end > a && start < b);
+    if (byAi) cls += " ai";
+    out[i] = `<div class="${cls}"${byAi ? ' title="Asistanın yazdığı, senin onayladığın metin"' : ""}>`
+      + `<span class="tx">${body}</span></div>`;
   }
   return out;
 }
@@ -112,6 +132,7 @@ export class MarkdownEditor {
     this.onScroll = onScroll;
     this._lines = [];
     this._flash = null;
+    this._written = [];
     this._flashTimer = 0;
     this._curLine = -1;
 
@@ -157,7 +178,7 @@ export class MarkdownEditor {
 
   _render() {
     this.mirror.children[this._curLine]?.classList.remove("cur"); // indices shift below
-    const next = renderLines(this.input.value, this._flash);
+    const next = renderLines(this.input.value, this._flash, this._written);
     const prev = this._lines;
     let start = 0;
     const min = Math.min(prev.length, next.length);
@@ -196,6 +217,14 @@ export class MarkdownEditor {
   _updateCursor() {
     this._markCurrentLine();
     this.onCursor?.(this.cursorInfo());
+  }
+
+  /** What the assistant wrote into this note, as exact text. */
+  setWritten(texts) {
+    const next = texts || [];
+    if (next.length === this._written.length && next.every((s, i) => s === this._written[i])) return;
+    this._written = next;
+    this._render();
   }
 
   /** Briefly highlight [start, end]. reveal scrolls it into view — only for
