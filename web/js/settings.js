@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import { openMenu } from "./dialogs.js";
 import { icon } from "./icons.js";
-import { esc, html, toast } from "./util.js";
+import { debounce, esc, html, toast } from "./util.js";
 
 const KEY_MASK = "••••";
 
@@ -104,9 +104,15 @@ export class SettingsDialog {
     this._renderTools();
 
     this.el.addEventListener("click", (e) => this._click(e));
+    // typing a provider name changes what the role dropdowns say, but redrawing
+    // them on every keystroke flickers — settle first
+    this._renderRolesSoon = debounce(() => { if (this.el) this._renderRoles(); }, 250);
     this.el.addEventListener("input", (e) => {
       // only a provider card's fields change the role pickers; the token does not
-      if (e.target.matches("[data-f]") && e.target.closest(".provider")) this._renderRoles();
+      if (e.target.matches("[data-f]") && e.target.closest(".provider")) this._renderRolesSoon();
+    });
+    this.el.addEventListener("change", (e) => {
+      if (e.target.matches("[data-slot]")) this.roles = this._readRoles();
     });
     this.overlay.addEventListener("mousedown", () => this.close());
     this._keys = (e) => {
@@ -183,8 +189,28 @@ export class SettingsDialog {
     });
   }
 
+  /** What the pickers currently say, so redrawing them never undoes a choice. */
+  _readRoles() {
+    const roles = { ...this.roles };
+    for (const row of this.rolesEl.querySelectorAll(".role-row")) {
+      const primary = row.querySelector('[data-slot="primary"]').value;
+      const fallback = row.querySelector('[data-slot="fallback"]').value;
+      roles[row.dataset.role] = [primary, fallback].filter((v, i, all) => v && all.indexOf(v) === i);
+    }
+    return roles;
+  }
+
   _renderRoles() {
     const providers = this._readCards().filter((p) => p.enabled);
+    // a keystroke in a provider field used to rebuild these selects from
+    // this.roles, which silently threw away a pick the user had just made
+    this.roles = this._readRoles();
+    // and rebuilding when nothing about the choices changed only makes the
+    // dropdowns flicker, so skip that too
+    const signature = JSON.stringify([providers.map((p) => [p.id, p.label, p.kind]), this.roles]);
+    if (signature === this._rolesSignature) return;
+    this._rolesSignature = signature;
+
     const options = (selected, allowEmpty) =>
       (allowEmpty ? `<option value=""${selected ? "" : " selected"}>— yok —</option>` : "") +
       providers.map((p) => `<option value="${esc(p.id)}"${p.id === selected ? " selected" : ""}>${esc(p.label)}${p.kind === "remote" ? " (bulut)" : ""}</option>`).join("");
@@ -346,13 +372,16 @@ export class SettingsDialog {
 
   async _save({ silent = false } = {}) {
     const providers = this._readCards();
-    const roles = {};
-    for (const row of this.rolesEl.querySelectorAll(".role-row")) {
-      const primary = row.querySelector('[data-slot="primary"]').value;
-      const fallback = row.querySelector('[data-slot="fallback"]').value;
-      roles[row.dataset.role] = [primary, fallback].filter((v, i, all) => v && all.indexOf(v) === i);
-    }
+    const roles = this._readRoles();
     this.errorEl.textContent = "";
+    // saving a changed token restarts the tool servers, which takes a couple of
+    // seconds — without this the dialog just sits there looking broken
+    const button = silent ? null : this.el.querySelector('footer [data-act="save"]');
+    const label = button?.innerHTML;
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = `${icon("refresh", 14)}Kaydediliyor…`;
+    }
     try {
       const result = await api.put("/api/providers", { providers, roles });
       this.roles = result.roles;
@@ -369,6 +398,12 @@ export class SettingsDialog {
       this.errorEl.textContent = err.message;
       if (!silent) toast(err.message, "error", 5000);
       return false;
+    } finally {
+      // the dialog may already be gone (a successful save closes it)
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.innerHTML = label;
+      }
     }
   }
 }
