@@ -46,8 +46,11 @@ export class SettingsDialog {
     }
     this.roles = data.roles;
     this.usage = usage;
-    // the tools are optional: the dialog has to open even if their servers are down
-    this.tools = await api.get("/api/tools").catch(() => null);
+    // Never awaited: this reply waits on model-endpoint probes and took seconds,
+    // so awaiting it here meant the whole dialog opened seconds after the click.
+    // It fills its own section in when it lands.
+    this.tools = null;
+    this._toolsLoading = true;
 
     this.overlay = html('<div class="overlay"></div>');
     this.el = html(`<div class="dialog settings" role="dialog" aria-modal="true" aria-label="Modeller ve anahtarlar">
@@ -102,6 +105,10 @@ export class SettingsDialog {
     this._renderRoles();
     this._renderBudget();
     this._renderTools();
+    api.get("/api/tools")
+      .then((tools) => { this.tools = tools; })
+      .catch(() => { this.tools = null; })
+      .finally(() => { this._toolsLoading = false; this._renderTools(); });
 
     this.el.addEventListener("click", (e) => this._click(e));
     // typing a provider name changes what the role dropdowns say, but redrawing
@@ -242,6 +249,13 @@ export class SettingsDialog {
   _renderTools() {
     const box = this.el?.querySelector(".tools-box");
     if (!box) return;                       // dialog closed while a save was in flight
+    // The status arrives after the dialog is already open, so this redraws
+    // under the user's hands: anything they have typed (and their place in the
+    // field) has to survive it.
+    const before = box.querySelector('[data-f="github_token"]');
+    const typed = before && before.value !== this._tokenWas ? before.value : null;
+    const hadFocus = before && document.activeElement === before;
+
     // The token lives in this app's own settings, not on the tool servers, so
     // the field has to be here even when they are down — otherwise a bad token
     // becomes unfixable exactly when you most need to fix it.
@@ -253,9 +267,11 @@ export class SettingsDialog {
       .concat(Object.entries(errors).map(([name, why]) =>
         `<div class="tool-row bad">${icon("alert", 12)}<b>${esc(name)}</b><span>${esc(why)}</span></div>`))
       .join("");
-    const status = known
-      ? (rows || '<p class="hint">Tanımlı araç sunucusu yok.</p>')
-      : `<div class="tool-row bad">${icon("alert", 12)}<b>Araç durumu okunamadı</b><span>Token yine de kaydedilebilir.</span></div>`;
+    const status = this._toolsLoading
+      ? `<div class="tool-row">${icon("refresh", 12)}<b>Araç durumu okunuyor…</b><span></span></div>`
+      : known
+        ? (rows || '<p class="hint">Tanımlı araç sunucusu yok.</p>')
+        : `<div class="tool-row bad">${icon("alert", 12)}<b>Araç durumu okunamadı</b><span>Token yine de kaydedilebilir.</span></div>`;
 
     box.innerHTML = `
       <div class="tool-status">${status}</div>
@@ -270,8 +286,17 @@ export class SettingsDialog {
         Kaydedince araç sunucuları yeniden başlar — token'ı sadece açılışta okuyorlar.</p>
       ${known ? `<p class="hint">Toplam ${count} araç. Araç takımı başka bir klasördeyse <code>FIKIR_TOOLS_ROOT</code>
         ortam değişkenini ayarla.</p>` : ""}`;
+
+    const input = box.querySelector('[data-f="github_token"]');
     // what the field started as, so an untouched token is never re-sent
-    this._tokenWas = box.querySelector('[data-f="github_token"]')?.value ?? "";
+    this._tokenWas = input?.value ?? "";
+    if (input && typed !== null) {
+      input.value = typed;                  // give them back what they were typing
+      if (hadFocus) {
+        input.focus();
+        input.setSelectionRange(typed.length, typed.length);
+      }
+    }
   }
 
   async _restartTools(button) {

@@ -199,13 +199,14 @@ def create_app(settings: Settings) -> FastAPI:
     async def list_tools():
         """What was discovered at startup — names and schemas come from the
         servers themselves — plus whether the bound providers could use them."""
-        support = {}
-        for role in ("chat", "analysis", "summary"):
-            provider = providers.pick(role)
-            if provider is None:
-                continue
-            support[role] = {"provider": provider.id, "enabled": provider.tools,
-                             "endpoint_reports": await asyncio.to_thread(llm_client.supports_tools, provider)}
+        bound = [(role, providers.pick(role)) for role in ("chat", "analysis", "summary")]
+        bound = [(role, provider) for role, provider in bound if provider is not None]
+        # probed together, not one after another: each probe waits on a model
+        # server that may be down, and the settings dialog waits on this reply
+        reports = await asyncio.gather(
+            *(asyncio.to_thread(llm_client.supports_tools, provider) for _, provider in bound))
+        support = {role: {"provider": provider.id, "enabled": provider.tools, "endpoint_reports": report}
+                   for (role, provider), report in zip(bound, reports)}
         return {**tool_hub.public(), "definitions": tool_hub.function_tools(), "providers": support}
 
     @app.post("/api/tools/call")
