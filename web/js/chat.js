@@ -198,7 +198,9 @@ export class ChatDrawer {
       await streamPost("/api/assistant/chat", { path, node_id: nodeId, message }, (u) => {
         if (path !== this.path) return;
         if (u.type === "tool") {
-          pending.querySelector(".txt").textContent = "Asistan araştırıyor";
+          // the writing branch replaces pending's contents, so .txt may be gone
+          const label = pending.querySelector(".txt");
+          if (label) label.textContent = "Asistan araştırıyor";
           if (!steps) {
             steps = html('<div class="msg assistant steps"></div>');
             this.log.insertBefore(steps, pending);

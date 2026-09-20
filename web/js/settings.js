@@ -214,21 +214,25 @@ export class SettingsDialog {
   }
 
   _renderTools() {
-    const box = this.el.querySelector(".tools-box");
-    if (!this.tools) {
-      box.innerHTML = '<p class="hint">Araç durumu okunamadı.</p>';
-      return;
-    }
-    const { servers = {}, errors = {}, count = 0, settings = {} } = this.tools;
+    const box = this.el?.querySelector(".tools-box");
+    if (!box) return;                       // dialog closed while a save was in flight
+    // The token lives in this app's own settings, not on the tool servers, so
+    // the field has to be here even when they are down — otherwise a bad token
+    // becomes unfixable exactly when you most need to fix it.
+    const { servers = {}, errors = {}, count = 0, settings = {} } = this.tools || {};
     const token = settings.github_token || {};
+    const known = Boolean(this.tools);
     const rows = Object.entries(servers)
       .map(([name, list]) => `<div class="tool-row good">${icon("check", 12)}<b>${esc(name)}</b><span>${list.length} araç</span></div>`)
       .concat(Object.entries(errors).map(([name, why]) =>
         `<div class="tool-row bad">${icon("alert", 12)}<b>${esc(name)}</b><span>${esc(why)}</span></div>`))
       .join("");
+    const status = known
+      ? (rows || '<p class="hint">Tanımlı araç sunucusu yok.</p>')
+      : `<div class="tool-row bad">${icon("alert", 12)}<b>Araç durumu okunamadı</b><span>Token yine de kaydedilebilir.</span></div>`;
 
     box.innerHTML = `
-      <div class="tool-status">${rows || '<p class="hint">Tanımlı araç sunucusu yok.</p>'}</div>
+      <div class="tool-status">${status}</div>
       <label class="tool-key">GitHub token
         <input class="field" data-f="github_token" type="password" autocomplete="off"
                placeholder="${token.has_token ? KEY_MASK : "ghp_… (isteğe bağlı)"}"
@@ -236,12 +240,12 @@ export class SettingsDialog {
       </label>
       <p class="hint">${token.from_env
         ? "Şu an ortam değişkeninden (GITHUB_RESEARCH_TOKEN) geliyor. Buraya yazarsan o geçerli olur."
-        : "Tokensız GitHub araması dakikada ~10 istekle sınırlıdır. Token bilgisayarında saklanır, nota ve depoya yazılmaz."}
+        : "Tokensız GitHub'ın kendi sınırı saatte 60 istektir; token bunu 5000'e çıkarır. Token bilgisayarında saklanır, nota ve depoya yazılmaz."}
         Kaydedince araç sunucuları yeniden başlar — token'ı sadece açılışta okuyorlar.</p>
-      <p class="hint">Toplam ${count} araç. Araç takımı başka bir klasördeyse <code>FIKIR_TOOLS_ROOT</code>
-        ortam değişkenini ayarla.</p>`;
+      ${known ? `<p class="hint">Toplam ${count} araç. Araç takımı başka bir klasördeyse <code>FIKIR_TOOLS_ROOT</code>
+        ortam değişkenini ayarla.</p>` : ""}`;
     // what the field started as, so an untouched token is never re-sent
-    this._tokenWas = box.querySelector('[data-f="github_token"]').value;
+    this._tokenWas = box.querySelector('[data-f="github_token"]')?.value ?? "";
   }
 
   async _restartTools(button) {
@@ -264,16 +268,21 @@ export class SettingsDialog {
 
   /** Returns false only if the token was rejected; tools are never fatal to a save. */
   async _saveToken() {
-    const input = this.el.querySelector('[data-f="github_token"]');
+    const input = this.el?.querySelector('[data-f="github_token"]');
     if (!input || input.value === this._tokenWas) return true;
     try {
       this.tools = await api.put("/api/tools/settings", { github_token: input.value.trim() });
-      this._renderTools();
-      return true;
     } catch (err) {
       this.errorEl.textContent = err.message;
       return false;
     }
+    // rendering the result must never fail the save that already succeeded
+    try {
+      this._renderTools();
+    } catch (err) {
+      console.error("araç durumu çizilemedi", err);
+    }
+    return true;
   }
 
   // ---------- actions ----------
