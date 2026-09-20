@@ -4,6 +4,25 @@ import { api, streamPost } from "./api.js";
 import { icon } from "./icons.js";
 import { esc, html, toast } from "./util.js";
 
+// What each research tool is doing, in the user's words. web_search says out
+// loud that a browser opens, so the window appearing is never a surprise.
+const TOOL_LABELS = {
+  web_search: "Web'de arandı (tarayıcı açıldı)",
+  web_read_evidence: "Kayıtlı web sonucu okundu",
+  web_status: "Web arama durumu okundu",
+  git_search: "GitHub'da depo arandı",
+  git_repo: "Depo bilgisi okundu",
+  git_issues: "Depo konuları okundu",
+  git_releases: "Sürüm notları okundu",
+  git_read_file: "Depodaki dosya okundu",
+  git_tree: "Depo dosya listesi okundu",
+  git_revision: "Depo sürümü sabitlendi",
+  git_catalog: "Toplanan depolar listelendi",
+  git_read_evidence: "Kayıtlı kanıt okundu",
+};
+
+const toolLabel = (name) => TOOL_LABELS[name] || name;
+
 export class ChatDrawer {
   constructor({ beforeSend }) {
     this.beforeSend = beforeSend;
@@ -69,7 +88,10 @@ export class ChatDrawer {
       if (!question) throw new Error("Soru bulunamadı.");
       this._setQuestion(question);
       const thread = nodes.filter((n) => n.parentId === nodeId && n.type.startsWith("chat-"));
-      for (const n of thread) this._bubble(n.type === "chat-user" ? "user" : "assistant", n.text);
+      for (const n of thread) {
+        if (n.tools?.length) this._provenance(n.tools);
+        this._bubble(n.type === "chat-user" ? "user" : "assistant", n.text);
+      }
       if (!thread.length) {
         this.log.append(html('<div class="chat-empty">Soruya cevabını yaz. Asistan anlamadıysa tek bir soruyla netleştirir; anladığında notuna ne ekleyeceğini önerir — eklemeden önce senin onayını ister.</div>'));
       }
@@ -138,6 +160,18 @@ export class ChatDrawer {
     this._scroll();
   }
 
+  /** Where a saved answer came from, shown when the thread is reopened. */
+  _provenance(tools) {
+    const box = html('<div class="msg assistant steps"></div>');
+    for (const t of tools) {
+      const row = html(`<div class="step${t.ok ? "" : " bad"}"></div>`);
+      row.textContent = toolLabel(t.name);
+      box.append(row);
+    }
+    this.log.append(box);
+    return box;
+  }
+
   _scroll() { this.log.scrollTop = this.log.scrollHeight; }
 
   _autosize() {
@@ -153,14 +187,28 @@ export class ChatDrawer {
     this._autosize();
     const { path, nodeId } = this;
     this._bubble("user", message);
-    const pending = html(`<div class="msg assistant thinking"><div class="label">${icon("sparkle", 12)}Asistan düşünüyor<span class="dots"></span></div><div class="body"></div></div>`);
+    const pending = html(`<div class="msg assistant thinking"><div class="label">${icon("sparkle", 12)}<span class="txt">Asistan düşünüyor</span><span class="dots"></span></div><div class="body"></div></div>`);
     this.log.append(pending);
     this._scroll();
+    // research steps live in their own bubble above the answer, so a streamed
+    // reply overwriting `pending` never erases the record of what was searched
+    let steps = null;
     try {
       await this.beforeSend?.(path);
       await streamPost("/api/assistant/chat", { path, node_id: nodeId, message }, (u) => {
         if (path !== this.path) return;
-        if (u.type === "progress") {
+        if (u.type === "tool") {
+          pending.querySelector(".txt").textContent = "Asistan araştırıyor";
+          if (!steps) {
+            steps = html('<div class="msg assistant steps"></div>');
+            this.log.insertBefore(steps, pending);
+          }
+          const row = html(`<div class="step${u.ok ? "" : " bad"}"></div>`);
+          row.textContent = `${toolLabel(u.name)}${u.query ? `: “${u.query.slice(0, 90)}”` : ""}`
+            + ` · ${u.seconds} sn${u.ok ? "" : " · başarısız"}`;
+          steps.append(row);
+          this._scroll();
+        } else if (u.type === "progress") {
           if (u.phase === "writing" && u.text) {
             pending.className = "msg assistant";
             pending.textContent = u.text;

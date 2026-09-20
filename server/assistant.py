@@ -368,6 +368,21 @@ class Assistant:
         value = meta.get("gizli", meta.get("private", ""))
         return str(value).strip().lower() in ("true", "evet", "yes", "1")
 
+    def tools_allowed(self, provider, rel: str) -> bool:
+        """May this turn use the research tools?
+
+        Three separate gates, all of which have to hold: the servers actually
+        came up, the bound provider declares it can call tools (sending `tools`
+        to one that cannot fails the whole request), and the note is not
+        private — a web search leaves the machine just as surely as a remote
+        provider does, so `gizli: true` rules it out even on a local model.
+        """
+        if self.tool_hub is None or not self.tool_hub.available:
+            return False
+        if not getattr(provider, "tools", False):
+            return False
+        return not self.is_private(rel)
+
     def _publish_status(self):
         self.broker.publish("status", self.status())
 
@@ -780,25 +795,60 @@ class Assistant:
                            if n["type"] == "chat-assistant" and n.get("mode") == "question")
         user_asked = looks_like_question(message)
 
+        def on_step(record: dict):
+            """A tool finished on the worker thread — show it while the rest runs."""
+            loop.call_soon_threadsafe(updates.put_nowait, ("tool", record))
+
         async def run():
             # saving happens here rather than in the generator, so the reply
             # is kept even if the page is closed while the model is writing
-            call = llm_client.chat_answer if user_asked else llm_client.chat_reply
             try:
-                raw = await asyncio.to_thread(call, messages, note_text, on_chunk,
-                                              self.provider_for("chat", rel), self.budget.record)
-            except Exception:
-                self.check_now()
-                await updates.put(("error", "Model yanıt vermedi, model çalışıyor mu kontrol et."))
+                provider = self.provider_for("chat", rel)
+            except ApiError as exc:
+                # "no provider bound" / "daily budget spent" must say so, not
+                # come back as a generic "the model did not answer"
+                await updates.put(("error", exc.message))
                 return
+
+            raw = None
+            used_tools: list[dict] = []
+            if user_asked and self.tools_allowed(provider, rel):
+                # the user asked us something: this is the one turn where
+                # looking things up is worth a browser window and a few seconds
+                try:
+                    result = await asyncio.to_thread(
+                        llm_client.chat_answer_with_tools, messages, note_text, provider,
+                        self.tool_hub, on_step, self.budget.record)
+                    raw = result["content"]
+                    used_tools = [{"name": c["name"], "ok": c["ok"]} for c in result["calls"]]
+                except (llm_client.ProviderError, llm_client.ToolBudget, ApiError):
+                    raw = None      # answer without them rather than fail the turn
+                except Exception:
+                    raw = None
+                if raw is not None and not raw.strip():
+                    raw = None
+
+            if raw is None:
+                call = llm_client.chat_answer if user_asked else llm_client.chat_reply
+                try:
+                    raw = await asyncio.to_thread(call, messages, note_text, on_chunk,
+                                                  provider, self.budget.record)
+                except Exception:
+                    self.check_now()
+                    await updates.put(("error", "Model yanıt vermedi, model çalışıyor mu kontrol et."))
+                    return
 
             if user_asked:
                 # the user asked something: answer it, keep the question open,
                 # write nothing to the note
                 answer = raw.strip() or "(Model boş yanıt döndürdü.)"
-                node = self.notes.add_node(rel, "chat-assistant", answer, parent_id=node_id, mode="answer")
+                # the tools that produced it are kept on the node, so reopening
+                # the thread still shows where the answer came from
+                node = self.notes.add_node(rel, "chat-assistant", answer, parent_id=node_id,
+                                           mode="answer", tools=used_tools or None)
                 self._publish_node(rel, node)
-                await updates.put(("done", {"node": node, "understood": False, "answered": True}))
+                await updates.put(("done", {"node": node, "understood": False, "answered": True,
+                                            "tools": used_tools}))
                 return
 
             result = llm_client.parse_chat_reply(raw)
@@ -851,6 +901,12 @@ class Assistant:
                 if preview["phase"] == "writing":
                     preview["text"] = strip_protocol(preview["text"])
                 yield {"type": "progress", **preview}
+            elif kind == "tool":
+                # the query goes out as the model wrote it, so the user can see
+                # exactly what was searched for — and why a browser just opened
+                query = payload["arguments"].get("query") if isinstance(payload["arguments"], dict) else None
+                yield {"type": "tool", "name": payload["name"], "ok": payload["ok"],
+                       "seconds": payload["seconds"], "query": query}
             elif kind == "done":
                 yield {"type": "done", **payload}
                 return
