@@ -119,10 +119,13 @@ CHAT_ANSWER_PROMPT = (
 # names are not hard-coded schemas — the real definitions come from the servers
 # themselves — this only tells the model when reaching for them is worth it.
 TOOL_GUIDANCE = (
-    "\n\nElinde araştırma araçları var: web_search (genel web araması) ve git_* araçları "
-    "(genel GitHub depoları: arama, depo bilgisi, sürüm notları, dosya okuma).\n"
-    "- Aracı SADECE cevap gerçekten dış bilgi gerektiriyorsa çağır: güncel bir sürüm, bir "
-    "kütüphanenin ne yaptığı, hangi projelerin bu işi çözdüğü gibi. Kendi bildiğin ya da "
+    "\n\nElinde araştırma araçların var: web_search (genel web araması), "
+    "web_fetch (bir sayfayı açıp metnini okur) ve git_* araçları (genel GitHub "
+    "depoları: arama, depo bilgisi, sürüm notları, dosya okuma).\n"
+    "- web_search sana sadece beş bağlantı ve birer cümlelik özet verir. Bir sayfanın "
+    "gerçekten ne yazdığını öğrenmen gerekiyorsa adresini web_fetch ile oku; uzun "
+    "sayfalarda query alanına aradığın şeyi yaz ki ilgili bölüm seçilsin.\n"
+    "- Aracı SADECE cevap gerçekten dış bilgi gerektiriyorsa çağır. Kendi bildiğin ya da "
     "kullanıcının notunda zaten yazan bir şey için arama yapma.\n"
     "- web_search kullanıcının ekranında bir tarayıcı penceresi açar. Bu yüzden gerçekten "
     "gerekmedikçe kullanma; bir arama çoğu soru için yeter.\n"

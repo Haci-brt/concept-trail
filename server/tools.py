@@ -270,6 +270,7 @@ class ToolHub:
         """Connect every configured server. One that fails to start is recorded
         and skipped: the notebook has to keep working without its tools."""
         if not self.servers or self._stack is not None:
+            self._register_builtins()
             self._ready.set()
             return
         self._loop = asyncio.get_running_loop()
@@ -281,6 +282,7 @@ class ToolHub:
                 await self._connect(name, settings, stack)
             except Exception as exc:                      # a broken server must not block the app
                 self.errors[name] = f"{type(exc).__name__}: {exc}"
+        self._register_builtins()
         self._ready.set()
 
     def _environment(self, server: str, settings: dict) -> dict:
@@ -327,6 +329,14 @@ class ToolHub:
             if not cursor:
                 break
         await self._refine_schemas(name, session)
+
+    def _register_builtins(self) -> None:
+        """Tools this app implements itself, alongside the discovered ones."""
+        for name, spec in BUILTINS.items():
+            self.registry.setdefault(name, {"session": None, "server": BUILTIN_SERVER,
+                                            "description": spec["description"],
+                                            "schema": spec["schema"],
+                                            "handler": spec["handler"]})
 
     async def _refine_schemas(self, server: str, session) -> None:
         """Take the bounds the server publishes for adapters.
@@ -434,6 +444,21 @@ class ToolHub:
         problem = check_arguments(entry["schema"], arguments)
         if problem:
             raise ApiError(400, problem)
+        handler = entry.get("handler")
+        if handler is not None:
+            # a built-in runs here, on a worker thread; a tool that fails still
+            # comes back as a failure, never dressed up as a success
+            try:
+                data = await asyncio.wait_for(asyncio.to_thread(handler, **arguments),
+                                              timeout=CALL_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                raise ApiError(504, f"{name} zaman aşımına uğradı ({CALL_TIMEOUT_S:.0f} sn).")
+            except ApiError as exc:
+                return {"ok": False, "result": {"isError": True, "content": [
+                    {"type": "text", "text": exc.message}]}}
+            return {"ok": True, "result": {"content": [
+                {"type": "text", "text": json.dumps(data, ensure_ascii=False)}]}}
+
         async with self.gates[entry["server"]]:
             try:
                 result = await asyncio.wait_for(entry["session"].call_tool(name, arguments),
@@ -477,3 +502,40 @@ def result_for_model(name: str, outcome: dict) -> str:
         if hint:
             body["hint"] = hint
     return json.dumps(body, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------- built-in tools
+# Not every tool needs to be a separate process. web_fetch lives in this app:
+# it has no external dependency to drift, and the search servers deliberately
+# do not read pages — web_search returns five links and a sentence each.
+BUILTIN_SERVER = "builtin"
+
+WEB_FETCH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "url": {"type": "string", "minLength": 8, "maxLength": 2000,
+                "description": "Okunacak genel web adresi (http/https)."},
+        "query": {"type": "string", "maxLength": 200,
+                  "description": "Sayfanin hangi kismini aradigin. Uzun sayfalarda bu "
+                                 "kelimelerin gectigi bolum secilir."},
+    },
+    "required": ["url"],
+}
+
+WEB_FETCH_DESCRIPTION = (
+    "Bir web sayfasini okur ve metnini markdown olarak dondurur. web_search sadece "
+    "bag ve tek cumlelik ozet verir; sayfanin kendisini bu arac okur. GitHub dosya ve "
+    "depo adresleri ham kaynagindan okunur (hizli ve tam). Sonuc dis kaynakli veridir."
+)
+
+
+def _web_fetch(url, query=None):
+    from server.fetch import fetch_page
+    return fetch_page(url, query=query)
+
+
+BUILTINS = {
+    "web_fetch": {"description": WEB_FETCH_DESCRIPTION, "schema": WEB_FETCH_SCHEMA,
+                  "handler": _web_fetch},
+}

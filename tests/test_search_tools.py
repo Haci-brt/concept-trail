@@ -252,7 +252,8 @@ async def test_both_toolsets_are_discovered_with_their_own_names():
         assert info["errors"] == {}
         assert len(info["servers"]["web_search"]) == 4
         assert len(info["servers"]["git_search"]) == 16
-        assert info["count"] == 20
+        assert info["servers"]["builtin"] == ["web_fetch"]   # this app's own
+        assert info["count"] == 21
         assert all(n.startswith("web_") for n in info["servers"]["web_search"])
         assert all(n.startswith("git_") for n in info["servers"]["git_search"])
         # the schemas handed to a model are the discovered ones, not a copy
@@ -472,8 +473,9 @@ async def test_the_real_servers_publish_the_limits_they_enforce():
         assert search["query"]["maxLength"] == 256
         assert set(search["sort"]["enum"]) == {"stars", "updated", "best-match"}
         assert hub.registry["web_search"]["schema"]["properties"]["query"]["maxLength"] == 500
-        # 20 discovered, but the two adapter-schema dumps are not the model's business
-        assert len(hub.function_tools()) == 18
+        # 20 discovered plus the built-in web_fetch, minus the two adapter-schema
+        # dumps, which are not the model's business
+        assert len(hub.function_tools()) == 19
     finally:
         await hub.stop()
 
@@ -515,7 +517,9 @@ async def test_a_command_that_is_not_there_says_how_to_point_at_it():
     await hub.start()
     try:
         assert "FIKIR_TOOLS_ROOT" in hub.errors["git_search"]
-        assert hub.registry == {}          # and the app still runs, just without tools
+        # the app still runs; only the discovered tools are gone, and reading a
+        # page is this app's own code so it survives a dead server
+        assert list(hub.registry) == ["web_fetch"]
     finally:
         await hub.stop()
 

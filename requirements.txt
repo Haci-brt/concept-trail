@@ -7,3 +7,8 @@ PyQt6>=6.7
 PyQt6-WebEngine>=6.7
 # araştırma araçları (web_search / git_search MCP sunucuları)
 mcp>=2,<3
+
+# sayfa okuma (web_fetch): makale metnini markdown olarak cikarir
+trafilatura>=1.12
+beautifulsoup4>=4.12
+lxml>=5.0
