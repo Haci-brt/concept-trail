@@ -21,6 +21,7 @@ from server.broker import Broker
 from server.errors import ApiError
 from server.providers import ProviderRegistry
 from server.render import render
+from server.research import ResearchRunner
 from server.settings import APP_ID, LAUNCH_SCRIPTS, VERSION, WEB_DIR, Settings
 from server.store import HistoryStore, NoteStore, _atomic_write_json
 from server.tools import ToolHub
@@ -147,6 +148,11 @@ class ToolSettingsBody(BaseModel):
     github_token: str | None = None
 
 
+class ResearchBody(BaseModel):
+    path: str
+    content: str | None = None
+
+
 class BindBody(BaseModel):
     role: str
     providers: list[str]
@@ -164,6 +170,8 @@ def create_app(settings: Settings) -> FastAPI:
     providers = ProviderRegistry()
     tool_hub = ToolHub()
     assistant = Assistant(vault, notes, history, broker, providers, tool_hub)
+    research = ResearchRunner(vault, notes, broker, tool_hub, assistant.provider_for,
+                              assistant.budget.record, assistant.is_private)
     session_file = vault.meta_dir / "session.json"
 
     @asynccontextmanager
@@ -436,6 +444,23 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post("/api/assistant/summarize")
     async def summarize(body: NodeBody):
         return await assistant.summarize(body.path, body.node_id)
+
+    # ---- prior-art research (has this idea been built already?) ----
+    @app.get("/api/research")
+    def research_state(path: str):
+        vault.note_path(path)
+        return {**research.state(path), "busy": research.busy(path)}
+
+    @app.post("/api/research/start")
+    async def research_start(body: ResearchBody):
+        """Runs for about a minute: several GitHub searches (throttled to one
+        per six seconds), a web cross-check and two model calls. Progress
+        arrives as `research` events, so nothing here blocks."""
+        vault.note_path(body.path)
+        content = body.content if body.content is not None else vault.read_note(body.path)["content"]
+        if not content.strip():
+            raise ApiError(400, "Bos not arastirilamaz.")
+        return await research.start(body.path, content)
 
     @app.post("/api/model/launch")
     async def launch_model(body: LaunchBody):

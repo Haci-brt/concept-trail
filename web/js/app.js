@@ -9,6 +9,7 @@ import { HistoryPanel } from "./history.js";
 import { HudCard } from "./hudcard.js";
 import { icon, logo } from "./icons.js";
 import { Palette } from "./palette.js";
+import { ResearchPanel } from "./research.js";
 import { SettingsDialog } from "./settings.js";
 import { Sidebar } from "./sidebar.js";
 import { IdeaTree } from "./tree.js";
@@ -84,6 +85,11 @@ const historyPanel = new HistoryPanel($("#history"), {
 });
 
 const hudCard = desktopHud ? null : new HudCard($("#hudSlot"));
+
+const research = new ResearchPanel({
+  getContent: () => activeTab()?.editor.value ?? null,
+});
+$("#rightpanel").insertBefore(research.el, $("#history"));
 
 const tree = new IdeaTree($("#treeView"), {
   chat: (path, nodeId) => openChat(path, nodeId),
@@ -651,6 +657,7 @@ function activate(id, { focus = true } = {}) {
   renderStatus();
   sidebar.setActive(tab.path);
   historyPanel.setCurrentPath(tab.path);
+  research.setNote(tab.path);
   updateLayout();
   renderPreview(true);
   if (focus && state.view === "editor") tab.editor.focus();
@@ -1122,6 +1129,7 @@ function connect() {
       if (event.range && tab && tab.path === event.path && state.view === "editor") tab.editor.flash(event.range);
     },
     history_update: (event) => { historyPanel.update(event); renderViewSwitch(); },
+    research: (data) => research.onEvent(data),
     node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); },
     written: ({ path, texts }) => { const tab = tabByPath(path); if (tab) tab.editor.setWritten(texts); },
     apply_edit: (event) => applyApprovedEdit(event),

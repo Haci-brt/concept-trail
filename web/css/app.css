@@ -1027,3 +1027,28 @@ body {
 }
 .tag-hint:hover { border-color: var(--accent); color: var(--text-2); }
 .tag-hint .go { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-bright); }
+
+/* right panel › prior-art research */
+.research.card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; flex: none; }
+.research .r-body { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.research .r-step { display: flex; align-items: center; gap: 6px; color: var(--accent-strong); font-weight: 600; font-size: 11.5px; }
+.research .r-note { color: var(--text-muted); overflow-wrap: anywhere; }
+.research .r-bar { height: 3px; border-radius: 2px; background: var(--bg-sunken); overflow: hidden; }
+.research .r-bar i { display: block; height: 100%; background: var(--accent-strong); transition: width 0.3s var(--ease-out); }
+.research .r-verdict { color: var(--text); line-height: 1.5; }
+.research .r-err { color: #fecaca; }
+.research .r-group { display: flex; flex-direction: column; gap: 4px; }
+.research .r-group > b { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-faint); }
+.research .r-group.same > b { color: var(--amber); }
+.research .r-repo {
+  display: grid; grid-template-columns: 1fr auto; gap: 0 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-soft);
+  background: var(--bg-sunken); color: var(--text-2); text-decoration: none;
+}
+.research .r-repo:hover { border-color: var(--accent-border); background: var(--accent-softer); }
+.research .r-repo .n { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.research .r-repo .s { color: var(--text-faint); font-size: 11px; }
+.research .r-repo .d { grid-column: 1 / -1; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+.research .r-rest summary { cursor: pointer; color: var(--text-faint); font-size: 11.5px; padding: 2px 0; }
+.research .r-rest[open] { display: flex; flex-direction: column; gap: 4px; }
+.research .btn { align-self: flex-start; }
