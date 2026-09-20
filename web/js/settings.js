@@ -46,6 +46,8 @@ export class SettingsDialog {
     }
     this.roles = data.roles;
     this.usage = usage;
+    // the tools are optional: the dialog has to open even if their servers are down
+    this.tools = await api.get("/api/tools").catch(() => null);
 
     this.overlay = html('<div class="overlay"></div>');
     this.el = html(`<div class="dialog settings" role="dialog" aria-modal="true" aria-label="Modeller ve anahtarlar">
@@ -72,6 +74,13 @@ export class SettingsDialog {
           <div class="set-section-head"><h3>${icon("zap", 15)}Uzak model bütçesi</h3></div>
           <div class="budget"></div>
         </section>
+        <section>
+          <div class="set-section-head">
+            <h3>${icon("search", 15)}Araştırma araçları</h3>
+            <button class="btn btn-sm" data-act="restart-tools">${icon("refresh", 14)}Yeniden başlat</button>
+          </div>
+          <div class="tools-box"></div>
+        </section>
         <section class="privacy-note">
           ${icon("eye", 15)}
           <div>Bir notun başına <code>gizli: true</code> yazarsan o not asla uzak sağlayıcıya gönderilmez;
@@ -92,10 +101,12 @@ export class SettingsDialog {
     for (const provider of data.providers) this._addCard(provider);
     this._renderRoles();
     this._renderBudget();
+    this._renderTools();
 
     this.el.addEventListener("click", (e) => this._click(e));
     this.el.addEventListener("input", (e) => {
-      if (e.target.matches("[data-f]")) this._renderRoles();
+      // only a provider card's fields change the role pickers; the token does not
+      if (e.target.matches("[data-f]") && e.target.closest(".provider")) this._renderRoles();
     });
     this.overlay.addEventListener("mousedown", () => this.close());
     this._keys = (e) => {
@@ -202,6 +213,69 @@ export class SettingsDialog {
       <p class="hint">Sınır dolunca uzak model yerine yerel modele düşer. Yerel çağrılar sayılmaz, sınırlanmaz.</p>`;
   }
 
+  _renderTools() {
+    const box = this.el.querySelector(".tools-box");
+    if (!this.tools) {
+      box.innerHTML = '<p class="hint">Araç durumu okunamadı.</p>';
+      return;
+    }
+    const { servers = {}, errors = {}, count = 0, settings = {} } = this.tools;
+    const token = settings.github_token || {};
+    const rows = Object.entries(servers)
+      .map(([name, list]) => `<div class="tool-row good">${icon("check", 12)}<b>${esc(name)}</b><span>${list.length} araç</span></div>`)
+      .concat(Object.entries(errors).map(([name, why]) =>
+        `<div class="tool-row bad">${icon("alert", 12)}<b>${esc(name)}</b><span>${esc(why)}</span></div>`))
+      .join("");
+
+    box.innerHTML = `
+      <div class="tool-status">${rows || '<p class="hint">Tanımlı araç sunucusu yok.</p>'}</div>
+      <label class="tool-key">GitHub token
+        <input class="field" data-f="github_token" type="password" autocomplete="off"
+               placeholder="${token.has_token ? KEY_MASK : "ghp_… (isteğe bağlı)"}"
+               value="${token.has_token && !token.from_env ? KEY_MASK : ""}">
+      </label>
+      <p class="hint">${token.from_env
+        ? "Şu an ortam değişkeninden (GITHUB_RESEARCH_TOKEN) geliyor. Buraya yazarsan o geçerli olur."
+        : "Tokensız GitHub araması dakikada ~10 istekle sınırlıdır. Token bilgisayarında saklanır, nota ve depoya yazılmaz."}
+        Kaydedince araç sunucuları yeniden başlar — token'ı sadece açılışta okuyorlar.</p>
+      <p class="hint">Toplam ${count} araç. Araç takımı başka bir klasördeyse <code>FIKIR_TOOLS_ROOT</code>
+        ortam değişkenini ayarla.</p>`;
+    // what the field started as, so an untouched token is never re-sent
+    this._tokenWas = box.querySelector('[data-f="github_token"]').value;
+  }
+
+  async _restartTools(button) {
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = `${icon("refresh", 14)}Başlatılıyor…`;
+    try {
+      this.tools = await api.post("/api/tools/restart");
+      this._renderTools();
+      const failed = Object.keys(this.tools.errors || {}).length;
+      toast(failed ? `${failed} araç sunucusu başlamadı.` : "Araç sunucuları yeniden başladı.",
+            failed ? "error" : "success");
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      button.disabled = false;
+      button.innerHTML = original;
+    }
+  }
+
+  /** Returns false only if the token was rejected; tools are never fatal to a save. */
+  async _saveToken() {
+    const input = this.el.querySelector('[data-f="github_token"]');
+    if (!input || input.value === this._tokenWas) return true;
+    try {
+      this.tools = await api.put("/api/tools/settings", { github_token: input.value.trim() });
+      this._renderTools();
+      return true;
+    } catch (err) {
+      this.errorEl.textContent = err.message;
+      return false;
+    }
+  }
+
   // ---------- actions ----------
   _click(e) {
     const act = e.target.closest("[data-act]")?.dataset.act;
@@ -209,6 +283,7 @@ export class SettingsDialog {
     if (act === "close") return this.close();
     if (act === "save") return this._save();
     if (act === "add") return this._addMenu(e.target.closest("[data-act]"));
+    if (act === "restart-tools") return this._restartTools(e.target.closest("[data-act]"));
     if (!card) return;
     if (act === "remove") {
       card.remove();
@@ -275,6 +350,7 @@ export class SettingsDialog {
       const limits = {};
       for (const input of this.el.querySelectorAll("[data-limit]")) limits[input.dataset.limit] = Number(input.value);
       this.usage = await api.put("/api/usage/limits", limits);
+      if (!await this._saveToken()) return false;
       if (!silent) {
         toast("Model ayarları kaydedildi.", "success");
         this.close();

@@ -143,6 +143,10 @@ class ToolCallBody(BaseModel):
     arguments: dict | None = None
 
 
+class ToolSettingsBody(BaseModel):
+    github_token: str | None = None
+
+
 class BindBody(BaseModel):
     role: str
     providers: list[str]
@@ -209,6 +213,19 @@ def create_app(settings: Settings) -> FastAPI:
         """Run one tool by hand (no model involved). A tool that reports an
         error comes back with ok=false — never dressed up as a success."""
         return await tool_hub.call(body.name, body.arguments or {})
+
+    @app.put("/api/tools/settings")
+    async def put_tool_settings(body: ToolSettingsBody):
+        """Save the research tokens. A server reads its token from the
+        environment once, at startup, so saving one is only half the job —
+        the servers come back up here or the new token would do nothing."""
+        tool_hub.settings.replace(body.model_dump(exclude_none=True))
+        return await tool_hub.restart()
+
+    @app.post("/api/tools/restart")
+    async def restart_tools():
+        """Also the way to pick up a corrected path without restarting the app."""
+        return await tool_hub.restart()
 
     # ---- model providers (what the API-key binder edits) ----
     @app.get("/api/providers")

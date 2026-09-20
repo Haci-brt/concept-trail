@@ -6,14 +6,23 @@ integration tests talk to the two real MCP servers but only call tools that
 neither open Opera nor touch the network.
 """
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
 from core import llm_client
 from core.llm_client import ToolBudget, complete_with_tools
 from server.errors import ApiError
-from server.providers import Provider
-from server.tools import CONFIG_PATH, ToolHub, check_arguments, load_config, result_for_model
+from server.providers import KEY_MASK, Provider
+from server.tools import (CONFIG_PATH, ToolHub, ToolSettings, check_arguments, check_bounds,
+                          expand, load_config, result_for_model)
+
+
+def isolated_settings() -> ToolSettings:
+    """Never read or write the real config folder from a test."""
+    return ToolSettings(path=Path(tempfile.mkdtemp()) / "tool-settings.json")
+
 
 needs_servers = pytest.mark.skipif(not CONFIG_PATH.is_file(),
                                    reason="config/search-tools-mcp.json yok")
@@ -92,7 +101,7 @@ def test_arguments_must_be_an_object():
 
 
 def test_an_unknown_tool_name_is_refused():
-    hub = ToolHub(servers={})
+    hub = ToolHub(servers={}, settings=isolated_settings())
     with pytest.raises(ApiError) as err:
         import asyncio
         asyncio.run(hub.call("shell_exec", {}))
@@ -313,6 +322,312 @@ async def test_a_bad_argument_never_leaves_the_client():
         await hub.stop()
 
 
+# ---------------------------------------------------------------- the bounds
+# tools/list hands over types but not limits; the servers publish the limits
+# separately and refuse anything outside them with a bare "Error executing
+# tool X" whose reason never crosses the wire. So they are enforced here.
+BOUNDED = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 256},
+        "page": {"type": "integer", "minimum": 1, "maximum": 10},
+        "repo": {"type": "string", "pattern": r"^[\w.-]+/[\w.-]+$"},
+        "ids": {"type": "array", "minItems": 1, "maxItems": 20},
+        "refresh": {"type": "boolean"},
+    },
+    "required": ["query"],
+}
+
+
+@pytest.mark.parametrize("arguments, word", [
+    ({"query": "a" * 257}, "256"),
+    ({"query": ""}, "en az 1"),
+    ({"query": "q", "page": 11}, "10"),
+    ({"query": "q", "page": 0}, "en az 1"),
+    ({"query": "q", "repo": "sadece-isim"}, "biçimde"),
+    ({"query": "q", "ids": []}, "en az 1"),
+    ({"query": "q", "ids": list(range(21))}, "20"),
+])
+def test_calls_outside_the_published_bounds_never_reach_the_server(arguments, word):
+    problem = check_arguments(BOUNDED, arguments)
+    assert problem and word in problem
+
+
+@pytest.mark.parametrize("arguments", [
+    {"query": "a" * 256},
+    {"query": "q", "page": 10},
+    {"query": "q", "page": 1},
+    {"query": "q", "repo": "anthropics/claude-code"},
+    {"query": "q", "ids": list(range(20))},
+])
+def test_calls_at_the_very_edge_of_the_bounds_are_allowed(arguments):
+    assert check_arguments(BOUNDED, arguments) is None
+
+
+def test_a_boolean_is_never_range_checked_as_a_number():
+    """True is 1 in Python; a bool must not satisfy a numeric bound."""
+    assert check_bounds("refresh", {"minimum": 5}, True) is None
+    assert check_arguments(BOUNDED, {"query": "q", "refresh": True}) is None
+
+
+def test_a_pattern_that_will_not_compile_is_left_to_the_server():
+    assert check_bounds("repo", {"pattern": "([unclosed"}, "ne olursa olsun") is None
+
+
+# ---------------------------------------------------------- refined schemas
+class FakeBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeResult:
+    def __init__(self, texts, is_error=False):
+        self.content = [FakeBlock(t) for t in texts]
+        self.is_error = is_error
+
+
+class FakeSession:
+    def __init__(self, result):
+        self.result = result
+
+    async def call_tool(self, name, arguments):
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+BARE = {"type": "object", "properties": {"per_page": {"type": "integer"}}}
+
+
+def published(name, maximum=100, description="yeni"):
+    return json.dumps({"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object", "properties": {
+            "per_page": {"type": "integer", "minimum": 1, "maximum": maximum}}}}})
+
+
+def a_hub(**extra):
+    hub = ToolHub(servers={}, settings=isolated_settings())
+    hub.registry = {
+        "git_search": {"session": None, "server": "git_search", "description": "eski", "schema": dict(BARE)},
+        "git_tool_schemas": {"session": None, "server": "git_search", "description": "", "schema": {}},
+        **extra,
+    }
+    return hub
+
+
+@pytest.mark.anyio
+async def test_the_servers_own_bounds_replace_the_schema_it_listed():
+    hub = a_hub()
+    await hub._refine_schemas("git_search", FakeSession(FakeResult([published("git_search")])))
+    assert hub.registry["git_search"]["schema"]["properties"]["per_page"]["maximum"] == 100
+    assert hub.registry["git_search"]["description"] == "yeni"
+    # which is the whole point: the limit is now enforced before the call goes out
+    assert check_arguments(hub.registry["git_search"]["schema"], {"per_page": 200})
+
+
+@pytest.mark.anyio
+async def test_one_server_may_not_rewrite_anothers_tool():
+    hub = a_hub(web_search={"session": None, "server": "web_search", "description": "d",
+                            "schema": dict(BARE)})
+    await hub._refine_schemas("git_search", FakeSession(FakeResult([published("web_search")])))
+    assert hub.registry["web_search"]["schema"] == BARE
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("result", [
+    RuntimeError("sunucu cevap vermedi"),
+    FakeResult([published("git_search")], is_error=True),
+    FakeResult(["düz metin, JSON değil"]),
+    FakeResult(["[1, 2, 3]"]),                       # valid JSON, not a definition
+    FakeResult([json.dumps({"function": {"name": "git_search", "parameters": "nesne değil"}})]),
+])
+async def test_schemas_that_do_not_arrive_cost_only_the_bounds(result):
+    """Startup must survive it: the plain schema still works, just unbounded."""
+    hub = a_hub()
+    await hub._refine_schemas("git_search", FakeSession(result))
+    assert hub.registry["git_search"]["schema"] == BARE
+
+
+def test_the_adapter_schema_tools_are_not_offered_to_the_model():
+    """They exist for adapters like this one and were read at startup; handing
+    them to the model only costs it a step to discover that."""
+    hub = a_hub()
+    offered = [d["function"]["name"] for d in hub.function_tools()]
+    assert offered == ["git_search"]
+    # unless asked for by name
+    assert [d["function"]["name"] for d in hub.function_tools(["git_tool_schemas"])] == ["git_tool_schemas"]
+
+
+@needs_servers
+@pytest.mark.anyio
+async def test_the_real_servers_publish_the_limits_they_enforce():
+    hub = ToolHub()
+    await hub.start()
+    try:
+        search = hub.registry["git_search"]["schema"]["properties"]
+        assert search["per_page"]["maximum"] == 100      # GitHub's own ceiling
+        assert search["page"]["maximum"] == 10           # the 1000-result window
+        assert search["query"]["maxLength"] == 256
+        assert set(search["sort"]["enum"]) == {"stars", "updated", "best-match"}
+        assert hub.registry["web_search"]["schema"]["properties"]["query"]["maxLength"] == 500
+        # 20 discovered, but the two adapter-schema dumps are not the model's business
+        assert len(hub.function_tools()) == 18
+    finally:
+        await hub.stop()
+
+
+# ------------------------------------------------------- portable configuration
+def test_a_variable_is_expanded_so_one_config_fits_more_than_one_machine(monkeypatch):
+    monkeypatch.setenv("FIKIR_TOOLS_ROOT", "E:/araclar")
+    assert expand("${FIKIR_TOOLS_ROOT}/.venv/python.exe") == "E:/araclar/.venv/python.exe"
+
+
+def test_the_default_is_used_when_the_variable_is_not_set(monkeypatch):
+    monkeypatch.delenv("FIKIR_TOOLS_ROOT", raising=False)
+    assert expand("${FIKIR_TOOLS_ROOT:-D:/varsayilan}/bin") == "D:/varsayilan/bin"
+
+
+def test_a_variable_with_no_value_and_no_default_disappears(monkeypatch):
+    monkeypatch.delenv("YOK_BOYLE_BIR_DEGISKEN", raising=False)
+    assert expand("${YOK_BOYLE_BIR_DEGISKEN}/bin") == "/bin"
+
+
+def test_expansion_reaches_the_command_the_arguments_and_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("FIKIR_TOOLS_ROOT", "E:/araclar")
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"mcpServers": {"git_search": {
+        "command": "${FIKIR_TOOLS_ROOT}/python.exe",
+        "args": ["--root", "${FIKIR_TOOLS_ROOT}/runtime"],
+        "env": {"PYTHONPATH": "${FIKIR_TOOLS_ROOT}"}}}}), encoding="utf-8")
+    server = load_config(path)["git_search"]
+    assert server["command"] == "E:/araclar/python.exe"
+    assert server["args"] == ["--root", "E:/araclar/runtime"]
+    assert server["env"]["PYTHONPATH"] == "E:/araclar"
+
+
+@pytest.mark.anyio
+async def test_a_command_that_is_not_there_says_how_to_point_at_it():
+    """The toolset living somewhere else must not surface as a raw WinError."""
+    hub = ToolHub(servers={"git_search": {"command": "D:/yok/boyle/python.exe", "args": []}},
+                  settings=isolated_settings())
+    await hub.start()
+    try:
+        assert "FIKIR_TOOLS_ROOT" in hub.errors["git_search"]
+        assert hub.registry == {}          # and the app still runs, just without tools
+    finally:
+        await hub.stop()
+
+
+# ------------------------------------------------------------- the GitHub token
 @pytest.fixture
-def anyio_backend():
-    return "asyncio"
+def secrets(tmp_path):
+    return ToolSettings(path=tmp_path / "tool-settings.json")
+
+
+def test_a_saved_token_is_never_handed_back_in_the_clear(secrets):
+    secrets.replace({"github_token": "ghp_gizli"})
+    shown = secrets.public()["github_token"]
+    assert shown["value"] == KEY_MASK and shown["has_token"] is True
+    assert "ghp_gizli" not in json.dumps(secrets.public())
+
+
+def test_the_mask_coming_back_means_leave_it_alone(secrets):
+    secrets.replace({"github_token": "ghp_gizli"})
+    secrets.replace({"github_token": KEY_MASK})
+    assert secrets.get("github_token") == "ghp_gizli"
+
+
+def test_an_empty_value_clears_the_token(secrets):
+    secrets.replace({"github_token": "ghp_gizli"})
+    secrets.replace({"github_token": ""})
+    assert secrets.get("github_token") == ""
+    assert secrets.public()["github_token"]["has_token"] is False
+
+
+def test_a_token_already_in_the_environment_keeps_working(secrets, monkeypatch):
+    monkeypatch.setenv("GITHUB_RESEARCH_TOKEN", "ghp_ortamdan")
+    assert secrets.get("github_token") == "ghp_ortamdan"
+    assert secrets.public()["github_token"]["from_env"] is True
+    secrets.replace({"github_token": "ghp_ayarlardan"})     # an explicit one wins
+    assert secrets.get("github_token") == "ghp_ayarlardan"
+    assert secrets.public()["github_token"]["from_env"] is False
+
+
+def test_the_token_survives_being_written_and_read_again(tmp_path):
+    path = tmp_path / "tool-settings.json"
+    ToolSettings(path=path).replace({"github_token": "ghp_kalici"})
+    assert ToolSettings(path=path).get("github_token") == "ghp_kalici"
+
+
+def test_the_token_reaches_only_the_server_that_reads_it(secrets):
+    secrets.replace({"github_token": "ghp_gizli"})
+    hub = ToolHub(servers={}, settings=secrets)
+    git = hub._environment("git_search", {"env": {"PYTHONPATH": "/x"}})
+    assert git == {"PYTHONPATH": "/x", "GITHUB_RESEARCH_TOKEN": "ghp_gizli"}
+    assert "GITHUB_RESEARCH_TOKEN" not in hub._environment("web_search", {"env": {}})
+
+
+def test_no_token_means_no_empty_variable_is_invented(secrets, monkeypatch):
+    monkeypatch.delenv("GITHUB_RESEARCH_TOKEN", raising=False)
+    hub = ToolHub(servers={}, settings=secrets)
+    assert hub._environment("git_search", {"env": {}}) == {}
+
+
+# ------------------------------------------------------- a failure that explains itself
+def test_a_failed_web_search_explains_the_likeliest_cause():
+    """Zero results is raised as an error by that server, and the reason never
+    crosses the wire — so the model is told what it most likely means."""
+    body = json.loads(result_for_model("web_search", {"ok": False, "result": {
+        "content": [{"type": "text", "text": "Error executing tool web_search"}], "isError": True}}))
+    assert body["ok"] is False and body["error"] is True
+    assert "SIFIR sonucu" in body["hint"]
+    assert "uydurma" in body["hint"]
+
+
+def test_a_successful_search_is_never_given_a_failure_hint():
+    body = json.loads(result_for_model("web_search", {"ok": True, "result": {"content": []}}))
+    assert "hint" not in body
+
+
+def test_a_tool_with_nothing_useful_to_add_gets_no_hint():
+    body = json.loads(result_for_model("git_search", {"ok": False, "result": {"isError": True}}))
+    assert "hint" not in body and body["error"] is True
+
+
+# ------------------------------------------------------------------ restarting
+@pytest.mark.anyio
+async def test_restarting_picks_up_a_corrected_config(tmp_path, monkeypatch):
+    """A path fixed while the app is running must not need an app restart."""
+    path = tmp_path / "search-tools-mcp.json"
+    path.write_text(json.dumps({"mcpServers": {"git_search": {
+        "command": "D:/yok/boyle/python.exe", "args": []}}}), encoding="utf-8")
+    monkeypatch.setattr("server.tools.USER_CONFIG_PATH", path)
+
+    hub = ToolHub(settings=isolated_settings())          # read from disk, not passed in
+    await hub.start()
+    try:
+        assert "git_search" in hub.errors
+        path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        info = await hub.restart()
+        assert info["errors"] == {} and info["configured"] == []
+    finally:
+        await hub.stop()
+
+
+@pytest.mark.anyio
+async def test_a_hub_given_its_servers_does_not_go_back_to_disk(monkeypatch):
+    """Tests and callers that pass servers explicitly must stay in control."""
+    monkeypatch.setattr("server.tools.load_config",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("disk okundu")))
+    hub = ToolHub(servers={}, settings=isolated_settings())
+    await hub.restart()
+    assert hub.servers == {}
+
+
+def test_the_token_state_travels_with_the_tool_status(secrets):
+    secrets.replace({"github_token": "ghp_gizli"})
+    hub = ToolHub(servers={}, settings=secrets)
+    assert hub.public()["settings"]["github_token"]["has_token"] is True
+    assert "ghp_gizli" not in json.dumps(hub.public())
