@@ -107,7 +107,7 @@ def _default_config() -> dict:
         "providers": [
             {"id": "local-chat", "label": "Yerel sohbet modeli", "base_url": local, "kind": "local",
              "health": "llama", "extras": {"cache_prompt": True}, "timeout": 300.0},
-            {"id": "local-fast", "label": "Yerel hızlı analiz modeli", "base_url": fast, "kind": "local",
+            {"id": "local-fast", "label": "Yerel araştırma modeli", "base_url": fast, "kind": "local",
              "health": "llama", "extras": {"cache_prompt": True}, "timeout": 300.0},
         ],
         # first entry does the job, the rest are fallbacks when it is down

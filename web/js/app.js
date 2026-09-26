@@ -15,8 +15,6 @@ import { Sidebar } from "./sidebar.js";
 import { IdeaTree } from "./tree.js";
 import { $, debounce, esc, mod, relativeSaved, toast, wordCount } from "./util.js";
 
-const IDLE_MS = 6000;       // the assistant only looks once you pause writing this long
-const FAST_IDLE_MS = 3500;  // the small watch model answers in seconds, so react sooner
 const SAVE_MS = 700;
 
 const state = {
@@ -29,7 +27,6 @@ const state = {
   activeId: null,
   view: "editor",
   preview: "preview",
-  autoAssist: true,
   split: 0.5,
   sidebar: true,
   panel: true,
@@ -225,11 +222,8 @@ function buildChrome() {
     <span class="item note-only" id="stRead"></span><span class="sepv note-only"></span>
     <span class="item note-only">Markdown</span>
     <span class="grow"></span>
-    <button class="item watch" id="stWatch" title="Canlı asistanı duraklat / başlat"><span class="dot"></span><span class="lbl"></span></button>
-    <span class="sepv"></span>
     <span class="item" id="stSaved"></span>
     <button class="item" id="stKeys" title="Klavye kısayolları">${icon("keyboard", 15)}</button>`;
-  $("#stWatch").onclick = () => setAutoAssist(!state.autoAssist);
   $("#stKeys").onclick = shortcutsDialog;
 
   $("#settingsBtn").onclick = () => settings.open();
@@ -328,17 +322,7 @@ function renderStatus() {
   else if (tab) saved = "Kaydedildi";
   $("#stSaved").textContent = saved;
 
-  const watch = $("#stWatch");
   const busyHere = tab && state.model.busy === tab.path;
-  let label;
-  if (!state.connected) label = "Sunucuya bağlanılamıyor";
-  else if (!state.autoAssist) label = "Asistan duraklatıldı";
-  else if (!state.model.model_up) label = "Model kapalı";
-  else if (busyHere) label = state.thinking?.phase === "writing" ? "Asistan yazıyor…" : "Asistan düşünüyor…";
-  else label = "Asistan izliyor";
-  watch.classList.toggle("on", state.autoAssist && state.model.model_up && state.connected);
-  watch.classList.toggle("busy", Boolean(busyHere));
-  watch.querySelector(".lbl").textContent = label;
   $("#askBtn")?.classList.toggle("busy", Boolean(busyHere));
 }
 
@@ -357,19 +341,18 @@ function renderModel() {
     ? `Sohbet bulutta: ${chatName} (${short(endpoint)}) — notların bu sağlayıcıya gönderiliyor`
     : chatUp ? `Sohbet modeli çalışıyor (${short(endpoint)})` : "Sohbet modeli kapalı — başlatmak için tıkla";
 
-  // the small watch-loop model gets its own light, since it is the one that
-  // decides how quickly suggestions appear
+  // This fast provider is used for research and explicit note inspection.
   const fast = $("#fastPill");
   fast.hidden = !state.connected;
   fast.classList.toggle("up", fastUp);
   fast.classList.toggle("busy", Boolean(busy) && fastUp);
   fast.classList.toggle("remote", Boolean(fastRemote));
   fast.querySelector(".lbl").innerHTML =
-    `${icon(fastRemote ? "cloud" : "zap", 12)}${fastUp ? `İzleme: ${esc(fastName || short(fastEndpoint))}` : "İzleme modeli kapalı"}`;
+    `${icon(fastRemote ? "cloud" : "zap", 12)}${fastUp ? `Araştırma: ${esc(fastName || short(fastEndpoint))}` : "Araştırma modeli kapalı"}`;
   fast.title = fastRemote
-    ? `Not izleme bulutta: ${fastName} (${short(fastEndpoint)})`
-    : fastUp ? `Notu izleyen model: ${fastName || short(fastEndpoint)}`
-             : "İzleme modeli kapalı; büyük modelle (yavaş) izleniyor. Başlatmak için tıkla";
+    ? `Araştırma bulutta: ${fastName} (${short(fastEndpoint)})`
+    : fastUp ? `Araştırma modeli çalışıyor: ${fastName || short(fastEndpoint)}`
+             : "Araştırma modeli kapalı — başlatmak için tıkla";
 
   const allUp = chatUp && fastUp;
   $("#launchBtn").title = allUp ? "Modeller çalışıyor" : "Model başlat";
@@ -477,15 +460,6 @@ new ResizeObserver(([entry]) => {
   $("#stage").classList.toggle("narrow", entry.contentRect.width < 560);
 }).observe($("#stage"));
 
-function setAutoAssist(on) {
-  state.autoAssist = on;
-  const tab = activeTab();
-  if (tab) { clearTimeout(tab.analyzeTimer); if (on) scheduleAnalyze(tab); }
-  renderStatus();
-  toast(on ? "Canlı asistan açık — yazmaya ara verdiğinde notuna bakacak." : "Canlı asistan duraklatıldı.");
-  saveSession();
-}
-
 function togglePin(path) {
   if (state.pinned.includes(path)) state.pinned = state.pinned.filter((p) => p !== path);
   else state.pinned = [path, ...state.pinned];
@@ -500,7 +474,6 @@ const saveSession = debounce(() => {
     active: activeTab()?.path ?? null,
     view: state.view,
     preview: state.preview,
-    autoAssist: state.autoAssist,
     split: state.split,
     sidebar: state.sidebar,
     panel: state.panel,
@@ -649,7 +622,6 @@ function dropTabsUnder(path) {
   for (const tab of [...state.tabs]) {
     if (!under(tab.path, path)) continue;
     clearTimeout(tab.saveTimer);
-    clearTimeout(tab.analyzeTimer);
     tab.closed = true; // the file is gone — never write it back
     removeTab(tab);
   }
@@ -713,12 +685,11 @@ function createTab(note) {
     mtime: note.mtime,
     dirty: false,
     lastSaved: null,
-    lastSent: null,
     chain: Promise.resolve(),
   };
   tab.editor = new MarkdownEditor({
     value: note.content,
-    placeholder: "Proje fikrini buraya yaz… (# başlık, **kalın**, - liste)\n\nAsistan arka planda izliyor: yazmaya ara verdiğinde notuna bakar ve sağ üstte kısa bir soru ya da öneri gösterir.",
+    placeholder: "Proje fikrini buraya yaz… (# başlık, **kalın**, - liste)\n\nFikirleri araştırmak veya asistana danışmak için üstteki düğmeleri kullan.",
     onChange: () => onEdit(tab),
     onCursor: (c) => { if (tab.id === state.activeId) { state.cursor = c; renderStatus(); } },
     onAsk: () => analyze(tab, true),
@@ -734,8 +705,6 @@ function createTab(note) {
 function activate(id, { focus = true } = {}) {
   const tab = state.tabs.find((t) => t.id === id);
   if (!tab) return;
-  const previous = activeTab();
-  if (previous && previous !== tab) clearTimeout(previous.analyzeTimer);
   state.activeId = id;
   for (const t of state.tabs) t.editor.root.classList.toggle("active", t === tab);
   state.cursor = tab.editor.cursorInfo();
@@ -775,7 +744,6 @@ function removeTab(tab) {
 async function closeTab(id) {
   const tab = state.tabs.find((t) => t.id === id);
   if (!tab) return;
-  clearTimeout(tab.analyzeTimer);
   await saveTab(tab);
   removeTab(tab);
 }
@@ -798,7 +766,6 @@ function onEdit(tab) {
     renderPreviewSoon();
     renderStatus();
   }
-  scheduleAnalyze(tab);
 }
 
 function saveTab(tab) {
@@ -840,44 +807,27 @@ async function saveAll() {
 }
 
 // ---------------------------------------------------------------- assistant
-function scheduleAnalyze(tab) {
-  clearTimeout(tab.analyzeTimer);
-  if (!state.autoAssist) return;
-  tab.analyzeTimer = setTimeout(() => analyze(tab, false), state.model.fast_up ? FAST_IDLE_MS : IDLE_MS);
-}
-
-async function analyze(tab, force) {
-  if (!force && (tab.id !== state.activeId || !state.model.model_up || state.model.busy)) return;
+async function analyze(tab) {
   const content = tab.editor.value;
-  if (!force && content === tab.lastSent) return;
   await saveTab(tab);
   try {
-    const { status } = await api.post("/api/assistant/analyze", { path: tab.path, content, force });
-    if (status === "started" || status === "skipped") tab.lastSent = content;
-    // the server dropped a stale run for this note — ask again with the new text
-    if (status === "superseded") { tab.lastSent = null; scheduleAnalyze(tab); return; }
-    if (!force) return;
+    const { status } = await api.post("/api/assistant/analyze", { path: tab.path, content, force: true });
     if (status === "model_down") toast("Model kapalı — önce üstteki ▷ ile modeli başlat.", "error");
     else if (status === "busy") toast("Asistan şu an başka bir analizle meşgul.");
+    else if (status === "superseded") toast("Not değişti; yeniden incelemek için düğmeye bas.");
     else if (status === "skipped") toast("İncelenecek metin yok.");
   } catch (err) {
-    if (force) toast(err.message, "error");
+    toast(err.message, "error");
   }
 }
 
 function applyStatus(status) {
-  const wasBusy = state.model.busy;
   state.model = { ...state.model, ...status };
   if (!status.busy) state.thinking = null;
   hudCard?.setStatus(status);
   tree.setBusy(status.busy, state.thinking?.text);
   renderModel();
   renderStatus();
-  // text typed while the model was busy never got a look — queue it now
-  if (wasBusy && !status.busy) {
-    const tab = activeTab();
-    if (tab && tab.editor.value !== tab.lastSent) scheduleAnalyze(tab);
-  }
 }
 
 async function hudAction(eventId, action) {
@@ -1135,7 +1085,6 @@ function commands() {
     { label: "Asistana şimdi sor", icon: "sparkles", hint: "Ctrl Enter", action: () => tab && analyze(tab, true) },
     { label: "Açık notu araştır", icon: "search", action: () => research.open() },
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
-    { label: state.autoAssist ? "Canlı asistanı duraklat" : "Canlı asistanı başlat", icon: state.autoAssist ? "eyeOff" : "eye", action: () => setAutoAssist(!state.autoAssist) },
     { label: "Modeli başlat", icon: "play", action: () => launchModel() },
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
     { label: state.preview === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(state.preview === "hidden" ? "preview" : "hidden") },
@@ -1283,7 +1232,6 @@ async function boot() {
   applyStatus(appState.status);
 
   state.preview = ["preview", "source", "hidden"].includes(session.preview) ? session.preview : "preview";
-  state.autoAssist = session.autoAssist ?? true;
   state.split = typeof session.split === "number" ? session.split : 0.5;
   state.sidebar = session.sidebar ?? true;
   state.panel = session.panel ?? true;

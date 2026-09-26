@@ -1,8 +1,7 @@
-"""The live assistant: watches notes, asks the local model, keeps the HUD queue.
+"""The assistant handles explicit note inspection, conversations and proposals.
 
-The browser decides *when* to ask (after the writer pauses); this module
-decides *whether* there is enough new text, runs one model call at a time,
-and turns results into tree nodes, history entries and HUD cards.
+Only a user-initiated request may inspect a note. Results become tree nodes,
+history entries and HUD cards; note changes still require approval.
 """
 import asyncio
 import difflib
@@ -548,7 +547,7 @@ class Assistant:
         detail = lines[-1][:200] if lines else "Açılan konsol penceresindeki hatayı kontrol et."
         self.broker.publish("flash", {"kind": "error", "title": "Model hâlâ başlamadı", "body": detail})
 
-    # ---- live analysis ----
+    # ---- user-requested note inspection ----
     def cancel_running(self, reason: str = "stale") -> None:
         """Stop reading the current answer — the note moved on without it."""
         if self.busy is None:
@@ -557,6 +556,8 @@ class Assistant:
         self.broker.publish("thinking", {"path": self.busy, "phase": "done", "text": "", "reason": reason})
 
     async def analyze(self, rel: str, content: str, force: bool) -> dict:
+        if not force:
+            return {"status": "manual_only"}
         if not (self.model_up or self.fast_up):
             return {"status": "model_down"}
         if self.busy:
