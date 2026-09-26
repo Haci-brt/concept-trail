@@ -23,10 +23,12 @@ FAST_BASE_URL = os.environ.get("FIKIR_FAST_URL", "http://127.0.0.1:8901").rstrip
 MAX_CONTEXT_CHARS = 2200
 HEAD_CONTEXT_CHARS = 700
 
-# The Flash-Next checkpoint always writes a 150-280 token <think> block before
-# its real answer (see run_flashnext.sh), so every budget below has to leave
-# room for that on top of the answer itself — at 300 tokens chat replies were
-# regularly cut off mid-think and came back empty.
+# The Flash-Next checkpoint always writes a <think> block before its real answer
+# (see run_flashnext.sh), so every budget below has to leave room for that on
+# top of the answer itself — at 300 tokens chat replies were regularly cut off
+# mid-think and came back empty. On the ladder prompt it thinks far longer than
+# the 150-280 tokens measured for chat: 900-3,800 characters (2026-09-27), and
+# at 900 tokens two note passes in thirteen ran out before </think>.
 MAX_QUESTIONS = 3
 # what a question is for — drives its label and colour in the UI
 # the curiosity kinds used for `tur: fikir` notes, then the decision ids of the
@@ -35,7 +37,7 @@ QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "ne
                   *DECISION_IDS)
 KNOWN_RE = re.compile(r"^\s*B[İI]L[İI]N[İI]YOR\s*:\s*(.*)$", re.IGNORECASE)
 QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*(?:\[\s*([A-Za-z0-9_-]{1,80})\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
-ANALYZE_MAX_TOKENS = 900
+ANALYZE_MAX_TOKENS = 2400
 CHAT_MAX_TOKENS = 900
 SUMMARY_MAX_TOKENS = 1200
 
@@ -106,17 +108,21 @@ LADDER_SYSTEM_PROMPT = (
     "detaylar. [YOL HARİTASI] şu anki seviyeyi ve o seviyenin AÇIK kararlarını gösterir.\n\n"
     "Her AÇIK karar için TAM OLARAK bir satır yaz, başka hiçbir şey yazma. Satır karar "
     "id'siyle başlar, iki nokta, sonra:\n"
-    "- not bu kararı AÇIKÇA söylüyorsa: notta yazan kararı birkaç kelimeyle yaz (soru değil)\n"
+    "- not bu kararı söylüyorsa, kısaca da olsa: kararı NOTUN KENDİ KELİMELERİYLE yaz, birkaç "
+    "kelime (soru değil). Kendi kelimelerinle yeniden anlatma: not 'telefon uygulaması' diyorsa "
+    "'telefon uygulaması' yaz, 'mobil uygulama' değil.\n"
     "- söylemiyorsa: bu kararı soran tek, kısa bir soru, soru işaretiyle bitsin\n\n"
     "Örnek — not 'Sadece ben kullanacağım' diyor; açık kararlar kullanici ve platform:\n"
-    "kullanici: yalnız yazarın kendisi\n"
+    "kullanici: sadece ben kullanacağım\n"
     "platform: Web uygulaması mı, masaüstü mü, yoksa komut satırı aracı mı olacak?\n\n"
 
     "Kurallar:\n"
     "- Yalnızca [YOL HARİTASI]'ndaki AÇIK kararlar için satır yaz; sırası gelmemiş seviyeler "
     "hakkında soru sorma (platform belli değilken veritabanı ya da kütüphane sorma).\n"
-    "- Kararı yalnızca not açıkça söylüyorsa yaz; tahmin etme. Emin değilsen soru sor. "
-    "'X ya da Y' diye kararsız bir cümle yazma: karar belli değilse bunu soru olarak sor.\n"
+    "- Not bir kararı hiç söylemiyorsa tahmin etme, soru sor. 'X ya da Y' diye kararsız bir "
+    "cümle yazma: karar belli değilse bunu soru olarak sor.\n"
+    "- Not bir kararı kısaca da olsa söylüyorsa o karar verilmiştir: yeniden sorma, ayrıntısını "
+    "da sorma. Ayrıntıyı (hangi alanlar, hangi sıklık, hangi kütüphane) sonraki seviyeler sorar.\n"
     "- Her soru tek bir kararı sorsun, en fazla 15 kelime olsun, tek cümleyle cevaplanabilsin. "
     "Uygunsa tipik seçenekleri say.\n"
     "- Soruyu notta yazana bağla; notta bir ipucu varsa onu an: 'Telefondan kayıt dedin; "
@@ -287,14 +293,22 @@ def note_context(full_text: str, span: list[int] | None = None) -> str:
     return f"{head}\n[…]\n\n{section}"
 
 
+THINK_OPEN = re.compile(r"<think>", re.IGNORECASE)
+THINK_CLOSE = re.compile(r"</think>", re.IGNORECASE)
+
+
 def _strip_think(text: str) -> str:
     """Some local models emit a <think>...</think> reasoning block first; drop it.
     An unclosed block means the budget ran out mid-reasoning — there is no
-    answer to show, so return nothing rather than the raw reasoning dump."""
-    lowered = text.lower()
-    if "</think>" in lowered:
-        text = text[lowered.index("</think>") + len("</think>"):]
-    elif "<think>" in lowered:
+    answer to show, so return nothing rather than the raw reasoning dump.
+
+    The tag is found in the text itself, not in text.lower(): "İ" lowers to two
+    characters, so every "HARİTASI" the model thought about shifted the cut and
+    the answer lost its first letters ("parcalar:" came out as "calar:")."""
+    close = THINK_CLOSE.search(text)
+    if close:
+        text = text[close.end():]
+    elif THINK_OPEN.search(text):
         return ""
     return text.strip()
 
@@ -364,6 +378,59 @@ def _complete(messages: list[dict], *, temperature: float, max_tokens: int, on_c
             else:
                 on_chunk(content)
     return content
+
+
+# Flash-Next re-checks its own conclusion over and over on some notes: one
+# architecture-rung pass thought for 9,200 characters and never answered, and
+# one that did answer had reached its answer at ~1,800 and then repeated the
+# same check three times. The other passes thought 900-2,200 characters. Past
+# this much the reasoning is done: the thinking is stopped and the model
+# answers from what it has thought so far (2026-09-27).
+THINK_BUDGET_CHARS = 2500
+PREFILL_ANSWER_TOKENS = 400
+
+
+class _ThoughtEnough(Exception):
+    """The <think> block ran past its budget."""
+
+
+def _complete_thinking_capped(messages: list[dict], *, temperature: float, max_tokens: int, on_chunk=None,
+                              provider=None, should_cancel=None, on_usage=None) -> str:
+    """_complete, except that a think block past THINK_BUDGET_CHARS is cut off
+    and handed back to the model as a closed block for it to answer from.
+
+    Only a local llama-server continues an assistant message it was given
+    (measured: it answered in 3.5 s, straight from the cached prompt); a remote
+    API would read it as a finished turn, so there the request runs as is.
+    Thinking is not skipped outright — without it the same model guessed the
+    note's data fields and decided a question it should have asked."""
+    provider = provider or default_provider()
+    if provider.is_remote:
+        return _complete(messages, temperature=temperature, max_tokens=max_tokens, on_chunk=on_chunk,
+                         provider=provider, should_cancel=should_cancel, on_usage=on_usage)
+    thought = [""]
+
+    def watch(accumulated: str):
+        thought[0] = accumulated
+        if on_chunk is not None:
+            on_chunk(accumulated)
+        if (len(accumulated) > THINK_BUDGET_CHARS and THINK_OPEN.search(accumulated)
+                and not THINK_CLOSE.search(accumulated)):
+            raise _ThoughtEnough()
+
+    try:
+        return _complete(messages, temperature=temperature, max_tokens=max_tokens, on_chunk=watch,
+                         provider=provider, should_cancel=should_cancel, on_usage=on_usage)
+    except _ThoughtEnough:
+        pass
+    prefill = thought[0].rstrip() + "\n</think>\n\n"
+    answer = _complete(
+        messages + [{"role": "assistant", "content": prefill}],
+        temperature=temperature, max_tokens=PREFILL_ANSWER_TOKENS,
+        # streamed even without a listener, so a cancelled pass still stops
+        on_chunk=lambda text: on_chunk(prefill + text) if on_chunk is not None else None,
+        provider=provider, should_cancel=should_cancel, on_usage=on_usage)
+    return prefill + answer
 
 
 class ToolBudget(Exception):
@@ -655,7 +722,7 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
         parts.append(f"[NOTUN BÖLÜMLERİ]\n{coverage}")
     parts.append(f"[YENİ EKLENEN]\n{new_part}")
 
-    content = _complete(
+    content = _complete_thinking_capped(
         [
             {"role": "system", "content": LADDER_SYSTEM_PROMPT if mode == "yazilim" else SYSTEM_PROMPT},
             {"role": "user", "content": "\n\n".join(parts)},
@@ -664,6 +731,11 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
         provider=provider, should_cancel=should_cancel, on_usage=on_usage,
     )
     reply = _strip_think(content)
+    if not reply and THINK_OPEN.search(content):
+        # it never got past thinking: that is no answer, not "nothing to ask" —
+        # treating it as the latter asked the rung's stock question about
+        # things the note had already settled
+        return {"type": "unfinished"}
     return parse_ladder(reply, open_decisions, full_text) if mode == "yazilim" else parse_response(reply)
 
 

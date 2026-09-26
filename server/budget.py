@@ -1,8 +1,9 @@
 """Spending guard for remote providers.
 
-The watch loop fires every time the writer pauses. Locally that only costs
-seconds; behind an API key it is a metered faucet, so remote calls are counted
-and capped per day. Local providers are never counted or blocked.
+The live watch looks at the note at every 15-second pause or paste, besides the
+requests the writer starts. Locally that only costs seconds; behind an API key
+it is a metered faucet, so remote calls are counted and capped per day. Local
+providers are never counted or blocked.
 
 Usage is kept next to the vault (.assistant/usage.json) so the numbers survive
 restarts and stay with the notes they belong to.

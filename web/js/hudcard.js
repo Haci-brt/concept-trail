@@ -24,7 +24,8 @@ export class HudCard {
   setHud(hud) { this.hud = hud || { event: null, remaining: 0 }; this.render(); }
 
   setStatus(status) {
-    this.busy = status.busy;
+    // the live watch's quiet pass never puts a card up; the status bar says it is looking
+    this.busy = status.busy_quiet ? null : status.busy;
     if (!this.busy) this.thinking = null;
     this.render();
   }

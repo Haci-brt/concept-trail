@@ -8,7 +8,7 @@ import { debounce, esc, html, toast } from "./util.js";
 const KEY_MASK = "••••";
 
 const ROLE_INFO = [
-  ["analysis", "Araştırma ve not inceleme", "Araştırma veya açıkça istediğin not incelemesi için kullanılır."],
+  ["analysis", "Not izleme ve araştırma", "15 saniye durduğunda ya da bir şey yapıştırdığında notu sessizce inceler; araştırmayı da yürütür."],
   ["chat", "Sohbet", "Cevabını değerlendirir, anlamadıysa tekrar sorar."],
   ["summary", "Nota yazma", "Sonucu notuna eklenecek cümleye dönüştürür."],
 ];

@@ -105,16 +105,20 @@ def _default_config() -> dict:
     fast = os.environ.get("FIKIR_FAST_URL", "http://127.0.0.1:8901").rstrip("/")
     return {
         "providers": [
-            {"id": "local-chat", "label": "Yerel sohbet modeli", "base_url": local, "kind": "local",
+            {"id": "local-chat", "label": "Yerel model", "base_url": local, "kind": "local",
              "health": "llama", "extras": {"cache_prompt": True}, "timeout": 300.0},
-            {"id": "local-fast", "label": "Yerel araştırma modeli", "base_url": fast, "kind": "local",
-             "health": "llama", "extras": {"cache_prompt": True}, "timeout": 300.0},
+            # the small model stays defined but off: one big model does every
+            # job, since a slower answer that reads the note right is worth
+            # more here than a fast one that misreads it. Re-enable it and
+            # bind a role to it in the settings to bring it back.
+            {"id": "local-fast", "label": "Yerel küçük model", "base_url": fast, "kind": "local",
+             "health": "llama", "extras": {"cache_prompt": True}, "timeout": 300.0, "enabled": False},
         ],
         # first entry does the job, the rest are fallbacks when it is down
         "roles": {
-            "analysis": ["local-fast", "local-chat"],
-            "chat": ["local-chat", "local-fast"],
-            "summary": ["local-chat", "local-fast"],
+            "analysis": ["local-chat"],
+            "chat": ["local-chat"],
+            "summary": ["local-chat"],
         },
     }
 

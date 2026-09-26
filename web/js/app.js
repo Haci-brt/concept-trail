@@ -17,6 +17,11 @@ import { IdeaTree } from "./tree.js";
 import { $, debounce, esc, mod, relativeSaved, toast, wordCount } from "./util.js";
 
 const SAVE_MS = 700;
+// The live watch looks at natural breaks only: a pause this long, or something
+// pasted in (once it has settled). The big model takes 30-55 s a pass, so what
+// it finds waits quietly in the panel rather than interrupting the writing.
+const LIVE_IDLE_MS = 15000;
+const PASTE_MS = 1200;
 
 const state = {
   vault: "Vault",
@@ -28,6 +33,7 @@ const state = {
   activeId: null,
   view: "editor",
   preview: "preview",
+  liveWatch: true,
   split: 0.5,
   sidebar: true,
   panel: true,
@@ -90,7 +96,12 @@ const historyPanel = new HistoryPanel($("#history"), {
 });
 
 const hudCard = desktopHud ? null : new HudCard($("#hudSlot"));
-const ladderPanel = new LadderPanel($("#ladder"));
+const ladderPanel = new LadderPanel($("#ladder"), {
+  showWaiting: () => {
+    if (!shown.panel) setPanel(true);
+    $("#history .h-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  },
+});
 
 const research = new ResearchPanel({
   getContent: () => activeTab()?.editor.value ?? null,
@@ -224,8 +235,11 @@ function buildChrome() {
     <span class="item note-only" id="stRead"></span><span class="sepv note-only"></span>
     <span class="item note-only">Markdown</span>
     <span class="grow"></span>
+    <button class="item watch" id="stWatch" title="Canlı izleme: 15 saniye durduğunda ya da bir şey yapıştırdığında not sessizce incelenir. Tıklayıp aç/kapat."><span class="dot"></span><span class="lbl"></span></button>
+    <span class="sepv"></span>
     <span class="item" id="stSaved"></span>
     <button class="item" id="stKeys" title="Klavye kısayolları">${icon("keyboard", 15)}</button>`;
+  $("#stWatch").onclick = () => setLiveWatch(!state.liveWatch);
   $("#stKeys").onclick = shortcutsDialog;
 
   $("#settingsBtn").onclick = () => settings.open();
@@ -326,6 +340,17 @@ function renderStatus() {
 
   const busyHere = tab && state.model.busy === tab.path;
   $("#askBtn")?.classList.toggle("busy", Boolean(busyHere));
+
+  const watch = $("#stWatch");
+  let label;
+  if (!state.connected) label = "Sunucuya bağlanılamıyor";
+  else if (!state.liveWatch) label = "Canlı izleme kapalı";
+  else if (!state.model.model_up) label = "Model kapalı";
+  else if (busyHere) label = state.model.busy_quiet ? "Asistan notuna bakıyor…" : "Asistan düşünüyor…";
+  else label = "Canlı izleme açık";
+  watch.classList.toggle("on", state.liveWatch && state.model.model_up && state.connected);
+  watch.classList.toggle("busy", Boolean(busyHere));
+  watch.querySelector(".lbl").textContent = label;
 }
 
 function renderModel() {
@@ -333,28 +358,32 @@ function renderModel() {
   const short = (e) => String(e || "").replace("127.0.0.1", "localhost");
 
   const { chat_remote: chatRemote, fast_remote: fastRemote, chat_provider: chatName, analysis_provider: fastName } = state.model;
+  // one model doing every job gets one light, not two saying the same thing
+  const shared = Boolean(state.model.shared_model);
   const pill = $("#llmPill");
   pill.classList.toggle("up", chatUp && state.connected);
-  pill.classList.toggle("busy", Boolean(busy) && !fastUp);
+  pill.classList.toggle("busy", Boolean(busy) && (shared || !fastUp));
   pill.classList.toggle("remote", Boolean(chatRemote));
+  const role = shared ? "Model" : "Sohbet";
   pill.querySelector(".lbl").innerHTML = !state.connected ? "Sunucu bağlantısı yok"
-    : chatUp ? `${chatRemote ? icon("cloud", 12) : ""}Sohbet: ${esc(chatName || short(endpoint))}` : "Sohbet modeli kapalı";
+    : chatUp ? `${chatRemote ? icon("cloud", 12) : ""}${role}: ${esc(chatName || short(endpoint))}` : `${role} kapalı`;
   pill.title = chatRemote
-    ? `Sohbet bulutta: ${chatName} (${short(endpoint)}) — notların bu sağlayıcıya gönderiliyor`
-    : chatUp ? `Sohbet modeli çalışıyor (${short(endpoint)})` : "Sohbet modeli kapalı — başlatmak için tıkla";
+    ? `${role} bulutta: ${chatName} (${short(endpoint)}) — notların bu sağlayıcıya gönderiliyor`
+    : chatUp ? `${shared ? "Sohbet, not izleme ve araştırma bu modelde" : "Sohbet modeli çalışıyor"} (${short(endpoint)})`
+             : `${role} kapalı — başlatmak için tıkla`;
 
-  // This fast provider is used for research and explicit note inspection.
+  // the note-watch and research model, when it is a different one
   const fast = $("#fastPill");
-  fast.hidden = !state.connected;
+  fast.hidden = !state.connected || shared;
   fast.classList.toggle("up", fastUp);
   fast.classList.toggle("busy", Boolean(busy) && fastUp);
   fast.classList.toggle("remote", Boolean(fastRemote));
   fast.querySelector(".lbl").innerHTML =
-    `${icon(fastRemote ? "cloud" : "zap", 12)}${fastUp ? `Araştırma: ${esc(fastName || short(fastEndpoint))}` : "Araştırma modeli kapalı"}`;
+    `${icon(fastRemote ? "cloud" : "zap", 12)}${fastUp ? `İzleme: ${esc(fastName || short(fastEndpoint))}` : "İzleme modeli kapalı"}`;
   fast.title = fastRemote
-    ? `Araştırma bulutta: ${fastName} (${short(fastEndpoint)})`
-    : fastUp ? `Araştırma modeli çalışıyor: ${fastName || short(fastEndpoint)}`
-             : "Araştırma modeli kapalı — başlatmak için tıkla";
+    ? `Not izleme ve araştırma bulutta: ${fastName} (${short(fastEndpoint)})`
+    : fastUp ? `Not izleme ve araştırma modeli: ${fastName || short(fastEndpoint)}`
+             : "Not izleme modeli kapalı — başlatmak için tıkla";
 
   const allUp = chatUp && fastUp;
   $("#launchBtn").title = allUp ? "Modeller çalışıyor" : "Model başlat";
@@ -476,6 +505,7 @@ const saveSession = debounce(() => {
     active: activeTab()?.path ?? null,
     view: state.view,
     preview: state.preview,
+    liveWatch: state.liveWatch,
     split: state.split,
     sidebar: state.sidebar,
     panel: state.panel,
@@ -691,8 +721,8 @@ function createTab(note) {
   };
   tab.editor = new MarkdownEditor({
     value: note.content,
-    placeholder: "Proje fikrini buraya yaz… (# başlık, **kalın**, - liste)\n\nFikirleri araştırmak veya asistana danışmak için üstteki düğmeleri kullan.",
-    onChange: () => onEdit(tab),
+    placeholder: "Proje fikrini buraya yaz… (# başlık, **kalın**, - liste)\n\nYazmaya 15 saniye ara verdiğinde asistan notuna sessizce bakar; soruları sağdaki panelde bekler.",
+    onChange: (_value, info) => onEdit(tab, info),
     onCursor: (c) => { if (tab.id === state.activeId) { state.cursor = c; renderStatus(); } },
     onAsk: () => analyze(tab, true),
     onScroll: () => { if (tab.id === state.activeId) syncPreviewScroll(tab); },
@@ -726,6 +756,8 @@ function activate(id, { focus = true } = {}) {
 function removeTab(tab) {
   const index = state.tabs.indexOf(tab);
   if (index === -1) return;
+  clearTimeout(tab.liveTimer);
+  clearTimeout(tab.pasteTimer);
   tab.editor.destroy();
   state.tabs.splice(index, 1);
   if (state.activeId === tab.id) {
@@ -758,7 +790,7 @@ function cycleTab(step) {
 }
 
 // ---------------------------------------------------------------- saving
-function onEdit(tab) {
+function onEdit(tab, { pasted = false } = {}) {
   const wasDirty = tab.dirty;
   tab.dirty = tab.editor.value !== tab.saved;
   if (wasDirty !== tab.dirty) renderTabs();
@@ -768,6 +800,12 @@ function onEdit(tab) {
     research.contentChanged();
     renderPreviewSoon();
     renderStatus();
+  }
+  scheduleLive(tab);
+  if (pasted && state.liveWatch) {
+    // typing on right after a paste does not put it off; only another paste does
+    clearTimeout(tab.pasteTimer);
+    tab.pasteTimer = setTimeout(() => liveLook(tab), PASTE_MS);
   }
 }
 
@@ -810,27 +848,60 @@ async function saveAll() {
 }
 
 // ---------------------------------------------------------------- assistant
+/** You asked: look now, and show it. */
 async function analyze(tab) {
   const content = tab.editor.value;
   await saveTab(tab);
   try {
     const { status } = await api.post("/api/assistant/analyze", { path: tab.path, content, force: true });
     if (status === "model_down") toast("Model kapalı — önce üstteki ▷ ile modeli başlat.", "error");
-    else if (status === "busy") toast("Asistan şu an başka bir analizle meşgul.");
-    else if (status === "superseded") toast("Not değişti; yeniden incelemek için düğmeye bas.");
+    else if (status === "busy") toast("Asistan şu an başka bir notla meşgul.");
     else if (status === "skipped") toast("İncelenecek metin yok.");
   } catch (err) {
     toast(err.message, "error");
   }
 }
 
+/** The live watch: every edit pushes the look back to the next 15-second pause. */
+function scheduleLive(tab) {
+  if (!tab) return;
+  clearTimeout(tab.liveTimer);
+  if (state.liveWatch) tab.liveTimer = setTimeout(() => liveLook(tab), LIVE_IDLE_MS);
+}
+
+/** A quiet look. The server skips it when too little changed since the last
+ *  one, and never lets it interrupt a running pass or a conversation. */
+async function liveLook(tab) {
+  if (!state.liveWatch || tab.id !== state.activeId || !state.model.model_up) return;
+  await saveTab(tab);
+  if (tab.closed) return;
+  try {
+    await api.post("/api/assistant/analyze", { path: tab.path, content: tab.editor.value, force: false });
+  } catch { /* best effort: the next pause tries again */ }
+}
+
+function setLiveWatch(on) {
+  state.liveWatch = on;
+  for (const tab of state.tabs) { clearTimeout(tab.liveTimer); clearTimeout(tab.pasteTimer); }
+  if (on) scheduleLive(activeTab());
+  renderStatus();
+  toast(on ? "Canlı izleme açık — 15 saniye durduğunda ya da bir şey yapıştırdığında notuna sessizce bakacak."
+           : "Canlı izleme kapalı — notun yalnızca Ctrl+Enter ile incelenir.");
+  saveSession();
+}
+
 function applyStatus(status) {
+  const wasBusy = state.model.busy;
   state.model = { ...state.model, ...status };
   if (!status.busy) state.thinking = null;
   hudCard?.setStatus(status);
-  tree.setBusy(status.busy, state.thinking?.text);
+  tree.setBusy(status.busy_quiet ? null : status.busy, state.thinking?.text);
   renderModel();
   renderStatus();
+  // a pass just ended — possibly given way to a conversation, or run on text
+  // you have since added to: look again at the next pause (the server skips
+  // it if nothing much changed)
+  if (wasBusy && !status.busy) scheduleLive(activeTab());
 }
 
 async function hudAction(eventId, action) {
@@ -1087,6 +1158,7 @@ function commands() {
     { label: "Yeni klasör", icon: "folderPlus", action: () => newFolder("") },
     { label: "Asistana şimdi sor", icon: "sparkles", hint: "Ctrl Enter", action: () => tab && analyze(tab, true) },
     { label: "Açık notu araştır", icon: "search", action: () => research.open() },
+    { label: state.liveWatch ? "Canlı izlemeyi kapat" : "Canlı izlemeyi aç", icon: state.liveWatch ? "eyeOff" : "eye", action: () => setLiveWatch(!state.liveWatch) },
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
     { label: "Modeli başlat", icon: "play", action: () => launchModel() },
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
@@ -1179,7 +1251,7 @@ function connect() {
     },
     history_update: (event) => { historyPanel.update(event); research.onHistoryUpdate(event); renderViewSwitch(); },
     research: (data) => research.onEvent(data),
-    node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); },
+    node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); ladderPanel.nodeChanged(path, node); },
     written: ({ path, texts }) => { const tab = tabByPath(path); if (tab) tab.editor.setWritten(texts); },
     ladder: ({ path, ladder, transition }) => {
       ladderPanel.update(path, ladder);
@@ -1243,6 +1315,7 @@ async function boot() {
   applyStatus(appState.status);
 
   state.preview = ["preview", "source", "hidden"].includes(session.preview) ? session.preview : "preview";
+  state.liveWatch = session.liveWatch ?? true;
   state.split = typeof session.split === "number" ? session.split : 0.5;
   state.sidebar = session.sidebar ?? true;
   state.panel = session.panel ?? true;

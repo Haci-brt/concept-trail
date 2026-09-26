@@ -5,8 +5,8 @@
 .ladder.card { flex: none; display: grid; gap: 9px; padding: 11px 12px 12px; }
 .ladder[hidden] { display: none; }
 
-.lg-head { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
-.lg-title { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.lg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; color: var(--text-muted); }
+.lg-title { font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
 .lg-phase {
   padding: 1px 8px;
   border-radius: 999px;
@@ -16,6 +16,24 @@
   font-weight: 600;
 }
 .lg-count { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
+
+/* A compact link to the questions waiting in this note. */
+.lg-wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lg-wait:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 /* one segment per rung, one tick per decision inside it */
 .lg-bar { display: grid; grid-template-columns: 4fr 4fr 3fr 4fr; gap: 5px; }

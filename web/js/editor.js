@@ -183,7 +183,7 @@ export class MarkdownEditor {
     this.input.placeholder = placeholder;
     this.input.value = value;
 
-    this.input.addEventListener("input", () => this._handleInput());
+    this.input.addEventListener("input", (e) => this._handleInput(e));
     this.input.addEventListener("keydown", (e) => this._keydown(e));
     for (const ev of ["keyup", "click", "focus", "select"]) this.input.addEventListener(ev, () => this._updateCursor());
     this.chapterSelect.addEventListener("change", () => {
@@ -216,10 +216,12 @@ export class MarkdownEditor {
   focus() { this.input.focus({ preventScroll: true }); }
 
   // ---------- rendering ----------
-  _handleInput() {
+  _handleInput(event) {
     this._render();
     this._updateCursor();
-    this.onChange?.(this.input.value);
+    // something was put in whole (pasted or dropped) rather than typed
+    const pasted = event?.inputType === "insertFromPaste" || event?.inputType === "insertFromDrop";
+    this.onChange?.(this.input.value, { pasted });
   }
 
   _render() {

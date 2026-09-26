@@ -1,9 +1,13 @@
-"""The assistant handles explicit note inspection, conversations and proposals.
+"""The assistant: note inspection, conversations and proposals.
 
-Only a user-initiated request may inspect a note. Results become tree nodes,
-history entries and HUD cards; note changes still require approval.
+A note is inspected when the writer asks, or — with live watching on — quietly,
+after a 15-second pause or a paste (the browser decides when). A quiet pass
+never interrupts: not a running pass, not a conversation, not the writer; its
+questions wait in the panel instead of popping the HUD. Results become tree
+nodes, history entries and HUD cards; note changes still require approval.
 """
 import asyncio
+import contextlib
 import difflib
 import os
 import re
@@ -293,15 +297,17 @@ def strip_protocol(text: str) -> str:
 
 
 def thinking_preview(accumulated: str, limit: int | None = 220) -> dict:
-    """Split a streaming reply into what the model is thinking vs. writing."""
-    lowered = accumulated.lower()
-    if "</think>" in lowered:
-        answer = accumulated[lowered.index("</think>") + len("</think>"):].strip()
+    """Split a streaming reply into what the model is thinking vs. writing.
+    Search tags in the original text: lowercasing shifts indices past 'İ'."""
+    close = llm_client.THINK_CLOSE.search(accumulated)
+    if close:
+        answer = accumulated[close.end():].strip()
         return {"phase": "writing", "text": _tail(answer, limit)}
-    if "<think>" in lowered:
-        thought = accumulated[lowered.index("<think>") + len("<think>"):]
+    opening = llm_client.THINK_OPEN.search(accumulated)
+    if opening:
+        thought = accumulated[opening.end():]
         return {"phase": "thinking", "text": _tail(_drop_partial_tag(thought, "</think>").strip(), 220)}
-    if "<think>".startswith(lowered.lstrip()):
+    if "<think>".startswith(accumulated.lstrip().lower()):
         return {"phase": "thinking", "text": ""}
     return {"phase": "writing", "text": _tail(accumulated.strip(), limit)}
 
@@ -319,6 +325,9 @@ class Assistant:
         self.busy: str | None = None
         self.queue: list[dict] = []
         self._busy_content: str | None = None
+        self._busy_quiet = False  # the running pass is the live watch's, not one you asked for
+        self._next_force: tuple[str, str] | None = None  # asked for while a stale pass was stopping
+        self._chatting = 0        # conversations in flight: they have the model, the watch waits
         self._claims: set[str] = set()
         self._run_id = 0          # bumped to abandon an analysis whose answer is stale
         self._cancelled: set[int] = set()
@@ -344,8 +353,11 @@ class Assistant:
             "chat_remote": bool(chat and chat.is_remote),
             "fast_remote": bool(analysis and analysis.is_remote),
             "remote_in_use": bool((chat and chat.is_remote) or (analysis and analysis.is_remote)),
+            # one model does everything: the UI shows one light, not two
+            "shared_model": bool(analysis and chat and analysis.id == chat.id),
             "usage": self.budget.public(),
             "busy": self.busy,
+            "busy_quiet": bool(self.busy) and self._busy_quiet,
         }
 
     @property
@@ -548,7 +560,7 @@ class Assistant:
         detail = lines[-1][:200] if lines else "Açılan konsol penceresindeki hatayı kontrol et."
         self.broker.publish("flash", {"kind": "error", "title": "Model hâlâ başlamadı", "body": detail})
 
-    # ---- user-requested note inspection ----
+    # ---- note inspection: asked for, or the quiet live watch ----
     def cancel_running(self, reason: str = "stale") -> None:
         """Stop reading the current answer — the note moved on without it."""
         if self.busy is None:
@@ -557,15 +569,28 @@ class Assistant:
         self.broker.publish("thinking", {"path": self.busy, "phase": "done", "text": "", "reason": reason})
 
     async def analyze(self, rel: str, content: str, force: bool) -> dict:
-        if not force:
-            return {"status": "manual_only"}
+        """force: the writer asked. Otherwise it is the live watch, which never
+        interrupts anything. The big model spends 8-13 s thinking before every
+        answer, so a pass takes 20-30 s: cancelling it whenever the writer typed
+        on would mean a writer who pauses often never gets one finished."""
         if not (self.model_up or self.fast_up):
             return {"status": "model_down"}
         if self.busy:
-            if self.busy == rel and content != self._busy_content:
-                # same note, newer text: the running answer is already out of date
-                self.cancel_running()
-                return {"status": "superseded"}
+            if not force or self.busy != rel:
+                return {"status": "busy"}
+            if content == self._busy_content:
+                if self._busy_quiet:
+                    # asked while the watch was already reading this very text:
+                    # let that pass show itself instead of starting over
+                    self._busy_quiet = False
+                    self._publish_status()
+                return {"status": "started"}
+            # same note, newer text: this answer is out of date — stop it and
+            # look again at what you asked about as soon as it has stopped
+            self.cancel_running()
+            self._next_force = (rel, content)
+            return {"status": "started"}
+        if not force and self._chatting:
             return {"status": "busy"}
         if not content.strip():
             return {"status": "skipped"}
@@ -584,6 +609,7 @@ class Assistant:
 
         self.busy = rel
         self._busy_content = content
+        self._busy_quiet = not force
         self._run_id += 1
         self._publish_status()
         self._spawn(self._run_analysis(rel, content, new_part, span, self._run_id))
@@ -608,7 +634,9 @@ class Assistant:
         def on_chunk(accumulated: str):
             nonlocal last_emit
             now = time.monotonic()
-            if now - last_emit < THINKING_THROTTLE_S or cancelled():
+            # a quiet pass does not stream its thinking at you; it starts to
+            # the moment you ask for it (the flag is read on every chunk)
+            if now - last_emit < THINKING_THROTTLE_S or cancelled() or self._busy_quiet:
                 return
             last_emit = now
             self.broker.publish("thinking", {"path": rel, **thinking_preview(accumulated)})
@@ -627,24 +655,40 @@ class Assistant:
             except llm_client.Cancelled:
                 return
             except llm_client.ProviderError as exc:
-                self.broker.publish("flash", {"kind": "error", "path": rel,
-                                              "title": "Model isteği reddedildi", "body": str(exc)})
+                # the watch retries at the next pause; only a pass you asked
+                # for owes you an explanation
+                if not self._busy_quiet:
+                    self.broker.publish("flash", {"kind": "error", "path": rel,
+                                                  "title": "Model isteği reddedildi", "body": str(exc)})
                 self.check_now()
                 return
             except Exception:
-                self.broker.publish("flash", {"kind": "error", "path": rel, "title": "Model yanıt vermedi",
-                                              "body": "Model sunucusu çalışıyor mu kontrol et."})
+                if not self._busy_quiet:
+                    self.broker.publish("flash", {"kind": "error", "path": rel, "title": "Model yanıt vermedi",
+                                                  "body": "Model sunucusu çalışıyor mu kontrol et."})
                 self.check_now()
                 return
             if cancelled():
                 return
-            self._apply_result(rel, content, span, result, open_nodes, mode)
+            self._apply_result(rel, content, span, result, open_nodes, mode, quiet=self._busy_quiet)
         finally:
             self._cancelled.discard(run_id)
             self.busy = None
             self._busy_content = None
+            self._busy_quiet = False
             self.broker.publish("thinking", {"path": rel, "phase": "done", "text": ""})
             self._publish_status()
+            queued, self._next_force = self._next_force, None
+            if queued:
+                self._spawn(self._analyze_queued(*queued))
+
+    async def _analyze_queued(self, rel: str, content: str) -> None:
+        """The pass you asked for while an out-of-date one was stopping."""
+        try:
+            self.vault.read_note(rel)
+            await self.analyze(rel, content, True)
+        except Exception:
+            pass  # the note went away meanwhile; there is nothing left to look at
 
     def _question_branches(self, rel: str, nodes: list[dict]) -> str:
         """Give the analysis model real ids and settled details from earlier turns."""
@@ -666,11 +710,24 @@ class Assistant:
         return "\n".join(lines[-12:])[-2500:]
 
     def _apply_result(self, rel: str, content: str, span, result: dict, open_nodes: list[dict],
-                      mode: str = "fikir"):
+                      mode: str = "fikir", quiet: bool = False):
+        """quiet: a live-watch pass. Its questions and edits wait in the panel
+        rather than popping the HUD, and "nothing to add" is not announced —
+        every 15-second pause saying so would be the nagging all over again."""
         with self.notes.lock:
             state = self.notes.load(rel)
             state["analyzed_text"] = content
             self.notes.save(rel)
+
+        if result.get("type") == "unfinished":
+            # the model never got past thinking. Not "nothing to ask": that
+            # would put the rung's stock question up about things the note
+            # may already settle. The watch waits for new text; a pass you
+            # asked for says why it came back empty.
+            if not quiet:
+                self.broker.publish("flash", {"kind": "error", "path": rel, "title": "Sonuca varamadı",
+                                              "body": "Model düşünürken sınıra takıldı; tekrar sormak için Ctrl+Enter."})
+            return
 
         climbing = mode == "yazilim"
         if climbing and result.get("known"):
@@ -678,7 +735,7 @@ class Assistant:
             # and a question still open about one of them has been answered
             # in the note itself, so it closes
             self.set_decisions(rel, {d: True for d in result["known"]}, by="not",
-                               values=result.get("values"))
+                               values=result.get("values"), quiet=quiet)
             for waiting in self.notes.open_questions(rel):
                 if waiting.get("kind") in result["known"]:
                     self.resolve(rel, waiting["id"], by="model")
@@ -699,9 +756,10 @@ class Assistant:
                           "questions": [{"text": ladder.ASK[first], "kind": first}]}
                 kind = "questions"
         if kind == "net":
-            self.broker.publish("flash", {"kind": "checked", "path": rel, "title": "İncelendi",
-                                          "body": "Şu an için eklenecek bir şey bulunamadı."})
-            self._record(self._event("checked", rel, text="Not incelendi, eklenecek bir şey yok."), hud=False)
+            if not quiet:
+                self.broker.publish("flash", {"kind": "checked", "path": rel, "title": "İncelendi",
+                                              "body": "Şu an için eklenecek bir şey bulunamadı."})
+                self._record(self._event("checked", rel, text="Not incelendi, eklenecek bir şey yok."), hud=False)
 
         elif kind == "resolved":
             index = result.get("resolved_index") or 0
@@ -749,7 +807,7 @@ class Assistant:
                 self._record(self._event("question", rel, text=text, node_id=node["id"],
                                          range=span, status="open",
                                          kind=item.get("kind", "soru"), section=section,
-                                         parent_id=parent))
+                                         parent_id=parent), hud=not quiet)
 
         elif kind == "edit":
             original = result.get("original", "").strip()
@@ -765,7 +823,7 @@ class Assistant:
             self._publish_node(rel, node)
             self._record(self._event("edit", rel, original=original, replacement=replacement, reason=reason,
                                      node_id=node["id"], range=[at, at + len(original)], status="pending",
-                                     section=section))
+                                     section=section), hud=not quiet)
 
     # ---- the decision ladder ----
     @staticmethod
@@ -786,10 +844,12 @@ class Assistant:
         return ladder.state(self.notes.load(rel).get("decisions"))
 
     def set_decisions(self, rel: str, changes: dict, by: str, question: str | None = None,
-                      values: dict | None = None) -> dict:
+                      values: dict | None = None, quiet: bool = False) -> dict:
         """Mark decisions made (True) or open again (False). Announces a
         finished rung and, above all, the moment the note reaches the product
-        phase — once, when it happens, not on every pass after."""
+        phase — once, when it happens, not on every pass after. A quiet pass
+        leaves a finished rung to the ladder card; the product phase is worth
+        interrupting for either way."""
         with self.notes.lock:
             state = self.notes.load(rel)
             decided = state.setdefault("decisions", {})
@@ -815,8 +875,9 @@ class Assistant:
         change = ladder.transition(before, after)
         self.broker.publish("ladder", {"path": rel, "ladder": after, "transition": change})
         if change:
-            self.broker.publish("flash", {"kind": "checked", "path": rel,
-                                          "title": change["title"], "body": change["body"]})
+            if not quiet or change["phase"] == "urun":
+                self.broker.publish("flash", {"kind": "checked", "path": rel,
+                                              "title": change["title"], "body": change["body"]})
             self._record(self._event("phase", rel, text=change["body"], title=change["title"],
                                      phase=change["phase"]), hud=False)
         return after
@@ -937,6 +998,19 @@ class Assistant:
         return True
 
     # ---- chat ----
+    @contextlib.contextmanager
+    def _conversing(self):
+        """A conversation has the model. One model does everything, so a quiet
+        pass left running would hold your reply back 20-30 s: it gives way,
+        and the watch looks again at the next pause."""
+        if self.busy and self._busy_quiet:
+            self.cancel_running("chat")
+        self._chatting += 1
+        try:
+            yield
+        finally:
+            self._chatting -= 1
+
     def _ancestor_context(self, rel: str, node_id: str) -> str:
         lineage = self.notes.question_lineage(rel, node_id)[:-1]
         if not lineage:
@@ -993,7 +1067,7 @@ class Assistant:
             """A tool finished on the worker thread — show it while the rest runs."""
             loop.call_soon_threadsafe(updates.put_nowait, ("tool", record))
 
-        async def run():
+        async def answer():
             # saving happens here rather than in the generator, so the reply
             # is kept even if the page is closed while the model is writing
             try:
@@ -1086,6 +1160,10 @@ class Assistant:
             await updates.put(("done", {"node": node, "understood": True, "note": note_entry,
                                         "proposal": proposal}))
 
+        async def run():
+            with self._conversing():
+                await answer()
+
         self._spawn(run())
         yield {"type": "user", "node": user_node}
         while True:
@@ -1113,8 +1191,9 @@ class Assistant:
         if not any(n["type"] == "chat-user" for n in self.notes.thread(rel, node_id)):
             raise ApiError(400, "Önce biraz sohbet et — nota yazılacak bir sonuç yok.")
         try:
-            text = (await asyncio.to_thread(llm_client.summarize_for_note, messages,
-                                            self.provider_for("summary", rel), self.budget.record)).strip()
+            with self._conversing():
+                text = (await asyncio.to_thread(llm_client.summarize_for_note, messages,
+                                                self.provider_for("summary", rel), self.budget.record)).strip()
         except Exception:
             self.check_now()
             raise ApiError(502, "Model yanıt vermedi, model çalışıyor mu kontrol et.")
@@ -1133,10 +1212,15 @@ class Assistant:
         self.history.moved(old_rel, new_rel)
         if self.busy and (self.busy == old_rel or self.busy.startswith(old_rel + "/")):
             self.busy = new_rel + self.busy[len(old_rel):]
+        if self._next_force and under_path(self._next_force[0], old_rel):
+            path, content = self._next_force
+            self._next_force = (new_rel + path[len(old_rel):], content)
         self._publish_hud()
 
     def trashed(self, rel: str, trash_name: str):
         if self.busy and under_path(self.busy, rel):
             self.cancel_running("trashed")
+        if self._next_force and under_path(self._next_force[0], rel):
+            self._next_force = None
         self.notes.trashed(rel, trash_name)
         self._drop_from_queue(lambda e: e.get("path") == rel or e.get("path", "").startswith(rel + "/"))
