@@ -12,6 +12,8 @@ import time
 import requests
 
 from server import tools as tools_module
+from server.ladder import DECISION_IDS, grounded, normalize_decision
+from server.vault import fold
 
 # Who serves a request is decided by server/providers.py; this module only
 # knows how to speak the OpenAI chat-completions shape to whatever it is given.
@@ -27,7 +29,11 @@ HEAD_CONTEXT_CHARS = 700
 # regularly cut off mid-think and came back empty.
 MAX_QUESTIONS = 3
 # what a question is for — drives its label and colour in the UI
-QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme", "soru")
+# the curiosity kinds used for `tur: fikir` notes, then the decision ids of the
+# ladder — a software note's question is tagged with the decision it asks for
+QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme", "soru",
+                  *DECISION_IDS)
+KNOWN_RE = re.compile(r"^\s*B[İI]L[İI]N[İI]YOR\s*:\s*(.*)$", re.IGNORECASE)
 QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*(?:\[\s*([A-Za-z0-9_-]{1,80})\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
 ANALYZE_MAX_TOKENS = 900
 CHAT_MAX_TOKENS = 900
@@ -85,6 +91,38 @@ SYSTEM_PROMPT = (
     "aynı paragrafın etrafında dönme.\n"
     "- NET seçeneğini nadiren kullan: kısa/erken taslak notlar neredeyse her zaman en az bir "
     "soruya (2. seçenek) açıktır — şüphedeysen NET yerine SORU sor.\n"
+)
+
+# A note about software is designed from the outside in. The server tells the
+# model which rung of the decision ladder the note is on ([YOL HARİTASI]) and
+# drops any question that skips ahead, so the prompt only has to explain the
+# order — it does not have to enforce it.
+LADDER_SYSTEM_PROMPT = (
+    "/no_think\n"
+    "Sen, yazılım tasarlayan birinin yanında duran bir mimari danışmanısın. Kullanıcı bir not "
+    "defterine canlı olarak yazıyor; sana notun tamamı verilecek.\n\n"
+    "İşin, bu yazılımı GENİŞTEN DARA doğru netleştirmek: önce ne olduğu, kimin için ve hangi "
+    "platformda çalışacağı; sonra nasıl bir araya geldiği (mimari); sonra parçaları; en son "
+    "detaylar. [YOL HARİTASI] şu anki seviyeyi ve o seviyenin AÇIK kararlarını gösterir.\n\n"
+    "Her AÇIK karar için TAM OLARAK bir satır yaz, başka hiçbir şey yazma. Satır karar "
+    "id'siyle başlar, iki nokta, sonra:\n"
+    "- not bu kararı AÇIKÇA söylüyorsa: notta yazan kararı birkaç kelimeyle yaz (soru değil)\n"
+    "- söylemiyorsa: bu kararı soran tek, kısa bir soru, soru işaretiyle bitsin\n\n"
+    "Örnek — not 'Sadece ben kullanacağım' diyor; açık kararlar kullanici ve platform:\n"
+    "kullanici: yalnız yazarın kendisi\n"
+    "platform: Web uygulaması mı, masaüstü mü, yoksa komut satırı aracı mı olacak?\n\n"
+
+    "Kurallar:\n"
+    "- Yalnızca [YOL HARİTASI]'ndaki AÇIK kararlar için satır yaz; sırası gelmemiş seviyeler "
+    "hakkında soru sorma (platform belli değilken veritabanı ya da kütüphane sorma).\n"
+    "- Kararı yalnızca not açıkça söylüyorsa yaz; tahmin etme. Emin değilsen soru sor. "
+    "'X ya da Y' diye kararsız bir cümle yazma: karar belli değilse bunu soru olarak sor.\n"
+    "- Her soru tek bir kararı sorsun, en fazla 15 kelime olsun, tek cümleyle cevaplanabilsin. "
+    "Uygunsa tipik seçenekleri say.\n"
+    "- Soruyu notta yazana bağla; notta bir ipucu varsa onu an: 'Telefondan kayıt dedin; "
+    "mobil uygulama mı, telefondan açılan bir web sayfası mı?'\n"
+    "- Soyut ya da 'ne hissederdin' türünden soru sorma; her soru bir tasarım kararına götürsün.\n"
+    "- Açıklama, giriş cümlesi, selamlama veya <think> bloğu YAZMA."
 )
 
 CHAT_SYSTEM_PROMPT = (
@@ -439,7 +477,30 @@ def _extract_field(text: str, labels: list[str]) -> str:
 
 
 def parse_response(raw: str) -> dict:
-    """Turn the model's tagged reply into a structured event dict."""
+    """Turn the model's tagged reply into a structured event dict.
+
+    A software note's reply may open with `BILINIYOR: <ids>` — decisions the
+    note already states. They ride along on whatever the reply decided to do
+    (`known`), and never count as a question of their own."""
+    known: list[str] = []
+    kept: list[str] = []
+    for line in (raw or "").splitlines():
+        match = KNOWN_RE.match(line)
+        if match:
+            for part in re.split(r"[,;/]", match.group(1)):
+                decision = normalize_decision(part)
+                if decision and decision not in known:
+                    known.append(decision)
+        else:
+            kept.append(line)
+    result = _parse_move("\n".join(kept))
+    if known:
+        result["known"] = known
+    return result
+
+
+def _parse_move(raw: str) -> dict:
+    """The one move the reply makes: net, resolved, edit or questions."""
     text = raw.strip()
 
     # some checkpoints run out of max_tokens mid-<think> and never close the
@@ -491,6 +552,62 @@ def parse_response(raw: str) -> dict:
     return {"type": "net"}
 
 
+KNOWN_WORDS = ("notta", "not'ta", "biliniyor", "zaten", "belli")
+LADDER_LINE = re.compile(
+    r"^[\s>*•\-0-9.)]*[<\[(]?\s*([A-Za-zÇĞİÖŞÜçğıöşü ]{2,30}?)\s*[>\])]?\s*[:=]\s*(.+?)\s*$")
+# "tek bir geliştirici ya da bir ekip": the options, not a decision
+HEDGE = re.compile(r"\s(ya da|veya|yahut|yoksa)\s")
+QUESTION_PARTICLE = re.compile(r"(?:^|\s)m[ıiuü](?:y[ıiuü]m|s[ıiuü]n|d[ıiuü]r)?(?:\s|[,.;]|$)")
+
+
+def asks(value: str) -> bool:
+    """A line that asks, as opposed to one that states: a question mark, or
+    the Turkish question particle standing on its own ("web mi masaüstü mü")."""
+    return value.rstrip().endswith("?") or bool(QUESTION_PARTICLE.search(fold(value)))
+
+
+def parse_ladder(raw: str, open_decisions=None, note: str | None = None) -> dict:
+    """One line per open decision: `<id>: NOTTA` or `<id>: <question>`.
+
+    Decisions the note already states come back as `known`; the rest as
+    questions tagged with their decision, in the order they were written.
+    Lines about decisions that are not open are ignored rather than trusted.
+    """
+    open_decisions = set(open_decisions or DECISION_IDS)
+    known: list[str] = []
+    values: dict[str, str] = {}
+    questions: list[dict] = []
+    for line in (raw or "").splitlines():
+        match = LADDER_LINE.match(line)
+        if not match:
+            continue
+        decision = normalize_decision(match.group(1))
+        value = match.group(2).strip().strip('"').strip()
+        if decision not in open_decisions or not value:
+            continue
+        if decision in known or any(q["kind"] == decision for q in questions):
+            continue
+        if fold(value.split()[0].strip(".,;:!")) in KNOWN_WORDS:
+            # a bare "it's in the note" cannot be checked against the note;
+            # without a note to check against it is taken, with one it is not
+            if note is None:
+                known.append(decision)
+        elif asks(value) or HEDGE.search(fold(value)):
+            if len(value) > 5:
+                text = value if asks(value) else value.rstrip(" .") + "?"
+                questions.append({"text": text[0].upper() + text[1:], "kind": decision})
+        elif note is None or grounded(value, note):
+            # the model wrote what the note says, and the note does say it
+            known.append(decision)
+            values[decision] = value[:160]
+    result = {"type": "questions", "questions": questions[:MAX_QUESTIONS]} if questions else {"type": "net"}
+    if known:
+        result["known"] = known
+    if values:
+        result["values"] = values
+    return result
+
+
 def parse_chat_reply(raw: str) -> dict:
     """Did the model understand the answer, or does it need to keep asking?
 
@@ -518,7 +635,8 @@ def parse_chat_reply(raw: str) -> dict:
 
 def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
                    on_chunk=None, provider=None, span: list[int] | None = None,
-                   should_cancel=None, on_usage=None, coverage: str = "") -> dict:
+                   should_cancel=None, on_usage=None, coverage: str = "",
+                   roadmap: str = "", mode: str = "fikir", open_decisions=None) -> dict:
     """Send the whole note (plus open questions) to the local model and get back
     a structured event: a net-effect no-op, a question, a resolved question, or
     an edit suggestion.
@@ -528,6 +646,8 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     block before the real answer, and this lets the UI show that thinking live
     instead of sitting on a dead spinner."""
     parts = [note_context(full_text, span)]
+    if roadmap:
+        parts.append(roadmap)
     if open_questions:
         listed = "\n".join(f"{i}. {q}" for i, q in enumerate(open_questions, start=1))
         parts.append(f"[AÇIK SORULAR]\n{listed}")
@@ -537,13 +657,14 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
 
     content = _complete(
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": LADDER_SYSTEM_PROMPT if mode == "yazilim" else SYSTEM_PROMPT},
             {"role": "user", "content": "\n\n".join(parts)},
         ],
         temperature=0.3, max_tokens=ANALYZE_MAX_TOKENS, on_chunk=on_chunk,
         provider=provider, should_cancel=should_cancel, on_usage=on_usage,
     )
-    return parse_response(_strip_think(content))
+    reply = _strip_think(content)
+    return parse_ladder(reply, open_decisions, full_text) if mode == "yazilim" else parse_response(reply)
 
 
 def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None) -> str:

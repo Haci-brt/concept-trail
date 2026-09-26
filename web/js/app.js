@@ -6,6 +6,7 @@ import { desktopCall, desktopHud, desktopReady, isDesktop, openExternal } from "
 import { confirmDialog, openMenu, promptDialog, shortcutsDialog } from "./dialogs.js";
 import { MarkdownEditor } from "./editor.js";
 import { HistoryPanel } from "./history.js";
+import { LadderPanel } from "./ladder.js";
 import { HudCard } from "./hudcard.js";
 import { icon, logo } from "./icons.js";
 import { Palette } from "./palette.js";
@@ -89,6 +90,7 @@ const historyPanel = new HistoryPanel($("#history"), {
 });
 
 const hudCard = desktopHud ? null : new HudCard($("#hudSlot"));
+const ladderPanel = new LadderPanel($("#ladder"));
 
 const research = new ResearchPanel({
   getContent: () => activeTab()?.editor.value ?? null,
@@ -713,6 +715,7 @@ function activate(id, { focus = true } = {}) {
   renderStatus();
   sidebar.setActive(tab.path);
   historyPanel.setCurrentPath(tab.path);
+  ladderPanel.load(tab.path);
   research.setNote(tab.path);
   updateLayout();
   renderPreview(true);
@@ -1178,6 +1181,14 @@ function connect() {
     research: (data) => research.onEvent(data),
     node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); },
     written: ({ path, texts }) => { const tab = tabByPath(path); if (tab) tab.editor.setWritten(texts); },
+    ladder: ({ path, ladder, transition }) => {
+      ladderPanel.update(path, ladder);
+      if (!transition) return;
+      // the note reaching the product phase is the one thing here worth
+      // interrupting for; a finished rung is a quieter nod
+      const product = transition.phase === "urun";
+      toast(`${noteName(path)} · ${transition.title}: ${transition.body}`, "success", product ? 12000 : 5000);
+    },
     apply_edit: (event) => applyApprovedEdit(event),
     append_note: (event) => appendAssistantText(event),
     open_chat: (event) => openChat(event.path, event.node_id),

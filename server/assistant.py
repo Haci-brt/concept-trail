@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core import llm_client
 from server.errors import ApiError
+from server import ladder
 from server.budget import Budget
 from server.providers import ProviderRegistry
 from server.settings import LAUNCH_SCRIPTS
@@ -591,6 +592,8 @@ class Assistant:
     async def _run_analysis(self, rel: str, content: str, new_part: str, span, run_id: int):
         open_nodes = self.notes.open_questions(rel)
         nodes = self.notes.load(rel)["nodes"]
+        mode = ladder.note_mode(content)
+        roadmap = ladder.roadmap(self.ladder_for(rel)) if mode == "yazilim" else ""
         span = focus_span(content, nodes, span)
         coverage = section_coverage(content, nodes)
         focus = section_of(content, span)
@@ -613,9 +616,13 @@ class Assistant:
         try:
             try:
                 provider = self.provider_for("analysis", rel)
+                climbing = mode == "yazilim"
                 result = await asyncio.to_thread(
-                    llm_client.ask_about_note, content, new_part, [n["text"] for n in open_nodes],
-                    on_chunk, provider, span, cancelled, self.budget.record, coverage,
+                    llm_client.ask_about_note, content, new_part,
+                    [] if climbing else [n["text"] for n in open_nodes],
+                    on_chunk, provider, span, cancelled, self.budget.record,
+                    "" if climbing else coverage,
+                    roadmap, mode, self.ladder_for(rel)["open"],
                 )
             except llm_client.Cancelled:
                 return
@@ -631,7 +638,7 @@ class Assistant:
                 return
             if cancelled():
                 return
-            self._apply_result(rel, content, span, result, open_nodes)
+            self._apply_result(rel, content, span, result, open_nodes, mode)
         finally:
             self._cancelled.discard(run_id)
             self.busy = None
@@ -658,13 +665,39 @@ class Assistant:
             lines.append(line)
         return "\n".join(lines[-12:])[-2500:]
 
-    def _apply_result(self, rel: str, content: str, span, result: dict, open_nodes: list[dict]):
+    def _apply_result(self, rel: str, content: str, span, result: dict, open_nodes: list[dict],
+                      mode: str = "fikir"):
         with self.notes.lock:
             state = self.notes.load(rel)
             state["analyzed_text"] = content
             self.notes.save(rel)
 
+        climbing = mode == "yazilim"
+        if climbing and result.get("known"):
+            # decisions the note already states: they are simply not asked —
+            # and a question still open about one of them has been answered
+            # in the note itself, so it closes
+            self.set_decisions(rel, {d: True for d in result["known"]}, by="not",
+                               values=result.get("values"))
+            for waiting in self.notes.open_questions(rel):
+                if waiting.get("kind") in result["known"]:
+                    self.resolve(rel, waiting["id"], by="model")
+        rung = self.ladder_for(rel) if climbing else None
+        # one open question per decision: asking "web or mobile?" twice in a
+        # row is the illogical-question problem all over again
+        pending = {n.get("kind") for n in self.notes.open_questions(rel)}
+
         kind = result.get("type")
+        if climbing and kind in ("net", "questions", "question"):
+            rung = self.ladder_for(rel)
+            usable = self._climb(rung, result.get("questions") or [], set(pending))
+            if not usable and not pending & set(rung["open"]) and rung["open"]:
+                # nothing to ask from the model, and nothing of this rung is
+                # waiting for an answer: ask the rung's own next question
+                first = rung["open"][0]
+                result = {**result, "type": "questions",
+                          "questions": [{"text": ladder.ASK[first], "kind": first}]}
+                kind = "questions"
         if kind == "net":
             self.broker.publish("flash", {"kind": "checked", "path": rel, "title": "İncelendi",
                                           "body": "Şu an için eklenecek bir şey bulunamadı."})
@@ -686,6 +719,8 @@ class Assistant:
             asked = {fold(n["text"]) for n in open_now}
             asked.add(fold(state.get("last_question", "")))
             previous_questions = [n for n in state["nodes"] if n["type"] == "question"]
+            if climbing:
+                asked_now = self._climb(rung, asked_now, pending)
             for item in asked_now[:room]:
                 text = (item.get("text") or "").strip()
                 folded = fold(text)
@@ -732,6 +767,60 @@ class Assistant:
                                      node_id=node["id"], range=[at, at + len(original)], status="pending",
                                      section=section))
 
+    # ---- the decision ladder ----
+    @staticmethod
+    def _climb(rung: dict, questions: list[dict], pending: set) -> list[dict]:
+        """The order is the server's to keep, not the model's: a question
+        about a rung the note has not reached, about a decision already made,
+        or about one already waiting for an answer is dropped however well it
+        is worded."""
+        allowed = []
+        for item in questions:
+            decision = item.get("kind")
+            if ladder.may_ask(decision, rung) and decision not in pending:
+                allowed.append(item)
+                pending.add(decision)
+        return allowed
+
+    def ladder_for(self, rel: str) -> dict:
+        return ladder.state(self.notes.load(rel).get("decisions"))
+
+    def set_decisions(self, rel: str, changes: dict, by: str, question: str | None = None,
+                      values: dict | None = None) -> dict:
+        """Mark decisions made (True) or open again (False). Announces a
+        finished rung and, above all, the moment the note reaches the product
+        phase — once, when it happens, not on every pass after."""
+        with self.notes.lock:
+            state = self.notes.load(rel)
+            decided = state.setdefault("decisions", {})
+            before = ladder.state(decided)
+            changed = False
+            for decision, made in changes.items():
+                if decision not in ladder.DECISIONS:
+                    continue
+                if made and decision not in decided:
+                    decided[decision] = {"by": by, "at": now_iso(),
+                                         **({"question": question} if question else {}),
+                                         **({"value": values[decision]} if values and values.get(decision) else {})}
+                    changed = True
+                elif not made and decision in decided:
+                    del decided[decision]
+                    changed = True
+            after = ladder.state(decided)
+            if changed:
+                state["phase"] = after["phase"]
+                self.notes.save(rel)
+        if not changed:
+            return after
+        change = ladder.transition(before, after)
+        self.broker.publish("ladder", {"path": rel, "ladder": after, "transition": change})
+        if change:
+            self.broker.publish("flash", {"kind": "checked", "path": rel,
+                                          "title": change["title"], "body": change["body"]})
+            self._record(self._event("phase", rel, text=change["body"], title=change["title"],
+                                     phase=change["phase"]), hud=False)
+        return after
+
     # ---- questions ----
     def remember_written(self, rel: str, text: str) -> None:
         """Keep the exact wording of something the writer approved into the
@@ -775,6 +864,9 @@ class Assistant:
             return node
         node = self.notes.update_node(rel, node_id, status="resolved", resolved_at=now_iso())
         self._publish_node(rel, node)
+        if node.get("kind") in ladder.DECISIONS:
+            # the writer answered the question that asked for this decision
+            self.set_decisions(rel, {node["kind"]: True}, by="cevap", question=node_id)
         question_event = self.history.find_by_node(rel, node_id, "question")
         if question_event:
             self.history.update(question_event, status="resolved")

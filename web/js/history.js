@@ -14,6 +14,7 @@ export const KINDS = {
   resolved: { label: "Tamamlandı", icon: "check", tone: "resolved" },
   summary: { label: "Nota eklenme önerisi", icon: "lightbulb", tone: "summary" },
   checked: { label: "İncelendi", icon: "eye", tone: "checked" },
+  phase: { label: "Evre", icon: "sprout", tone: "resolved" },
 };
 
 const STATUS_CHIP = {

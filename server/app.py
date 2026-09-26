@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import llm_client
+from server import ladder
 from server.assistant import Assistant
 from server.broker import Broker
 from server.errors import ApiError
@@ -127,6 +128,12 @@ class HudBody(BaseModel):
 
 class EventBody(BaseModel):
     event_id: str
+
+
+class DecisionBody(BaseModel):
+    path: str
+    decision: str
+    decided: bool = True
 
 
 class NodeBody(BaseModel):
@@ -478,8 +485,21 @@ def create_app(settings: Settings) -> FastAPI:
         state = notes.load(path)
         # `written` is what the assistant put in the note with your approval;
         # the editor uses it to keep its words visually apart from yours
+        try:
+            mode = ladder.note_mode(vault.read_note(path)["content"])
+        except Exception:
+            mode = "yazilim"
         return {"nodes": state["nodes"], "busy": assistant.busy == path,
-                "written": list(state.get("assistant_text") or [])}
+                "written": list(state.get("assistant_text") or []),
+                "mode": mode, "ladder": assistant.ladder_for(path)}
+
+    @app.post("/api/assistant/decision")
+    def set_decision(body: DecisionBody):
+        """The writer marks a decision made, or opens it again — the model can
+        misread the note, and the ladder is the writer's to correct."""
+        if body.decision not in ladder.DECISIONS:
+            raise ApiError(400, "Bilinmeyen karar.")
+        return assistant.set_decisions(body.path, {body.decision: body.decided}, by="sen")
 
     @app.post("/api/assistant/analyze")
     async def analyze(body: AnalyzeBody):

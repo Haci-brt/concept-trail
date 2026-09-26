@@ -42,6 +42,22 @@ export const QUESTION_KINDS = {
   kapsam: { label: "Kapsam", tone: "scope", icon: "fit" },
   ilham: { label: "İlham", tone: "inspire", icon: "sparkles" },
   netlestirme: { label: "Netleştirme", tone: "question", icon: "questionSquare" },
+  // the decision ladder — broad to narrow; tone by rung
+  amac: { label: "Kapsam · Amaç", tone: "scope", icon: "fit" },
+  kullanici: { label: "Kapsam · Kullanıcı", tone: "scope", icon: "fit" },
+  platform: { label: "Kapsam · Platform", tone: "scope", icon: "fit" },
+  calisma: { label: "Kapsam · Çalışma ortamı", tone: "scope", icon: "fit" },
+  parcalar: { label: "Mimari · Ana parçalar", tone: "depth", icon: "tree" },
+  veri: { label: "Mimari · Veri", tone: "depth", icon: "tree" },
+  iletisim: { label: "Mimari · İletişim", tone: "depth", icon: "tree" },
+  dis: { label: "Mimari · Dış bağımlılıklar", tone: "depth", icon: "tree" },
+  sorumluluk: { label: "Bileşen · Sorumluluk", tone: "effect", icon: "cpu" },
+  arayuz: { label: "Bileşen · Arayüz", tone: "effect", icon: "cpu" },
+  hata: { label: "Bileşen · Hata durumu", tone: "effect", icon: "cpu" },
+  teknoloji: { label: "Detay · Teknoloji", tone: "idea", icon: "wand" },
+  kenar: { label: "Detay · Uç durumlar", tone: "idea", icon: "wand" },
+  test: { label: "Detay · Doğrulama", tone: "idea", icon: "wand" },
+  dagitim: { label: "Detay · Dağıtım", tone: "idea", icon: "wand" },
   soru: { label: "Soru", tone: "question", icon: "questionSquare" },
 };
 
