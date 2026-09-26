@@ -572,6 +572,13 @@ def test_malformed_recommendation_fields_cannot_crash_parser():
     assert result["opportunities"][0]["source_urls"] == ["https://github.com/o/r"]
 
 
+def test_related_question_parent_id_is_parsed_without_breaking_old_format():
+    result = llm_client.parse_response("SORU[derinlestirme][q7]: Bunun ikinci adımı ne?\n"
+                                       "SORU[alternatif]: Başka yol var mı?")
+    assert result["questions"][0]["parent_id"] == "q7"
+    assert "parent_id" not in result["questions"][1]
+
+
 # ---------------------------------------------------------------- the runner
 class StubHub:
     def __init__(self, replies=None, registry=("git_search", "web_search", "git_repo")):

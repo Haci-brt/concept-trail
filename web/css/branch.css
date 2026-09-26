@@ -1,0 +1,5 @@
+.chat-lineage { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.chat-lineage[hidden] { display: none; }
+.chat-lineage > span { color: var(--text-faint); font-size: 11px; font-weight: 600; margin-right: 3px; }
+.chat-lineage > button { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); padding: 4px 8px; font: inherit; font-size: 11px; cursor: pointer; }
+.chat-lineage > button:hover, .chat-lineage > button:focus-visible { border-color: var(--accent); color: var(--accent-strong); }

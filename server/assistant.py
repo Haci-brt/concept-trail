@@ -93,6 +93,47 @@ def _same_topic(new: set[str], old: set[str]) -> bool:
     return shared >= 2 and shared / min(len(new), len(old)) >= 0.5
 
 
+_QUESTION_FILLER = {"hangi", "nasil", "neden", "niye", "olara", "olarak", "icin",
+                    "bunun", "bunla", "bunu", "daha", "sonra", "neden", "fikri",
+                    "fikir", "proje", "baska", "hangi", "sence", "olmal", "yapar"}
+
+
+def _topic_stems(text: str) -> set[str]:
+    """Small, local relevance signal; model-supplied parent ids take priority."""
+    return {word[:5] for word in re.findall(r"\w{5,}", fold(text))
+            if word[:5] not in _QUESTION_FILLER}
+
+
+def related_question_parent(text: str, section: str, nodes: list[dict]) -> str | None:
+    """Conservative fallback when the analysis model did not supply a parent id.
+
+    Use earlier question and answer terms, not merely the shared section. The
+    latter would turn every independent question in a section into one chain.
+    """
+    terms = _topic_stems(text)
+    if len(terms) < 2:
+        return None
+    best_id, best_score = None, 0.0
+    for node in nodes:
+        if node.get("type") != "question":
+            continue
+        question_terms = _topic_stems(node.get("text", ""))
+        messages = [m.get("text", "") for m in nodes
+                    if m.get("parentId") == node.get("id") and m.get("type") in ("chat-user", "chat-assistant")]
+        conversation_terms = _topic_stems(" ".join(messages[-4:]))
+        shared_question = terms & question_terms
+        shared_answer = terms & conversation_terms
+        shared = shared_question | shared_answer
+        if len(shared) < 2:
+            continue
+        score = len(shared_question) * 2 + len(shared_answer) + len(shared) / len(terms)
+        if section and section == node.get("section"):
+            score += 0.4
+        if score > best_score:
+            best_id, best_score = node["id"], score
+    return best_id
+
+
 def section_coverage(content: str, nodes: list[dict]) -> str:
     """Tell the model which parts of the note already have questions, so it
     stops circling the first paragraph."""
@@ -405,8 +446,8 @@ class Assistant:
         task.add_done_callback(self._tasks.discard)
 
     @staticmethod
-    def _event(kind: str, rel: str, **fields) -> dict:
-        return {"id": uuid.uuid4().hex[:12], "type": kind, "path": rel, "note": Path(rel).stem,
+    def _event(event_type: str, rel: str, **fields) -> dict:
+        return {"id": uuid.uuid4().hex[:12], "type": event_type, "path": rel, "note": Path(rel).stem,
                 "created": datetime.now().isoformat(timespec="seconds"), **fields}
 
     def _record(self, event: dict, hud: bool = True):
@@ -554,6 +595,9 @@ class Assistant:
         focus = section_of(content, span)
         if coverage:
             coverage += f"\n\nŞu an şu bölüme bakıyorsun: {focus or '(giriş)'} — sorularını buradan seç."
+        branches = self._question_branches(rel, nodes)
+        if branches:
+            coverage += "\n\n[MEVCUT SORU DALLARI]\n" + branches
         last_emit = 0.0
         cancelled = lambda: run_id in self._cancelled
 
@@ -594,6 +638,25 @@ class Assistant:
             self.broker.publish("thinking", {"path": rel, "phase": "done", "text": ""})
             self._publish_status()
 
+    def _question_branches(self, rel: str, nodes: list[dict]) -> str:
+        """Give the analysis model real ids and settled details from earlier turns."""
+        lines = []
+        for question in (n for n in nodes if n.get("type") == "question"):
+            parent = question.get("parentId")
+            line = f"- {question['id']}"
+            if parent:
+                line += f" (üst soru: {parent})"
+            line += f": {question.get('text', '')[:150]}"
+            thread = self.notes.thread(rel, question["id"])
+            answers = [n.get("text", "") for n in thread if n.get("type") == "chat-user"]
+            if answers:
+                line += f" | Kullanıcının son yanıtı: {answers[-1][:180]}"
+            replies = [n.get("text", "") for n in thread if n.get("type") == "chat-assistant"]
+            if replies:
+                line += f" | Asistanın son yanıtı: {replies[-1][:160]}"
+            lines.append(line)
+        return "\n".join(lines[-12:])[-2500:]
+
     def _apply_result(self, rel: str, content: str, span, result: dict, open_nodes: list[dict]):
         with self.notes.lock:
             state = self.notes.load(rel)
@@ -621,28 +684,36 @@ class Assistant:
                 return  # already waiting on enough; the pass can still resolve or suggest edits
             asked = {fold(n["text"]) for n in open_now}
             asked.add(fold(state.get("last_question", "")))
-            # models happily re-ask the same thing in new words, and an exact
-            # match never catches that — compare what the questions are *about*
-            before = [_stems(n["text"]) for n in state["nodes"] if n["type"] == "question"]
+            previous_questions = [n for n in state["nodes"] if n["type"] == "question"]
             for item in asked_now[:room]:
                 text = (item.get("text") or "").strip()
                 folded = fold(text)
                 if not text or folded in asked:
                     continue
-                stems = _stems(text)
-                if stems and any(_same_topic(stems, old) for old in before):
-                    continue  # a reworded version of something already asked
-                before.append(stems)
+                # Reworded repetitions of a still-unanswered question are noise.
+                # A distinct follow-up after a conversation is valuable, even
+                # when it shares its subject with the parent question.
+                if any(difflib.SequenceMatcher(None, folded, fold(n["text"])).ratio() >= 0.89
+                       and not self.notes.thread(rel, n["id"])
+                       for n in previous_questions):
+                    continue
                 asked.add(folded)
                 with self.notes.lock:
                     state["last_question"] = text
                 section = section_for(content, text, span)
-                node = self.notes.add_node(rel, "question", text, status="open",
+                requested_parent = item.get("parent_id") or item.get("related_to")
+                parent = next((n["id"] for n in previous_questions
+                               if n["id"] == requested_parent), None)
+                if parent is None:
+                    parent = related_question_parent(text, section, state["nodes"])
+                node = self.notes.add_node(rel, "question", text, parent_id=parent, status="open",
                                            kind=item.get("kind", "soru"), section=section)
+                previous_questions.append(node)
                 self._publish_node(rel, node)
                 self._record(self._event("question", rel, text=text, node_id=node["id"],
                                          range=span, status="open",
-                                         kind=item.get("kind", "soru"), section=section))
+                                         kind=item.get("kind", "soru"), section=section,
+                                         parent_id=parent))
 
         elif kind == "edit":
             original = result.get("original", "").strip()
@@ -773,11 +844,26 @@ class Assistant:
         return True
 
     # ---- chat ----
+    def _ancestor_context(self, rel: str, node_id: str) -> str:
+        lineage = self.notes.question_lineage(rel, node_id)[:-1]
+        if not lineage:
+            return ""
+        lines = []
+        for depth, ancestor in enumerate(lineage, start=1):
+            lines.append(f"{depth}. Önceki soru: {ancestor.get('text', '')[:250]}")
+            for turn in self.notes.thread(rel, ancestor["id"])[-6:]:
+                who = "Kullanıcı" if turn["type"] == "chat-user" else "Asistan"
+                lines.append(f"   {who}: {turn.get('text', '')[:300]}")
+        return "\n".join(lines)[-3000:]
+
     def _conversation(self, rel: str, node_id: str) -> tuple[dict, list[dict]]:
         question = self.notes.find_node(rel, node_id)
         if question is None or question["type"] != "question":
             raise ApiError(404, "Soru bulunamadı.")
-        messages = [{"role": "assistant", "content": question["text"]}]
+        context = self._ancestor_context(rel, node_id)
+        seed = (f"[ÖNCEKİ SORU DALININ BAĞLAMI — aşağıdakiler bu sorunun cevabı değil]\n"
+                f"{context}\n\n[ŞİMDİKİ SORU]\n{question['text']}") if context else question["text"]
+        messages = [{"role": "assistant", "content": seed}]
         for node in self.notes.thread(rel, node_id):
             messages.append({"role": "user" if node["type"] == "chat-user" else "assistant",
                              "content": node["text"]})
@@ -931,7 +1017,7 @@ class Assistant:
 
     async def summarize(self, rel: str, node_id: str) -> dict:
         question, messages = self._conversation(rel, node_id)
-        if not any(m["role"] == "user" for m in messages):
+        if not any(n["type"] == "chat-user" for n in self.notes.thread(rel, node_id)):
             raise ApiError(400, "Önce biraz sohbet et — nota yazılacak bir sonuç yok.")
         try:
             text = (await asyncio.to_thread(llm_client.summarize_for_note, messages,

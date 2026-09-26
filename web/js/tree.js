@@ -217,16 +217,31 @@ export class IdeaTree {
       sections.get(section).children.push(item);
     };
 
-    for (const n of tops) {
-      const st = this._statusOf(n);
-      if (this.filter !== "all" && st && st !== this.filter) continue;
+    const makeItem = (n, ancestors = new Set()) => {
+      if (ancestors.has(n.id)) return null; // survive a damaged imported tree
       const item = { id: n.id, kind: n.type === "question" && n.status === "resolved" ? "resolved" : n.type, data: n, children: [] };
       if (n.type === "question") {
         const kids = byParent.get(n.id) || [];
         const msgs = kids.filter((k) => k.type === "chat-user" || k.type === "chat-assistant");
         if (msgs.length) item.children.push({ id: `thread:${n.id}`, kind: "thread", data: { question: n, messages: msgs }, children: [] });
         for (const s of kids.filter((k) => k.type === "summary")) item.children.push({ id: s.id, kind: "summary", data: s, children: [] });
+        const nextAncestors = new Set(ancestors);
+        nextAncestors.add(n.id);
+        for (const child of kids.filter((k) => k.type === "question")) {
+          const branch = makeItem(child, nextAncestors);
+          if (branch) item.children.push(branch);
+        }
       }
+      const st = this._statusOf(n);
+      const visibleChild = item.children.some((child) => child.data?.type === "question");
+      if (this.filter !== "all" && st && st !== this.filter && !visibleChild) return null;
+      return item;
+    };
+
+    for (const n of tops) {
+      const item = makeItem(n);
+      if (!item) continue;
+      const st = this._statusOf(n);
       place(item, n.section || "");
       if (n.section) {
         const group = sections.get(n.section).data;

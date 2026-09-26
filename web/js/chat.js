@@ -37,6 +37,7 @@ export class ChatDrawer {
         <button class="icon-btn" data-act="close" title="Kapat (Esc)">${icon("x", 16)}</button>
       </div>
       <div class="chat-seed">
+        <div class="chat-lineage" hidden></div>
         <div class="eyebrow">${icon("questionSquare", 13)}Soru<span class="chip status"></span></div>
         <div class="q"></div>
       </div>
@@ -57,6 +58,8 @@ export class ChatDrawer {
     this.input = this.el.querySelector("textarea");
 
     this.el.addEventListener("click", (e) => {
+      const ancestor = e.target.closest("[data-ancestor]");
+      if (ancestor && this.path) { this.open(this.path, ancestor.dataset.ancestor); return; }
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (act === "close") this.close();
       if (act === "send") this.send();
@@ -86,6 +89,7 @@ export class ChatDrawer {
       const { nodes } = await api.get("/api/assistant/nodes", { path });
       const question = nodes.find((n) => n.id === nodeId);
       if (!question) throw new Error("Soru bulunamadı.");
+      this._showLineage(nodes, question);
       this._setQuestion(question);
       const thread = nodes.filter((n) => n.parentId === nodeId && n.type.startsWith("chat-"));
       for (const n of thread) {
@@ -111,6 +115,33 @@ export class ChatDrawer {
   /** Called when the server reports a node change (e.g. the model resolved this question). */
   nodeUpdated(path, node) {
     if (path === this.path && node.id === this.nodeId) this._setQuestion(node);
+  }
+
+  _showLineage(nodes, question) {
+    const holder = this.el.querySelector(".chat-lineage");
+    holder.replaceChildren();
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const seen = new Set([question.id]);
+    const ancestors = [];
+    let parent = byId.get(question.parentId);
+    while (parent?.type === "question" && !seen.has(parent.id)) {
+      ancestors.unshift(parent);
+      seen.add(parent.id);
+      parent = byId.get(parent.parentId);
+    }
+    holder.hidden = !ancestors.length;
+    if (!ancestors.length) return;
+    const label = document.createElement("span");
+    label.textContent = "Önceki dal";
+    holder.append(label);
+    for (const ancestor of ancestors) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.ancestor = ancestor.id;
+      button.title = ancestor.text;
+      button.textContent = ancestor.text;
+      holder.append(button);
+    }
   }
 
   _setQuestion(q) {

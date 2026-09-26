@@ -136,6 +136,21 @@ class NoteStore:
         return [n for n in self.load(rel)["nodes"]
                 if n.get("parentId") == node_id and n["type"] in ("chat-user", "chat-assistant")]
 
+    def question_lineage(self, rel: str, node_id: str) -> list[dict]:
+        """The question's ancestors, oldest first, including the question itself.
+
+        Old state files may contain missing parents or a malformed cycle. Stop
+        at either boundary so a damaged tree cannot hang a chat request.
+        """
+        nodes = {n["id"]: n for n in self.load(rel)["nodes"]}
+        lineage, seen = [], set()
+        current = nodes.get(node_id)
+        while current and current.get("type") == "question" and current["id"] not in seen:
+            lineage.append(current)
+            seen.add(current["id"])
+            current = nodes.get(current.get("parentId"))
+        return list(reversed(lineage))
+
     # ---- keeping state attached to notes as they move ----
     def moved(self, old_rel: str, new_rel: str) -> None:
         """A note or folder was renamed/moved; carry its state along."""

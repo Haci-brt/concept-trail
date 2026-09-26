@@ -28,7 +28,7 @@ HEAD_CONTEXT_CHARS = 700
 MAX_QUESTIONS = 3
 # what a question is for — drives its label and colour in the UI
 QUESTION_KINDS = ("derinlestirme", "alternatif", "sonuc", "kapsam", "ilham", "netlestirme", "soru")
-QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
+QUESTION_RE = re.compile(r"^SORU\s*(?:\[\s*([a-zA-ZçğıöşüÇĞİÖŞÜ]+)\s*\])?\s*(?:\[\s*([A-Za-z0-9_-]{1,80})\s*\])?\s*:\s*(.+)$", re.IGNORECASE)
 ANALYZE_MAX_TOKENS = 900
 CHAT_MAX_TOKENS = 900
 SUMMARY_MAX_TOKENS = 1200
@@ -53,6 +53,10 @@ SYSTEM_PROMPT = (
     "SORU[kapsam]: <neyin dışarıda kalacağı, en küçük hâlinin ne olduğu>\n"
     "SORU[ilham]: <kullanıcının aklını açacak somut bir bağlantı ya da örnek üzerinden soru>\n"
     "SORU[netlestirme]: <SADECE gerçekten anlaşılmayan bir şey varsa>\n\n"
+    "Bir yeni soru [NOTUN BÖLÜMLERİ] içindeki mevcut bir soru dalını devam ettiriyorsa "
+    "o dalın gerçek soru id'sini ikinci köşeli paranteze koy: "
+    "SORU[derinlestirme][<soru-id>]: <soru>. İlgisiz yeni soru için eski "
+    "SORU[derinlestirme]: biçimini kullan. İd uydurma.\n\n"
     "3) Notta birebir geçen belirli bir cümle/ifade açıkça hatalı, çelişkili veya daha iyi "
     "yazılabilirse (uydurma alıntı YAPMA, sadece notta gerçekten var olan bir kısmı kullan):\n"
     "DUZENLEME\n"
@@ -472,9 +476,12 @@ def parse_response(raw: str) -> dict:
         if not match:
             continue
         kind = (match.group(1) or "soru").strip().lower()
-        body = match.group(2).strip()
+        body = match.group(3).strip()
         if body and not any(q["text"] == body for q in questions):
-            questions.append({"text": body, "kind": kind if kind in QUESTION_KINDS else "soru"})
+            question = {"text": body, "kind": kind if kind in QUESTION_KINDS else "soru"}
+            if match.group(2):
+                question["parent_id"] = match.group(2)
+            questions.append(question)
     if questions:
         return {"type": "questions", "questions": questions[:MAX_QUESTIONS]}
 
