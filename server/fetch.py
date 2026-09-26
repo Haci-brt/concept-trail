@@ -22,7 +22,7 @@ Two rules this module exists to enforce:
 import ipaddress
 import socket
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -37,6 +37,7 @@ HTTP_TIMEOUT = 20.0
 BROWSER_TIMEOUT_MS = 30000
 MAX_CHARS = 8000            # what a model can actually use; pages run to 75k
 ROBOTS_TTL_S = 900
+MAX_REDIRECTS = 5
 # github.com/<these>/... are site pages, not owner/repo pairs
 RESERVED_PATHS = {"topics", "search", "features", "about", "pricing", "orgs",
                   "sponsors", "collections", "settings", "notifications", "explore"}
@@ -95,9 +96,8 @@ def robots_allows(url: str, agent: str = USER_AGENT) -> bool:
     else:
         parser = RobotFileParser()
         try:
-            reply = httpx.get(root, timeout=8, follow_redirects=True,
-                              headers={"User-Agent": agent})
-            parser.parse(reply.text.splitlines() if reply.status_code == 200 else [])
+            status, body, _ = _http_get(root, timeout=8)
+            parser.parse(body.splitlines() if status == 200 else [])
         except Exception:
             parser = None          # unreachable robots.txt is not a refusal
         _robots_cache[root] = (time.monotonic(), parser)
@@ -179,11 +179,22 @@ def trim(text: str, query: str | None = None, limit: int = MAX_CHARS) -> tuple[s
     return text[:limit], True
 
 
-def _http_get(url: str, timeout: float = HTTP_TIMEOUT):
-    with httpx.Client(follow_redirects=True, timeout=timeout,
+def _http_get(url: str, timeout: float = HTTP_TIMEOUT, check_robots: bool = False):
+    """Follow redirects only after validating every destination as public."""
+    current = validate_public_url(url)
+    if check_robots and not robots_allows(current):
+        raise ApiError(403, "Sitenin robots.txt dosyasi bu adresi kapatmis.")
+    with httpx.Client(follow_redirects=False, timeout=timeout,
                       headers={"User-Agent": USER_AGENT}) as client:
-        reply = client.get(url)
-        return reply.status_code, reply.text, str(reply.url)
+        for _ in range(MAX_REDIRECTS + 1):
+            reply = client.get(current)
+            if reply.status_code in {301, 302, 303, 307, 308} and reply.headers.get("location"):
+                current = validate_public_url(urljoin(str(reply.url), reply.headers["location"]))
+                if check_robots and not robots_allows(current):
+                    raise ApiError(403, "Sitenin robots.txt dosyasi bu adresi kapatmis.")
+                continue
+            return reply.status_code, reply.text, str(reply.url)
+    raise ApiError(502, "Sayfa çok fazla yönlendirme yaptı.")
 
 
 def _browser_get(url: str):
@@ -199,6 +210,16 @@ def _browser_get(url: str):
             # asking, which the default never did. That is the whole extent of
             # it: if a site still refuses, the refusal stands.
             context = browser.new_context(user_agent=BROWSER_UA)
+            def guard(route):
+                try:
+                    target = validate_public_url(route.request.url)
+                    if route.request.resource_type == "document" and not robots_allows(target):
+                        route.abort()
+                    else:
+                        route.continue_()
+                except ApiError:
+                    route.abort()
+            context.route("**/*", guard)
             page = context.new_page()
             reply = page.goto(url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
             page.wait_for_timeout(600)
@@ -216,7 +237,7 @@ def fetch_page(url: str, query: str | None = None, limit: int = MAX_CHARS,
     raw = source_form(url)
     if raw:
         try:
-            status, body, final = _http_get(raw)
+            status, body, final = _http_get(raw, check_robots=True)
         except httpx.HTTPError as exc:
             status, body, final = 0, "", type(exc).__name__
         attempts.append({"tier": "kaynak", "status": status})
@@ -228,7 +249,7 @@ def fetch_page(url: str, query: str | None = None, limit: int = MAX_CHARS,
         raise ApiError(403, "Sitenin robots.txt dosyasi bu adresi kapatmis.")
 
     try:
-        status, body, final = _http_get(url)
+        status, body, final = _http_get(url, check_robots=True)
     except httpx.HTTPError as exc:
         status, body, final = 0, "", type(exc).__name__
     attempts.append({"tier": "http", "status": status})

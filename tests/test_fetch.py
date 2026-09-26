@@ -8,7 +8,7 @@ tests below pin the parts that protect the app rather than the timings.
 import pytest
 
 from server.errors import ApiError
-from server.fetch import MAX_CHARS, extract, source_form, trim, validate_public_url
+from server.fetch import MAX_CHARS, _http_get, extract, source_form, trim, validate_public_url
 
 
 # ---------------------------------------------------------------- the guard
@@ -42,6 +42,35 @@ def test_a_name_that_resolves_to_a_private_address_is_refused(monkeypatch):
                         lambda *a, **k: [(2, 1, 6, "", ("127.0.0.1", 80))])
     with pytest.raises(ApiError):
         validate_public_url("http://kotu.example.com/", resolve=True)
+
+
+def test_http_redirect_to_private_address_is_never_requested(monkeypatch):
+    import server.fetch as fetch
+    monkeypatch.setattr(fetch.socket, "getaddrinfo",
+                        lambda *a, **k: [(2, 1, 6, "", ("93.184.215.14", 80))])
+    calls = []
+
+    class Reply:
+        status_code = 302
+        headers = {"location": "http://127.0.0.1/admin"}
+        text = ""
+        url = "https://example.org/start"
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            pass
+        def get(self, url):
+            calls.append(url)
+            return Reply()
+
+    monkeypatch.setattr(fetch.httpx, "Client", Client)
+    with pytest.raises(ApiError):
+        _http_get("https://example.org/start")
+    assert calls == ["https://example.org/start"]
 
 
 # ---------------------------------------------------------------- source form
