@@ -4,10 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fikir Not Defteri</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d9ccff'/%3E%3Cstop offset='1' stop-color='%236d3fe0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M12 1.8 20.2 8.4 12 22.2 3.8 8.4z' fill='url(%23g)'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="/static/assets/fikir-mark.svg">
   <link rel="stylesheet" href="/static/css/base.css">
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="stylesheet" href="/static/css/tree.css">
+  <link rel="stylesheet" href="/static/css/redesign.css">
+  <link rel="stylesheet" href="/static/css/note-workspace.css">
 </head>
 <body>
   <div class="app" id="app">
@@ -15,12 +17,14 @@
       <div class="tb-left">
         <div class="brand" id="brand"></div>
         <button class="icon-btn" id="toggleSidebar" title="Kenar çubuğu (Ctrl+\)"></button>
+        <button class="global-search" id="globalSearch" title="Not, metin, etiket veya komut ara (Ctrl+P)"></button>
       </div>
       <div class="crumbs" id="crumbs"></div>
       <div class="tb-right">
         <div class="llm-pill" id="fastPill" title="Hızlı analiz modeli — notu izleyen küçük model"><span class="dot"></span><span class="lbl"></span></div>
         <div class="llm-pill" id="llmPill" title="Sohbet modeli"><span class="dot"></span><span class="lbl">LLM: bağlanıyor…</span></div>
         <button class="icon-btn" id="launchBtn" title="Modeli başlat"></button>
+        <button class="icon-btn" id="themeBtn" title="Görünümü değiştir"></button>
         <button class="icon-btn" id="settingsBtn" title="Modeller ve anahtarlar (Ctrl+,)"></button>
         <span class="tb-sep"></span>
         <button class="icon-btn" id="togglePanel" title="Öneri paneli (Ctrl+Shift+\)"></button>
@@ -40,6 +44,7 @@
           <div class="tabs" id="tabs" role="tablist"></div>
           <button class="icon-btn sm add-tab" id="addTab" title="Yeni not (Ctrl+N)"></button>
           <span class="grow"></span>
+          <button class="focus-toggle" id="focusBtn" title="Odak kipi (Ctrl+Shift+F)"></button>
           <div class="view-switch" id="viewSwitch">
             <button data-view="editor" class="on" title="Editör"></button>
             <button data-view="tree" title="Fikir ağacı (Ctrl+G)"></button>
@@ -49,10 +54,11 @@
         <div class="stage" id="stage">
           <div class="panes" id="panes" hidden>
             <div class="editor-card card">
+              <div class="note-identity" id="noteIdentity"></div>
               <div class="toolbar" id="toolbar"></div>
               <div class="editor-host" id="editorHost"></div>
             </div>
-            <div class="splitter" id="splitter" role="separator" aria-orientation="vertical"></div>
+            <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" title="Sürükleyerek sütunları ayarla; çift tıklayarak eşitle"></div>
             <div class="preview-card card">
               <div class="preview-head" id="previewHead"></div>
               <div class="preview-body" id="preview"><div class="md"></div></div>

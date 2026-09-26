@@ -1,0 +1,78 @@
+/* The writing surface stays a native textarea over a color-only mirror. */
+.md-chapterbar {
+  position: absolute;
+  z-index: 2;
+  inset: 0 0 auto;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(90deg, var(--bg-sunken), var(--editor-bg));
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+}
+.md-chapter-kicker { flex: none; font-size: 9px; font-weight: 750; letter-spacing: 1.1px; color: var(--accent); }
+.md-chapter-picker { position: relative; flex: 1; min-width: 0; max-width: 440px; }
+.md-chapter-picker::after { content: "⌄"; position: absolute; right: 9px; top: 50%; transform: translateY(-57%); color: var(--text-faint); pointer-events: none; }
+.md-chapter-picker select {
+  display: block;
+  width: 100%;
+  height: 27px;
+  padding: 0 24px 0 9px;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  outline: none;
+  background: transparent;
+  color: var(--text-2);
+  font: 600 11.5px var(--font-ui);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.md-chapter-picker select:hover, .md-chapter-picker select:focus-visible { border-color: var(--border-strong); background: var(--bg-hover); }
+.md-chapter-count { flex: none; min-width: 45px; text-align: right; color: var(--text-faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.md-chapter-nav {
+  flex: none;
+  width: 25px;
+  height: 25px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 600 15px/1 var(--font-ui);
+  cursor: pointer;
+}
+.md-chapter-nav:hover:not(:disabled), .md-chapter-nav:focus-visible { border-color: var(--border); background: var(--bg-raised); color: var(--accent); }
+.md-chapter-nav:disabled { opacity: .32; cursor: default; }
+.md-chapter-progress { position: absolute; left: 0; bottom: -1px; height: 2px; max-width: 100%; background: var(--accent); transition: width .12s ease; }
+
+.md-editor .md-scroll { top: 38px; }
+.md-editor .md-inner { width: min(100%, 820px); margin-inline: auto; --gutter: 55px; --lh: 28px; font-size: 14px; }
+.md-editor .md-mirror, .md-editor .md-input { padding-top: 27px; padding-right: clamp(16px, 3cqw, 36px); }
+.md-editor .ln::before { opacity: .53; font-size: 11px; }
+.md-editor .ln.cur::before { opacity: 1; color: var(--accent); }
+.md-editor .ln.cur { background: linear-gradient(90deg, transparent var(--gutter), var(--accent-softer) var(--gutter)); }
+.md-editor .ln.hd:not(.cur) { background: linear-gradient(90deg, transparent var(--gutter), var(--accent-softer) var(--gutter), transparent 95%); }
+.md-editor .ln.hd .mk { color: var(--accent); }
+.md-editor .ln.fm-edge { color: var(--text-faint); }
+.md-editor .ln.code { color: var(--text-2); }
+.md-editor .ln .lk .url { text-decoration-color: var(--accent-border); }
+.md-editor .ln .ic { border-radius: 3px; }
+.md-editor .md-input::selection { background: var(--accent-soft); color: transparent; }
+
+.preview-body > .md { max-width: 690px; margin-inline: auto; }
+.preview-body .md h1 { letter-spacing: -.6px; }
+.preview-body .md h2 { padding-bottom: .26em; border-bottom: 1px solid var(--border-soft); }
+.preview-body .md p, .preview-body .md li { line-height: 1.72; }
+.preview-body .md pre { box-shadow: inset 3px 0 var(--accent-border); }
+
+@container (max-width: 400px) {
+  .md-chapterbar { padding-inline: 9px; gap: 3px; }
+  .md-chapter-kicker { display: none; }
+  .md-chapter-count { min-width: 37px; }
+  .md-editor .md-inner { --gutter: 43px; font-size: 13.5px; }
+  .md-editor .md-mirror, .md-editor .md-input { padding-right: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { .md-chapter-progress { transition: none; } }

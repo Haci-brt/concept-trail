@@ -33,11 +33,17 @@ const state = {
   split: 0.5,
   sidebar: true,
   panel: true,
+  pinned: [],
   cursor: { line: 0, col: 0, selected: 0 },
   connected: true,
 };
 let tabSeq = 0;
 const pendingOpens = new Map();
+const appearanceKey = "fikir.appearance.v1";
+const focusKey = "fikir.focus.v1";
+let theme = localStorage.getItem(appearanceKey) === "dark" ? "dark" : "light";
+let focusMode = localStorage.getItem(focusKey) === "true";
+document.documentElement.dataset.theme = theme;
 
 const noteName = (path) => path.split("/").pop().replace(/\.md$/i, "");
 const activeTab = () => state.tabs.find((t) => t.id === state.activeId) || null;
@@ -55,8 +61,9 @@ const sidebar = new Sidebar($("#sidebar"), {
   move: (path, dir) => moveItem(path, dir),
   search: (q) => palette.open(q),
   addTag: () => addTag(),
-  refresh: () => { loadTree(); loadTags(); },
+  refresh: () => { loadTree({ prunePinned: true }); loadTags(); },
   expandedChanged: () => saveSession(),
+  togglePin: (path) => togglePin(path),
 });
 
 /** Which sentences in this note came from the assistant (with your approval). */
@@ -135,9 +142,14 @@ const palette = new Palette({
 
 // ---------------------------------------------------------------- chrome
 function buildChrome() {
-  $("#brand").innerHTML = `${logo(20)}<span class="brand-name">Fikir Not Defteri</span>`;
+  $("#brand").innerHTML = `${logo(22)}<span class="brand-name">fikir<span class="brand-dot">.</span></span>`;
   $("#toggleSidebar").innerHTML = icon("panelLeft", 17);
   $("#togglePanel").innerHTML = icon("panelRight", 17);
+  $("#globalSearch").innerHTML = `${icon("search", 15)}<span>Notlarda ara...</span><kbd>Ctrl P</kbd>`;
+  $("#globalSearch").onclick = () => palette.open();
+  $("#themeBtn").onclick = () => setTheme(theme === "light" ? "dark" : "light");
+  $("#focusBtn").onclick = () => setFocusMode(!focusMode);
+  applyAppearance();
   $("#launchBtn").innerHTML = icon("play", 15);
   $("#settingsBtn").innerHTML = icon("settings", 16);
   $("#addTab").innerHTML = icon("plus", 15);
@@ -193,10 +205,14 @@ function buildChrome() {
     const b = e.target.closest("[data-pv]");
     if (b) setPreview(b.dataset.pv);
   });
+  $("#noteIdentity").addEventListener("click", (e) => {
+    if (e.target.closest("#pinNote") && activeTab()) togglePin(activeTab().path);
+  });
 
   $("#statusbar").innerHTML = `
     <span class="item" id="stPos">Satır 1, Sütun 1</span><span class="sepv note-only"></span>
     <span class="item" id="stWords">0 kelime</span><span class="sepv note-only"></span>
+    <span class="item note-only" id="stRead"></span><span class="sepv note-only"></span>
     <span class="item note-only">Markdown</span>
     <span class="grow"></span>
     <button class="item watch" id="stWatch" title="Canlı asistanı duraklat / başlat"><span class="dot"></span><span class="lbl"></span></button>
@@ -239,6 +255,8 @@ function buildChrome() {
     if (!tab) return;
     e.preventDefault();
     openMenu(e.clientX, e.clientY, [
+      { label: state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle", icon: "star", action: () => togglePin(tab.path) },
+      "sep",
       { label: "Yeniden adlandır", icon: "rename", action: () => renameItem(tab.path, tab.name, "note") },
       { label: "Fikir ağacı", icon: "tree", action: () => { activate(tab.id); setView("tree"); } },
       "sep",
@@ -277,6 +295,12 @@ function renderCrumbs() {
     bits.push(i === parts.length - 1 ? `<span class="cur">${esc(p)}</span>` : `<span>${esc(p)}</span>`);
   });
   $("#crumbs").innerHTML = bits.join("");
+  $("#noteIdentity").innerHTML = tab ? `
+    <div class="note-heading"><span class="note-kicker">AÇIK NOT</span><h1>${esc(tab.name)}</h1></div>
+    <div class="note-actions">
+      <button class="note-pin${state.pinned.includes(tab.path) ? " on" : ""}" id="pinNote" title="${state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle"}" aria-label="${state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle"}" aria-pressed="${state.pinned.includes(tab.path)}">${icon("star", 17)}</button>
+      <div class="note-trust" title="Asistan nota yazmadan önce onayını ister">${icon("checkCircle", 14)}<span>Nota yazmak için onayın gerekir</span></div>
+    </div>` : "";
   document.title = tab ? `${tab.name} — Fikir Not Defteri` : "Fikir Not Defteri";
 }
 
@@ -285,7 +309,9 @@ function renderStatus() {
   $("#statusbar").classList.toggle("no-note", !tab);
   const { line, col, selected } = state.cursor;
   $("#stPos").textContent = tab ? `Satır ${line + 1}, Sütun ${col + 1}${selected ? ` (${selected} seçili)` : ""}` : "";
-  $("#stWords").textContent = tab ? `${wordCount(tab.editor.value)} kelime` : "";
+  const words = tab ? wordCount(tab.editor.value) : 0;
+  $("#stWords").textContent = tab ? `${words} kelime` : "";
+  $("#stRead").textContent = tab && words ? `${Math.max(1, Math.ceil(words / 220))} dk okuma` : "";
   let saved = "";
   if (tab?.dirty) saved = "Kaydedilmedi";
   else if (tab?.lastSaved) saved = `Son kaydedilme: ${relativeSaved(tab.lastSaved)}`;
@@ -378,15 +404,41 @@ function setView(view) {
 
 function setPreview(mode) {
   state.preview = mode;
+  fitColumnsToWindow();
   updateLayout();
   renderPreview(true);
   saveSession();
+}
+
+function applyAppearance() {
+  document.documentElement.dataset.theme = theme;
+  $("#themeBtn").innerHTML = icon(theme === "light" ? "moon" : "sun", 17);
+  $("#themeBtn").title = theme === "light" ? "Koyu görünüme geç" : "Açık görünüme geç";
+  $("#themeBtn").setAttribute("aria-label", $("#themeBtn").title);
+  $("#app").classList.toggle("focus-mode", focusMode);
+  $("#focusBtn").innerHTML = `${icon(focusMode ? "columns" : "fit", 15)}<span>${focusMode ? "Odaktan çık" : "Odak"}</span>`;
+  $("#focusBtn").classList.toggle("on", focusMode);
+  $("#focusBtn").setAttribute("aria-pressed", String(focusMode));
+}
+
+function setTheme(next) {
+  theme = next;
+  localStorage.setItem(appearanceKey, theme);
+  applyAppearance();
+}
+
+function setFocusMode(next) {
+  focusMode = next;
+  localStorage.setItem(focusKey, String(focusMode));
+  applyAppearance();
+  activeTab()?.editor.focus();
 }
 
 // state.sidebar/panel are what the user chose; on small windows they are
 // auto-hidden until the window grows back past the breakpoint.
 const SIDEBAR_MIN_W = 900;
 const PANEL_MIN_W = 1180;
+const PREVIEW_SIDEBAR_MIN_W = 1500;
 const shown = { sidebar: true, panel: true };
 let widthBucket = null;
 
@@ -394,10 +446,11 @@ function setSidebar(on) { state.sidebar = shown.sidebar = on; renderColumns(); s
 function setPanel(on) { state.panel = shown.panel = on; renderColumns(); saveSession(); }
 
 function fitColumnsToWindow() {
-  const bucket = `${innerWidth >= SIDEBAR_MIN_W}${innerWidth >= PANEL_MIN_W}`;
+  const needsTwoColumns = state.preview !== "hidden";
+  const bucket = `${innerWidth >= SIDEBAR_MIN_W}${innerWidth >= PANEL_MIN_W}${innerWidth >= PREVIEW_SIDEBAR_MIN_W}${needsTwoColumns}`;
   if (bucket === widthBucket) return;
   widthBucket = bucket;
-  shown.sidebar = state.sidebar && innerWidth >= SIDEBAR_MIN_W;
+  shown.sidebar = state.sidebar && innerWidth >= (needsTwoColumns ? PREVIEW_SIDEBAR_MIN_W : SIDEBAR_MIN_W);
   shown.panel = state.panel && innerWidth >= PANEL_MIN_W;
   renderColumns();
 }
@@ -423,6 +476,14 @@ function setAutoAssist(on) {
   saveSession();
 }
 
+function togglePin(path) {
+  if (state.pinned.includes(path)) state.pinned = state.pinned.filter((p) => p !== path);
+  else state.pinned = [path, ...state.pinned];
+  sidebar.setPinned(state.pinned);
+  renderCrumbs();
+  saveSession();
+}
+
 const saveSession = debounce(() => {
   api.put("/api/session", {
     tabs: state.tabs.map((t) => t.path),
@@ -433,6 +494,7 @@ const saveSession = debounce(() => {
     split: state.split,
     sidebar: state.sidebar,
     panel: state.panel,
+    pinned: state.pinned,
     expanded: [...sidebar.expanded],
   }).catch(() => {});
 }, 600);
@@ -446,11 +508,17 @@ function flatNotes(items = state.tree, out = []) {
   return out;
 }
 
-async function loadTree() {
+async function loadTree({ prunePinned = false } = {}) {
   try {
     const data = await api.get("/api/vault/tree");
     state.vault = data.name;
     state.tree = data.tree;
+    if (prunePinned) {
+      const existing = new Set(flatNotes().map((n) => n.path));
+      const valid = state.pinned.filter((path) => existing.has(path));
+      if (valid.length !== state.pinned.length) { state.pinned = valid; saveSession(); }
+    }
+    sidebar.setPinned(state.pinned);
     sidebar.setTree(data);
     renderCrumbs();
     if (!activeTab()) renderWelcome();
@@ -528,6 +596,7 @@ async function moveItem(path, dir) {
 
 function applyRename(from, to) {
   if (from === to) return;
+  state.pinned = [...new Set(state.pinned.map((path) => under(path, from) ? to + path.slice(from.length) : path))];
   for (const tab of state.tabs) {
     if (!under(tab.path, from)) continue;
     const oldPath = tab.path;
@@ -539,6 +608,7 @@ function applyRename(from, to) {
   renderTabs();
   renderCrumbs();
   sidebar.setActive(activeTab()?.path ?? null);
+  sidebar.setPinned(state.pinned);
   saveSession();
 }
 
@@ -559,6 +629,13 @@ async function trashItem(path, name, kind) {
 }
 
 function dropTabsUnder(path) {
+  const remaining = state.pinned.filter((p) => !under(p, path));
+  if (remaining.length !== state.pinned.length) {
+    state.pinned = remaining;
+    sidebar.setPinned(state.pinned);
+    renderCrumbs();
+    saveSession();
+  }
   for (const tab of [...state.tabs]) {
     if (!under(tab.path, path)) continue;
     clearTimeout(tab.saveTimer);
@@ -1050,6 +1127,8 @@ function commands() {
     { label: "Modeli başlat", icon: "play", action: () => launchModel() },
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
     { label: state.preview === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(state.preview === "hidden" ? "preview" : "hidden") },
+    { label: focusMode ? "Odak kipinden çık" : "Odak kipine geç", icon: "fit", hint: "Ctrl Shift F", action: () => setFocusMode(!focusMode) },
+    { label: theme === "light" ? "Koyu görünüm" : "Açık görünüm", icon: theme === "light" ? "moon" : "sun", action: () => setTheme(theme === "light" ? "dark" : "light") },
     { label: "Kenar çubuğunu aç/kapat", icon: "panelLeft", hint: "Ctrl \\", action: () => setSidebar(!shown.sidebar) },
     { label: "Öneri panelini aç/kapat", icon: "panelRight", hint: "Ctrl Shift \\", action: () => setPanel(!shown.panel) },
     { label: "Modeller ve anahtarlar", icon: "settings", hint: "Ctrl ,", action: () => settings.open() },
@@ -1057,6 +1136,7 @@ function commands() {
   ];
   if (tab) {
     list.push(
+      { label: state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle", icon: "star", action: () => togglePin(tab.path) },
       { label: "Notu yeniden adlandır", icon: "rename", action: () => renameItem(tab.path, tab.name, "note") },
       { label: "Nota etiket ekle", icon: "tag", action: addTag },
       { label: "Notu çöpe taşı", icon: "trash", action: () => trashItem(tab.path, tab.name, "note") },
@@ -1066,6 +1146,10 @@ function commands() {
 }
 
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && focusMode && !chat.isOpen && !palette.isOpen && !document.querySelector(".dialog, .menu")) {
+    setFocusMode(false);
+    return;
+  }
   if (document.querySelector(".dialog")) {
     if (mod(e) && e.key === "," && !settings.isOpen) { e.preventDefault(); settings.open(); }
     return;
@@ -1081,6 +1165,7 @@ document.addEventListener("keydown", (e) => {
   else if (key === "w" && !e.shiftKey) { e.preventDefault(); if (tab) closeTab(tab.id); }
   else if (key === "s") { e.preventDefault(); if (tab) saveTab(tab); }
   else if (key === "g") { e.preventDefault(); if (tab) setView(state.view === "tree" ? "editor" : "tree"); }
+  else if (key === "f" && e.shiftKey) { e.preventDefault(); setFocusMode(!focusMode); }
   else if (e.code === "Backslash") { e.preventDefault(); if (e.shiftKey) setPanel(!shown.panel); else setSidebar(!shown.sidebar); }
   else if (e.key === "Tab") { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); }
   else if (e.key === "Enter" && tab && !e.target.closest("textarea, input")) { e.preventDefault(); analyze(tab, true); }
@@ -1190,10 +1275,11 @@ async function boot() {
   state.split = typeof session.split === "number" ? session.split : 0.5;
   state.sidebar = session.sidebar ?? true;
   state.panel = session.panel ?? true;
+  state.pinned = Array.isArray(session.pinned) ? [...new Set(session.pinned.filter((p) => typeof p === "string"))] : [];
   fitColumnsToWindow();
   for (const dir of session.expanded || []) sidebar.expanded.add(dir);
 
-  await loadTree();
+  await loadTree({ prunePinned: true });
   loadTags();
   historyPanel.setItems(await api.get("/api/assistant/history").catch(() => []));
 

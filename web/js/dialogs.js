@@ -100,6 +100,7 @@ const SHORTCUTS = [
   ["Hemen kaydet", "Ctrl S"],
   ["Asistana şimdi sor", "Ctrl Enter"],
   ["Fikir ağacı", "Ctrl G"],
+  ["Odak kipi", "Ctrl Shift F"],
   ["Kalın / italik / kod", "Ctrl B · Ctrl I · Ctrl E"],
   ["Bağlantı", "Ctrl K"],
   ["Girinti", "Tab · Shift Tab"],

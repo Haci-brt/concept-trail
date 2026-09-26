@@ -10,9 +10,9 @@ object exposed as window.desktop (see web/js/desktop.js).
 import ctypes
 import sys
 
-from PyQt6.QtCore import (QEvent, QFile, QIODevice, QObject, QPoint, QPointF, QRect, QSettings, Qt, QTimer, QUrl,
+from PyQt6.QtCore import (QEvent, QFile, QIODevice, QObject, QPoint, QPointF, QRect, QRectF, QSettings, Qt, QTimer, QUrl,
                           pyqtSignal, pyqtSlot)
-from PyQt6.QtGui import QColor, QCursor, QDesktopServices, QGuiApplication, QIcon, QLinearGradient, QPainter, QPixmap, QPolygonF
+from PyQt6.QtGui import QColor, QCursor, QDesktopServices, QGuiApplication, QIcon, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -51,22 +51,30 @@ def _bridge_script() -> QWebEngineScript:
 
 
 def _app_icon() -> QIcon:
+    """High contrast mark matching web/assets/fikir-mark.svg at every OS size."""
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        s = size / 24
-        gem = QPolygonF([QPointF(12 * s, 1.8 * s), QPointF(20.2 * s, 8.4 * s),
-                         QPointF(12 * s, 22.2 * s), QPointF(3.8 * s, 8.4 * s)])
-        gradient = QLinearGradient(0, 0, size, size)
-        gradient.setColorAt(0, QColor("#d9ccff"))
-        gradient.setColorAt(0.5, QColor("#a47dfb"))
-        gradient.setColorAt(1, QColor("#6d3fe0"))
+        s = size / 32
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(gradient)
-        painter.drawPolygon(gem)
+        painter.setBrush(QColor("#147b70"))
+        painter.drawRoundedRect(QRectF(.5 * s, .5 * s, 31 * s, 31 * s), 9 * s, 9 * s)
+        polygon = lambda points: QPolygonF([QPointF(x * s, y * s) for x, y in points])
+        painter.setBrush(QColor("#effff8"))
+        painter.drawPolygon(polygon([(16, 4.75), (26.25, 13.25), (16, 27.5), (5.75, 13.25)]))
+        painter.setBrush(QColor("#bfeedd"))
+        painter.drawPolygon(polygon([(16, 4.75), (12.25, 13.25), (19.75, 13.25)]))
+        painter.setBrush(QColor("#d8f8ed"))
+        painter.drawPolygon(polygon([(5.75, 13.25), (26.25, 13.25), (16, 27.5)]))
+        pen = QPen(QColor("#147b70"), max(.7, 1.1 * s))
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(5.75 * s, 13.25 * s), QPointF(26.25 * s, 13.25 * s))
+        painter.drawPolyline(polygon([(16, 4.75), (12.25, 13.25), (16, 27.5), (19.75, 13.25)]))
         painter.end()
         icon.addPixmap(pixmap)
     return icon
@@ -247,6 +255,7 @@ class MainWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
                             | Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowMinMaxButtonsHint)
         self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QApplication.instance().windowIcon())
         self.setMinimumSize(860, 540)
 
         layout = QVBoxLayout(self)

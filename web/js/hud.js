@@ -8,6 +8,14 @@ import { api, connectEvents } from "./api.js";
 import { desktopCall } from "./desktop.js";
 import { HudCard } from "./hudcard.js";
 
+function syncTheme() {
+  document.documentElement.dataset.theme = localStorage.getItem("fikir.appearance.v1") === "dark" ? "dark" : "light";
+}
+syncTheme();
+window.addEventListener("storage", (event) => {
+  if (event.key === "fikir.appearance.v1") syncTheme();
+});
+
 const host = document.getElementById("card");
 let lastReport = "";
 

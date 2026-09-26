@@ -1,6 +1,6 @@
 // Left sidebar: vault file tree (with drag & drop and context menu) and tag cloud.
 import { openMenu } from "./dialogs.js";
-import { icon, logo } from "./icons.js";
+import { icon } from "./icons.js";
 import { esc } from "./util.js";
 
 const TAG_LIMIT = 14;
@@ -12,6 +12,7 @@ export class Sidebar {
     this.vaultName = "Vault";
     this.tree = [];
     this.tags = [];
+    this.pinned = [];
     this.active = null;
     this.expanded = new Set();
     this.vaultOpen = true;
@@ -27,6 +28,10 @@ export class Sidebar {
         <button class="icon-btn" data-act="new-note" title="Yeni not (Ctrl+N)">${icon("filePlus", 17)}</button>
       </div>
       <div class="sb-scroll">
+        <div class="sb-pinned">
+          <div class="sb-section-head">${icon("star", 15)}<span class="label">Sabitlenenler</span></div>
+          <div class="sb-pinned-list"></div>
+        </div>
         <div class="sb-section-head collapsible" data-act="toggle-vault" data-drop="">
           ${icon("folder", 16)}<span class="label vault-name"></span><span class="vault-caret">${icon("chevronUp", 15)}</span>
         </div>
@@ -37,11 +42,9 @@ export class Sidebar {
         </div>
         <div class="tag-cloud"></div>
       </div>
-      <div class="brand-card">
-        ${logo(22)}
-        <div><div class="t">Fikir Not Defteri</div><div class="s">Yerel. Güvenli. Sadece seninle.</div></div>
-      </div>`;
+      <div class="sidebar-tip"><kbd>Ctrl P</kbd><span>Not, etiket veya komuta git</span></div>`;
     this.treeEl = root.querySelector(".vtree");
+    this.pinnedEl = root.querySelector(".sb-pinned-list");
     this.tagsEl = root.querySelector(".tag-cloud");
 
     root.addEventListener("click", (e) => this._click(e));
@@ -60,6 +63,11 @@ export class Sidebar {
     this._renderTags();
   }
 
+  setPinned(paths) {
+    this.pinned = paths;
+    this.render();
+  }
+
   setActive(path) {
     this.active = path;
     if (path) this.reveal(path);
@@ -75,6 +83,21 @@ export class Sidebar {
     this.root.querySelector(".vault-name").textContent = this.vaultName;
     this.root.querySelector(".vault-caret").innerHTML = icon(this.vaultOpen ? "chevronUp" : "chevronDown", 15);
     this.treeEl.style.display = this.vaultOpen ? "" : "none";
+    const notes = new Map();
+    const collect = (items) => {
+      for (const item of items) {
+        if (item.type === "dir") collect(item.children);
+        else notes.set(item.path, item);
+      }
+    };
+    collect(this.tree);
+    this.pinnedEl.innerHTML = this.pinned.filter((path) => notes.has(path)).map((path) => {
+      const note = notes.get(path);
+      return `<div class="pin-item${path === this.active ? " active" : ""}">
+        <button class="pin-open" data-path="${esc(path)}" title="${esc(path)} notunu aç">${icon("file", 15)}<span>${esc(note.name)}</span></button>
+        <button class="pin-remove" data-act="unpin" data-path="${esc(path)}" title="Sabitlemeyi kaldır" aria-label="${esc(note.name)} sabitlemesini kaldır">${icon("x", 13)}</button>
+      </div>`;
+    }).join("") || '<div class="pin-empty">Sık kullandığın notları yıldızla.</div>';
     const rows = [];
     const walk = (items, depth) => {
       for (const item of items) {
@@ -126,11 +149,15 @@ export class Sidebar {
     if (act === "new-folder") return this.h.newFolder("");
     if (act === "add-tag") return this.h.addTag();
     if (act === "more-tags") { this.allTags = true; return this._renderTags(); }
+    if (act === "unpin") return this.h.togglePin(e.target.closest("[data-path]").dataset.path);
     if (act === "toggle-vault") { this.vaultOpen = !this.vaultOpen; return this.render(); }
     if (act === "files") return;
 
     const tag = e.target.closest("[data-tag]");
     if (tag) return this.h.search(`#${tag.dataset.tag}`);
+
+    const pinned = e.target.closest(".pin-open");
+    if (pinned) return this.h.open(pinned.dataset.path);
 
     const row = e.target.closest(".vt-row");
     if (!row) return;
@@ -147,6 +174,15 @@ export class Sidebar {
   _context(e) {
     if (!e.target.closest(".sb-scroll")) return;
     e.preventDefault();
+    const pinned = e.target.closest(".pin-item");
+    if (pinned) {
+      const path = pinned.querySelector(".pin-open").dataset.path;
+      openMenu(e.clientX, e.clientY, [
+        { label: "Aç", icon: "file", action: () => this.h.open(path) },
+        { label: "Sabitlemeyi kaldır", icon: "star", action: () => this.h.togglePin(path) },
+      ]);
+      return;
+    }
     const row = e.target.closest(".vt-row");
     if (!row) {
       openMenu(e.clientX, e.clientY, [

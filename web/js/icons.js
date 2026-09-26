@@ -65,6 +65,9 @@ const P = {
   key: '<circle cx="8" cy="12" r="3.8"/><path d="M11.8 12H21M18 12v3.2M15 12v2.4"/>',
   zap: '<path d="M13 2.5 5 13.5h6l-1 8 8-11h-6z"/>',
   wand: '<path d="m4 20 11-11M14 4v2M19 9h2M18 5l-1.5 1.5M14 9l1 1"/>',
+  sun: '<circle cx="12" cy="12" r="3.6"/><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2.5 12h2m15 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4z"/>',
+  star: '<path d="m12 2.7 2.8 5.7 6.3.9-4.6 4.4 1.1 6.3L12 17l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z"/>',
 };
 
 export function icon(name, size = 16, extraClass = "") {
@@ -72,14 +75,14 @@ export function icon(name, size = 16, extraClass = "") {
   return `<svg class="ico ${extraClass}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
-let logoCount = 0;
 export function logo(size = 20) {
-  const id = `gem${++logoCount}`;
-  return `<svg class="logo" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">
-    <defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#d9ccff"/><stop offset=".5" stop-color="#a47dfb"/><stop offset="1" stop-color="#6d3fe0"/>
-    </linearGradient></defs>
-    <path d="M12 1.8 20.2 8.4 12 22.2 3.8 8.4z" fill="url(#${id})"/>
-    <path d="M3.8 8.4h16.4M12 1.8 8.6 8.4 12 22.2l3.4-13.8z" fill="none" stroke="rgba(255,255,255,.45)" stroke-width=".7" stroke-linejoin="round"/>
+  // Solid facets stay legible at title-bar size and avoid SVG gradient id
+  // collisions when the same mark appears in the welcome state.
+  return `<svg class="logo" width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true">
+    <rect x=".5" y=".5" width="31" height="31" rx="9" fill="#147b70"/>
+    <path d="M16 4.75 26.25 13.25 16 27.5 5.75 13.25Z" fill="#effff8"/>
+    <path d="M16 4.75 12.25 13.25h7.5Z" fill="#bfeedd"/>
+    <path d="M5.75 13.25h20.5L16 27.5Z" fill="#d8f8ed"/>
+    <path d="M5.75 13.25h20.5M16 4.75l-3.75 8.5L16 27.5l3.75-14.25Z" fill="none" stroke="#147b70" stroke-width="1.1" stroke-linejoin="round"/>
   </svg>`;
 }

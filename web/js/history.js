@@ -116,6 +116,12 @@ export class HistoryPanel {
     if (open.length) {
       parts.push(`<div class="h-section">Sıradaki${open.length > 1 ? `<span class="h-num">${open.length}</span>` : ""}</div>`);
       parts.push(open.map((e) => this._item(e)).join(""));
+    } else {
+      parts.push(`<div class="h-caught-up">
+        <span class="h-caught-icon">${icon("check", 18)}</span>
+        <strong>Şu an bekleyen yok</strong>
+        <span>Yeni soru ve düzenleme önerileri burada görünecek.</span>
+      </div>`);
     }
     if (done.length) {
       parts.push(`<button class="h-fold${this.showDone ? " open" : ""}" data-act="fold">
@@ -154,9 +160,9 @@ export class HistoryPanel {
 
     let actions = "";
     if ((e.type === "summary" || e.type === "edit") && e.status === "pending") {
-      actions = `<span class="h-actions">
-        <span class="btn btn-sm btn-accent" data-act="approve" title="${e.type === "edit" ? "Onayla" : "Nota ekle"}">${icon("check", 13)}</span>
-        <span class="btn btn-sm" data-act="reject" title="Vazgeç">${icon("x", 13)}</span></span>`;
+      actions = `<div class="h-actions">
+        <button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}${e.type === "edit" ? "Onayla" : "Nota ekle"}</button>
+        <button class="btn btn-sm" data-act="reject">Vazgeç</button></div>`;
     }
 
     // an open question is answered where it stands; the chat is one click away
@@ -177,10 +183,10 @@ export class HistoryPanel {
           <span class="h-meta">
             ${chip ? `<span class="chip ${chip[0]}">${chip[1]}</span>` : ""}
             ${this.allNotes ? `<span class="note">${esc(e.note)}</span>` : ""}
-            ${actions}
           </span>
         </span>
       </button>
+      ${actions}
       ${reply ? `<div class="h-reply${reply.kind === "answer" ? " answer" : ""}">${esc(reply.text)}</div>` : ""}
       ${answer}
     </div>`;

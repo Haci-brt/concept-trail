@@ -9,6 +9,34 @@ const TAG_RE = new RegExp(`(^|[\\s(])(#[${TR}][\\w\\-/${TR}]*)`, "g");
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\])?(\s*)(.*)$/;
 const MARKER_RE = /^(\s*)(?:[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+|>\s?)/;
 
+/** Headings for the editor's local chapter picker. Code and frontmatter are
+ *  skipped so a `#` example does not become a false navigation target. */
+export function headingsOf(text) {
+  const lines = text.split("\n");
+  const headings = [];
+  let offset = 0;
+  let frontmatter = lines.length > 1 && lines[0].trim() === "---" && lines.slice(1).some((line) => line.trim() === "---");
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (frontmatter) {
+      if (i > 0 && trimmed === "---") frontmatter = false;
+    } else if (fence) {
+      if (trimmed.startsWith(fence)) fence = null;
+    } else {
+      const opening = /^(`{3,}|~{3,})/.exec(trimmed);
+      if (opening) fence = opening[1];
+      else {
+        const match = /^(#{1,6})[ \t]+(.+?)\s*$/.exec(line);
+        if (match) headings.push({ level: match[1].length, text: match[2].replace(/\s+#+\s*$/, "").trim(), offset, line: i });
+      }
+    }
+    offset += line.length + 1;
+  }
+  return headings;
+}
+
 function fmt(s) {
   if (!s) return "";
   let h = esc(s);
@@ -135,19 +163,37 @@ export class MarkdownEditor {
     this._written = [];
     this._flashTimer = 0;
     this._curLine = -1;
+    this._headingSource = null;
+    this._headings = [];
 
     this.root = document.createElement("div");
     this.root.className = "md-editor";
-    this.root.innerHTML = `<div class="md-scroll"><div class="md-inner"><div class="md-mirror" aria-hidden="true"></div><textarea class="md-input" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Not metni"></textarea></div></div>`;
+    this.root.innerHTML = `<nav class="md-chapterbar" aria-label="Not bölümleri">
+      <span class="md-chapter-kicker">BÖLÜM</span>
+      <span class="md-chapter-picker"><select aria-label="Bölüme git"><option value="start">Başlangıç</option></select></span>
+      <span class="md-chapter-count" aria-hidden="true"></span>
+      <button type="button" class="md-chapter-nav" data-nav="prev" title="Önceki başlık" aria-label="Önceki başlık">↑</button>
+      <button type="button" class="md-chapter-nav" data-nav="next" title="Sonraki başlık" aria-label="Sonraki başlık">↓</button>
+      <span class="md-chapter-progress" aria-hidden="true"></span>
+    </nav><div class="md-scroll"><div class="md-inner"><div class="md-mirror" aria-hidden="true"></div><textarea class="md-input" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Not metni"></textarea></div></div>`;
     this.scroller = this.root.querySelector(".md-scroll");
     this.mirror = this.root.querySelector(".md-mirror");
     this.input = this.root.querySelector(".md-input");
+    this.chapterSelect = this.root.querySelector(".md-chapter-picker select");
     this.input.placeholder = placeholder;
     this.input.value = value;
 
     this.input.addEventListener("input", () => this._handleInput());
     this.input.addEventListener("keydown", (e) => this._keydown(e));
     for (const ev of ["keyup", "click", "focus", "select"]) this.input.addEventListener(ev, () => this._updateCursor());
+    this.chapterSelect.addEventListener("change", () => {
+      const index = Number(this.chapterSelect.value);
+      this.jumpToHeading(Number.isInteger(index) && this.chapterSelect.value !== "start" ? index : -1);
+    });
+    this.root.querySelector(".md-chapterbar").addEventListener("click", (event) => {
+      const direction = event.target.closest("[data-nav]")?.dataset.nav;
+      if (direction) this.jumpToHeading(direction);
+    });
     this.scroller.addEventListener("scroll", () => this.onScroll?.(), { passive: true });
     this._render();
   }
@@ -196,6 +242,7 @@ export class MarkdownEditor {
     this._lines = next;
     this._curLine = -1;
     this._markCurrentLine();
+    this._refreshHeadings();
   }
 
   cursorInfo() {
@@ -216,7 +263,48 @@ export class MarkdownEditor {
 
   _updateCursor() {
     this._markCurrentLine();
+    this._updateChapter();
     this.onCursor?.(this.cursorInfo());
+  }
+
+  _refreshHeadings() {
+    const text = this.input.value;
+    if (text !== this._headingSource) {
+      this._headingSource = text;
+      this._headings = headingsOf(text);
+      this.chapterSelect.replaceChildren(new Option("Başlangıç", "start"));
+      this._headings.forEach((heading, index) => {
+        this.chapterSelect.add(new Option(`${"  ".repeat(heading.level - 1)}${heading.text}`, String(index)));
+      });
+    }
+    this._updateChapter();
+  }
+
+  _updateChapter() {
+    const pos = this.input.selectionStart;
+    let current = -1;
+    for (let i = 0; i < this._headings.length && this._headings[i].offset <= pos; i++) current = i;
+    this.chapterSelect.value = current < 0 ? "start" : String(current);
+    const count = this.root.querySelector(".md-chapter-count");
+    count.textContent = this._headings.length ? `${current + 1} / ${this._headings.length}` : "Başlık yok";
+    this.root.querySelector('[data-nav="prev"]').disabled = current < 0;
+    this.root.querySelector('[data-nav="next"]').disabled = current >= this._headings.length - 1;
+    const progress = this.root.querySelector(".md-chapter-progress");
+    progress.style.width = `${this.input.value.length ? Math.round(pos / this.input.value.length * 100) : 0}%`;
+  }
+
+  jumpToHeading(target) {
+    const pos = this.input.selectionStart;
+    const current = this._headings.reduce((last, heading, index) => heading.offset <= pos ? index : last, -1);
+    const index = target === "prev" ? current - 1 : target === "next" ? current + 1 : target;
+    const heading = this._headings[index];
+    const offset = heading ? heading.offset + heading.level + 1 : 0;
+    this.focus();
+    this.input.setSelectionRange(offset, offset);
+    this._updateCursor();
+    const line = heading?.line ?? 0;
+    const top = this.mirror.children[line]?.offsetTop ?? 0;
+    this.scroller.scrollTo({ top: Math.max(0, top - this.scroller.clientHeight * 0.2), behavior: "smooth" });
   }
 
   /** What the assistant wrote into this note, as exact text. */
