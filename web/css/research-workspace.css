@@ -114,3 +114,7 @@
   .research .r-results-grid, .research .r-source-grid { grid-template-columns: 1fr; }
   .research .r-selection, .research .r-evidence-head { align-items: stretch; flex-direction: column; }
 }
+
+/* a search that answered with nothing is not a result */
+.r-query.empty b { color: var(--text-faint); }
+.r-query.empty span { opacity: 0.6; }

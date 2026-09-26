@@ -277,8 +277,11 @@ export class ResearchPanel {
     const same = Array.isArray(verdict.same) ? verdict.same : [];
     const adjacent = Array.isArray(verdict.adjacent) ? verdict.adjacent : [];
     const read = sources.filter((source) => source.verified).length;
-    const successful = (s.queries || []).filter((query) => query.ok).length;
-    let out = `<div class="r-overview"><div class="r-overview-title"><div><span class="r-eyebrow">ARAŞTIRMA RAPORU</span><h2>Fikrin etrafındaki ekosistem</h2></div><div class="r-metrics"><span><b>${candidates.length}</b> proje</span><span><b>${tools.length}</b> araç</span><span><b>${read}</b> okunan sayfa</span>${(s.queries || []).length ? `<span><b>${successful}</b> başarılı sorgu</span>` : ""}${typeof s.timings?.total === "number" ? `<span><b>${Math.round(s.timings.total)} sn</b> süre</span>` : ""}</div></div>${verdict.verdict ? `<p>${esc(verdict.verdict)}</p>` : ""}</div>`;
+    // answered and found something; an empty answer is counted on its own so a
+    // run of six searches that returned nothing does not read as six successes
+    const successful = (s.queries || []).filter((query) => query.ok && query.count !== 0).length;
+    const empty = (s.queries || []).filter((query) => query.empty).length;
+    let out = `<div class="r-overview"><div class="r-overview-title"><div><span class="r-eyebrow">ARAŞTIRMA RAPORU</span><h2>Fikrin etrafındaki ekosistem</h2></div><div class="r-metrics"><span><b>${candidates.length}</b> proje</span><span><b>${tools.length}</b> araç</span><span><b>${read}</b> okunan sayfa</span>${(s.queries || []).length ? `<span><b>${successful}</b> sonuç veren sorgu</span>` : ""}${empty ? `<span><b>${empty}</b> boş sorgu</span>` : ""}${typeof s.timings?.total === "number" ? `<span><b>${Math.round(s.timings.total)} sn</b> süre</span>` : ""}</div></div>${verdict.verdict ? `<p>${esc(verdict.verdict)}</p>` : ""}</div>`;
     let projects = "";
 
     const projectGroups = [["Aynı alandaki projeler", same], ["Yakın projeler", adjacent]];
@@ -301,7 +304,7 @@ export class ResearchPanel {
     if (this.items.length) out += `<div class="r-selection"><span>Notuna almak istediklerini seç (en fazla 8). Seçim doğrudan nota yazılmaz.</span><button class="btn btn-sm btn-accent" data-act="propose" disabled>${icon("pencil", 13)}Seçilenleri nota öner</button></div>`;
     if (this.proposal) out += this._proposal();
     if (sources.length) out += `<div class="r-evidence-head"><div><span class="r-eyebrow">KAYNAK OKUMASI</span><h3>Kaynakların içinde ne var?</h3></div><div class="r-filter" role="group" aria-label="Kaynak filtresi"><button data-act="filter" data-filter="read" class="${this.sourceFilter === "read" ? "on" : ""}">Okunan ${read}</button><button data-act="filter" data-filter="all" class="${this.sourceFilter === "all" ? "on" : ""}">Tümü ${sources.length}</button><button data-act="filter" data-filter="unread" class="${this.sourceFilter === "unread" ? "on" : ""}">Okunmayan ${sources.length - read}</button></div></div><div class="r-source-grid">${sourceCards.length ? sourceCards.join("") : '<p class="hint">Bu filtrede kaynak yok.</p>'}</div>`;
-    if (Array.isArray(s.queries) && s.queries.length) out += this._group(`Arama yolları (${s.queries.length})`, s.queries.map((q) => `<div class="r-query"><b>${esc(q.purpose || q.style || "Arama")}${q.ok ? " ✓" : " · sonuç alınamadı"}</b><span>${esc(q.query || "")}</span></div>`), false);
+    if (Array.isArray(s.queries) && s.queries.length) out += this._group(`Arama yolları (${s.queries.length})`, s.queries.map((q) => `<div class="r-query${q.empty ? " empty" : ""}"><b>${esc(q.purpose || q.style || "Arama")}${!q.ok ? " · yanıt alınamadı" : q.empty ? " · boş döndü" : typeof q.count === "number" ? ` ✓ ${q.count} sonuç` : " ✓"}</b><span>${esc(q.query || "")}</span></div>`), false);
     return out + `<p class="r-caveat">Bulunamaması fikrin özgün olduğu anlamına gelmez. Notuna alma işlemi ayrıca onay ister.</p>`;
   }
 

@@ -808,7 +808,7 @@ async def test_verified_branded_graph_library_resolves_one_github_repo(runner):
     assert helpers["jacomyal/sigma.js"].evidence_url == "https://www.sigmajs.org/"
     assert [name for name, _ in runner.hub.calls] == ["web_fetch", "git_search"]
     assert queries == [{"purpose": "support", "style": "verified-library",
-                        "query": "Sigma.js", "ok": True}]
+                        "query": "Sigma.js", "ok": True, "count": 2, "empty": False}]
 
 
 def test_a_gist_link_is_not_a_repository():
@@ -816,3 +816,78 @@ def test_a_gist_link_is_not_a_repository():
     assert repos_in_web_results([web("https://gist.github.com/paulrobello/ddee910edcbc4d69f38ff57d19a44030")]) == []
     assert repos_in_web_results([web("https://github.com/o/ddee910edcbc4d69f38ff57d19a44030")]) == []
     assert repos_in_web_results([web("https://github.com/o/real-repo")]) == ["o/real-repo"]
+
+
+# ---------------------------------------------------------------- honest ranking
+def test_component_searches_do_not_vote_as_independent_prior_art():
+    """Two near-identical component queries finding the same repo is one
+    question asked twice, not two strategies agreeing. In the live evaluation
+    this put 0-star repos above an 11k-star prior-art project."""
+    found = {}
+    merge(found, "component-1", [row("tiny/notes", 0)])
+    merge(found, "component-3", [row("tiny/notes", 0)])
+    merge(found, "populer", [row("known/app", 11000)])
+    assert [c.repo for c in rank(found)] == ["known/app", "tiny/notes"]
+
+
+def test_a_prior_art_hit_also_seen_by_a_component_search_leads_its_tier():
+    found = {}
+    merge(found, "kisa", [row("a/plain", 900)])
+    merge(found, "kisa", [row("b/both", 10)])
+    merge(found, "component-1", [row("b/both", 10)])
+    assert [c.repo for c in rank(found)][:2] == ["b/both", "a/plain"]
+
+
+def test_several_prior_styles_still_outrank_popularity():
+    found = {}
+    merge(found, "topic", [row("small/one", 5)])
+    merge(found, "web", [row("small/one", 5)])
+    merge(found, "populer", [row("huge/two", 90000)])
+    merge(found, "component-1", [row("huge/two", 90000)])
+    assert [c.repo for c in rank(found)] == ["small/one", "huge/two"]
+
+
+# ---------------------------------------------------------------- honest query log
+def test_an_empty_answer_is_logged_as_empty_not_as_a_find():
+    from server.research import log_result
+    record = {"query": "topic:markdown-notebook"}
+    log_result(record, envelope({"data": {"items": [], "total_count": 0}}), [])
+    assert record == {"query": "topic:markdown-notebook", "ok": True, "count": 0,
+                      "total": 0, "empty": True}
+
+
+def test_a_failed_call_is_neither_ok_nor_empty():
+    from server.research import log_result
+    record = {}
+    log_result(record, {"ok": False, "result": {"content": []}}, [])
+    assert record["ok"] is False and record["empty"] is False
+
+
+def test_a_made_up_topic_turns_back_into_its_words():
+    from server.research import plain_topic
+    assert plain_topic("topic:markdown-notebook") == "markdown notebook"
+    assert plain_topic("topic:a topic:b") == ""
+    assert plain_topic("markdown notes") == ""
+
+
+@pytest.mark.anyio
+async def test_an_unknown_topic_gets_one_plain_text_retry(runner):
+    """`topic:markdown-notebook` exists nowhere on GitHub; the words do."""
+    replies = {
+        "topic:markdown-notebook": envelope({"data": {"items": [], "total_count": 0}}),
+        "markdown notebook": envelope({"data": {"items": [row("xwmx/nb", 8400)], "total_count": 8}}),
+    }
+
+    async def call(name, arguments):
+        runner.hub.calls.append((name, arguments))
+        return replies.get(arguments.get("query"), envelope({"data": {"items": []}}))
+
+    runner.hub.call = call
+    rel = runner.vault.create_note("", "fikir", "fikir")
+    log = []
+    found = await runner._search(rel, {"keywords": [], "topics": ["markdown notebook"]}, "fikir", log)
+    assert "xwmx/nb" in found and found["xwmx/nb"].found_by == ["topic-duz"]
+    first, retry = log[0], log[1]
+    assert first["empty"] is True and first["count"] == 0
+    assert retry["style"] == "topic-duz" and retry["query"] == "markdown notebook"
+    assert retry["count"] == 1 and retry["empty"] is False

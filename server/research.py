@@ -297,8 +297,27 @@ def merge(candidates: dict, style: str, items: list[dict]) -> None:
         current.found_by.append(style)
 
 
+# The styles whose agreement was measured to mean something: different ways
+# of asking GitHub (and the web) "who already built this idea?".
+PRIOR_STYLES = ("topic", "topic-pair", "topic-duz", "kisa", "populer", "web")
+
+
+def prior_families(candidate) -> set[str]:
+    """Independent prior-art strategies that surfaced this repo.
+
+    Component searches are not in here. They ask for one feature each with
+    near-identical words ("backlinking markdown notes", "full-text search
+    markdown notes"), so a repo matching two of them has been found twice by
+    the same question, not confirmed by two. Counting them as corroboration
+    put 0-star repos above 11k-star prior art in the live evaluation.
+    """
+    return {style for style in candidate.found_by if style in PRIOR_STYLES}
+
+
 def rank(candidates: dict, limit: int = 12, keywords=()) -> list[Candidate]:
-    """Most corroborated first, then most popular. Stars alone would bury a
+    """Most corroborated by independent prior-art styles first; a product that
+    only a component search surfaced comes after everything a prior-art query
+    found. Within a tier relevance, then popularity. Stars alone would bury a
     small project that every single query style agreed on."""
     words = set(_keywords(keywords, 12))
 
@@ -306,9 +325,12 @@ def rank(candidates: dict, limit: int = 12, keywords=()) -> list[Candidate]:
         haystack = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
         return sum(word in haystack for word in words)
 
-    return sorted(candidates.values(),
-                  key=lambda c: (-len(set(c.found_by)), -relevance(c), -c.stars,
-                                 c.repo.casefold()))[:limit]
+    def key(c):
+        prior = prior_families(c)
+        support = bool(set(c.found_by) - prior)
+        return (-len(prior), -support, -relevance(c), -c.stars, c.repo.casefold())
+
+    return sorted(candidates.values(), key=key)[:limit]
 
 
 def _component_match(component, text):
@@ -707,6 +729,25 @@ def items_of(outcome):
     return payload_of(outcome).get("items") or []
 
 
+def log_result(record: dict, outcome: dict, rows: list) -> None:
+    """A search that answered is not a search that found something. `ok` is
+    the transport; `count` is what came back. Counting both as success made
+    three empty prior-art queries out of six look like a full run."""
+    record["ok"] = bool(outcome.get("ok"))
+    record["count"] = len(rows or [])
+    total = payload_of(outcome).get("total_count")
+    if isinstance(total, int):
+        record["total"] = total
+    record["empty"] = record["ok"] and record["count"] == 0
+
+
+def plain_topic(query: str) -> str:
+    """`topic:markdown-notebook` -> `markdown notebook`: the words the model
+    meant, for when the topic itself does not exist on GitHub."""
+    match = re.fullmatch(r"topic:([A-Za-z0-9][A-Za-z0-9-]*)", query.strip())
+    return match.group(1).replace("-", " ") if match else ""
+
+
 def apply_page_read(source, outcome, terms):
     """Attach actual page evidence, keeping a failed read distinct from a hit."""
     if not outcome.get("ok"):
@@ -956,10 +997,25 @@ class ResearchRunner:
                     "git_search", {"query": entry["query"], "per_page": PER_PAGE, "sort": "stars"})
             except ApiError:
                 continue
+            rows = items_of(outcome) if outcome.get("ok") else []
+            log_result(record, outcome, rows)
             if not outcome.get("ok"):
                 continue
-            record["ok"] = True
-            merge(candidates, entry["style"], items_of(outcome))
+            merge(candidates, entry["style"], rows)
+            words = plain_topic(entry["query"]) if not rows and entry["style"] == "topic" else ""
+            if words and not any(q.get("query") == words for q in query_log):
+                # the model named a topic GitHub has never heard of; its words
+                # still describe the idea, so ask for them once as plain text
+                retry = {"purpose": "prior", "style": "topic-duz", "query": words, "ok": False}
+                query_log.append(retry)
+                try:
+                    again = await self.tool_hub.call(
+                        "git_search", {"query": words, "per_page": PER_PAGE, "sort": "stars"})
+                except ApiError:
+                    again = {}
+                again_rows = items_of(again) if again.get("ok") else []
+                log_result(retry, again, again_rows)
+                merge(candidates, "topic-duz", again_rows)
             self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"))],
                        queries=query_log)
         self._progress(rel, "arama", str(len(candidates)) + " aday bulundu.",
@@ -980,10 +1036,10 @@ class ResearchRunner:
             outcome = await self.tool_hub.call("web_search", {"query": query})
         except ApiError:
             return []
+        results = payload_of(outcome).get("results") or [] if outcome.get("ok") else []
+        log_result(record, outcome, results)
         if not outcome.get("ok"):
             return []
-        record["ok"] = True
-        results = payload_of(outcome).get("results") or []
         sources = sources_in_web_results(results, query, "prior", limit=3)
         sources = [source for source in sources if not off_topic(
             " ".join(str(source.get(key) or "") for key in ("url", "title", "snippet")), terms)]
@@ -1021,9 +1077,10 @@ class ResearchRunner:
                         "query": entry["query"], "per_page": PER_PAGE, "sort": "stars"})
                 except ApiError:
                     continue
+                rows = items_of(outcome) if outcome.get("ok") else []
+                log_result(record, outcome, rows)
                 if outcome.get("ok"):
-                    record["ok"] = True
-                    merge(helpers, entry["style"], items_of(outcome))
+                    merge(helpers, entry["style"], rows)
         if "web_search" in getattr(self.tool_hub, "registry", {}):
             for query in support_web_queries(terms.get("keywords"), terms.get("topics"),
                                              terms.get("components"), terms.get("summary")):
@@ -1035,10 +1092,10 @@ class ResearchRunner:
                     outcome = await self.tool_hub.call("web_search", {"query": query})
                 except ApiError:
                     continue
+                results = payload_of(outcome).get("results") or [] if outcome.get("ok") else []
+                log_result(record, outcome, results)
                 if not outcome.get("ok"):
                     continue
-                record["ok"] = True
-                results = payload_of(outcome).get("results") or []
                 existing = {source["url"]: source for source in sources}
                 for source in sources_in_web_results(results, query, "support", limit=4):
                     if source_prefetch_score(source, terms) < 2:
@@ -1056,16 +1113,18 @@ class ResearchRunner:
                     " ".join(str(row.get(key) or "") for key in ("url", "title", "snippet")), terms)]
                 for repo in repos_in_web_results(plausible, limit=3):
                     self._assert_public(rel, content)
+                    # "support-web", not "web": this search asked for a
+                    # component, so it must not vote as a prior-art strategy
                     key = next((name for name in helpers if name.casefold() == repo.casefold()), None)
                     if key:
-                        helpers[key].found_by.append("web")
+                        helpers[key].found_by.append("support-web")
                         continue
                     try:
                         detail = await self.tool_hub.call("git_repo", {"repo": repo})
                     except ApiError:
                         continue
                     if detail.get("ok"):
-                        merge(helpers, "web", [payload_of(detail)])
+                        merge(helpers, "support-web", [payload_of(detail)])
         sources[:] = prioritized_sources(sources)
         self._save(rel, sources=sources, queries=query_log)
         return helpers
@@ -1085,12 +1144,12 @@ class ResearchRunner:
             outcome = await self.tool_hub.call("web_search", {"query": query})
         except ApiError:
             return
+        results = payload_of(outcome).get("results") or [] if outcome.get("ok") else []
+        log_result(record, outcome, results)
         if not outcome.get("ok"):
             return
-        record["ok"] = True
         existing = {source["url"]: source for source in sources}
-        for source in sources_in_web_results(payload_of(outcome).get("results") or [],
-                                              query, "adjacent", limit=4):
+        for source in sources_in_web_results(results, query, "adjacent", limit=4):
             if source_prefetch_score(source, terms) < 2:
                 continue
             old = existing.get(source["url"])
@@ -1148,8 +1207,8 @@ class ResearchRunner:
                         "query": brand, "per_page": 10, "sort": "stars"})
                 except ApiError:
                     break
+                log_result(record, outcome, items_of(outcome) if outcome.get("ok") else [])
                 if outcome.get("ok"):
-                    record["ok"] = True
                     canonical = re.sub(r"[^a-z0-9]", "", brand.lower())
                     for item in items_of(outcome):
                         if not isinstance(item, dict):
