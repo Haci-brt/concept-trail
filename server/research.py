@@ -17,38 +17,95 @@ nothing here may ever report that an idea is original: absence of a result is
 not evidence of absence.
 """
 import asyncio
+import hashlib
+import ipaddress
 import json
 import re
+import time
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from core import llm_client
 from server.errors import ApiError
 from server.store import now_iso
+from server.vault import split_frontmatter
 
 MAX_KEYWORDS = 6
 MAX_TOPICS = 4
 MAX_GITHUB_QUERIES = 6      # each costs ~6s: the server throttles searches
-PER_PAGE = 20
+MAX_SUPPORT_QUERIES = 6
+MAX_WEB_SOURCES = 16
+MAX_WEB_READS = 4
+MAX_REPO_READS = 4
+MAX_FOCUS_CHARS = 400
+MAX_SOURCE_CONTENT = 8000
+PER_PAGE = 50
 STAR_GATES = (5000, 20000)  # big projects hide behind generic words without these
 
 
 def _clean(items, limit: int) -> list[str]:
     seen: list[str] = []
     for raw in items or []:
-        word = str(raw).strip().lower()
+        # Model output is data, never GitHub search syntax. In particular a
+        # stray qualifier must not broaden the search or spend our budget.
+        word = re.sub(r"[^a-z0-9.+-]+", "-", str(raw).strip().lower()).strip("-.")
         if word and word not in seen:
             seen.append(word)
     return seen[:limit]
 
 
-def build_queries(keywords, topics) -> list[dict]:
+def _keywords(items, limit: int) -> list[str]:
+    """Keep keyword phrases as free-text tokens, unlike hyphenated topics."""
+    seen = []
+    for raw in items or []:
+        for token in re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", str(raw).lower()):
+            if token in {"stars", "topic", "sort", "fork"} or token.isdigit():
+                continue
+            if token not in seen:
+                seen.append(token)
+            if len(seen) >= limit:
+                return seen
+    return seen
+
+
+def _topic_priority(topic):
+    token = topic.replace("-", " ")
+    score = 0
+    if re.search(r"\b(note|notes|notebook|wiki|pkm)\b", token):
+        score += 5
+    if "markdown" in token:
+        score += 2
+    if "knowledge graph" in token:
+        score += 1
+    if "page extraction" in token or "web research" in token:
+        score += 3
+    if token in {"local first", "local workspace", "full text search", "open source"}:
+        score -= 4
+    return score
+
+
+def _idea_words(keywords, summary=""):
+    phrases = [str(item).lower().strip() for item in (keywords or [])]
+    informative = [phrase for phrase in phrases if phrase not in {
+        "evidence-based", "local-first", "open-source", "safe fetching"}]
+    words = _keywords(informative or phrases, MAX_KEYWORDS)
+    domain = [word for word in _keywords([summary], 20) if word in {
+        "note", "notes", "notebook", "markdown", "wiki", "knowledge", "graph", "backlinks"}]
+    selected = []
+    for word in [*domain, *words]:
+        if word not in selected and word not in {"local-first", "open-source"}:
+            selected.append(word)
+    return selected[:MAX_KEYWORDS] or words
+
+
+def build_queries(keywords, topics, summary="") -> list[dict]:
     """One query per proven style, built from what the model extracted.
 
     Returns [{"style", "query"}] in the order they should run; the caller cuts
     the list at MAX_GITHUB_QUERIES.
     """
-    words = _clean(keywords, MAX_KEYWORDS)
-    tags = _clean(topics, MAX_TOPICS)
+    words = _idea_words(keywords, summary)
+    tags = sorted(_clean(topics, MAX_TOPICS), key=_topic_priority, reverse=True)
     queries: list[dict] = []
 
     def add(style: str, query: str):
@@ -57,7 +114,8 @@ def build_queries(keywords, topics) -> list[dict]:
             queries.append({"style": style, "query": query})
 
     # the single most effective style in the trial: a specific topic on its own
-    for tag in tags[:3]:
+    # Reserve two of the six execution slots for both measured star gates.
+    for tag in tags[:2]:
         add("topic", f"topic:{tag.replace(' ', '-')}")
     if len(tags) >= 2:
         add("topic-pair", f"topic:{tags[0].replace(' ', '-')} topic:{tags[1].replace(' ', '-')}")
@@ -75,6 +133,113 @@ def web_query(summary: str) -> str:
     return f"best open source {summary} github" if summary else ""
 
 
+def _components(items):
+    seen = []
+    for raw in items or []:
+        tokens = [token for token in re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", str(raw).lower())
+                  if token not in {"stars", "topic", "sort", "fork"}]
+        phrase = " ".join(tokens[:3])
+        if phrase and phrase not in seen:
+            seen.append(phrase)
+    return seen[:4]
+
+
+def _note_anchor(keywords, topics, summary=""):
+    text = " ".join([*map(str, keywords or []), *map(str, topics or []), str(summary or "")]).lower()
+    if "markdown" in text and re.search(r"\bnote(?:book|s)?\b", text):
+        return "markdown notes"
+    if "note-taking" in text or re.search(r"\bnote(?:book|s)?\b", text):
+        return "note taking"
+    if re.search(r"\bweb\b", text) and re.search(r"research|page|extract|crawl|fetch", text):
+        return "web pages"
+    return ""
+
+
+def _needs_anchor(phrase):
+    return bool(re.search(r"backlink|\bsearch\b|retriev|\bmemory\b|"
+                          r"\btext extraction\b|\bcitation\b", phrase))
+
+
+def _focused_component(phrase, anchor):
+    return f"{phrase} {anchor}" if anchor and _needs_anchor(phrase) else phrase
+
+
+def build_support_queries(keywords, topics, components=(), summary="") -> list[dict]:
+    """Find reusable pieces of an idea, not only whole products like it.
+
+    The model supplies concepts; query wording is mechanical and short. Repo
+    search handles qualifiers differently from web search, so these avoid long
+    natural-language questions and are capped separately from prior-art.
+    """
+    words = _idea_words(keywords, summary)
+    tags = sorted(_clean(topics, MAX_TOPICS), key=_topic_priority, reverse=True)
+    parts = _components(components)
+    anchor = _note_anchor(keywords, topics, summary)
+    focus = " ".join(words[:2])
+    queries = []
+    if parts:
+        # Every feature named in the note gets a search. A generic "library"
+        # suffix excluded real graph and editor libraries in a live trial.
+        for index, part in enumerate(parts, start=1):
+            queries.append({"style": f"component-{index}",
+                            "query": _focused_component(part, anchor)})
+        if tags and len(parts) < 3:
+            queries.append({"style": "topic-library", "query": f"topic:{tags[0]} library"})
+        if focus and len(parts) < 3:
+            queries.append({"style": "sdk", "query": f"{focus} sdk"})
+    else:
+        if tags:
+            queries.append({"style": "topic-library", "query": f"topic:{tags[0]} library"})
+        if focus:
+            queries.extend([
+                {"style": "sdk", "query": f"{focus} sdk"},
+                {"style": "library", "query": f"{focus} library"},
+                {"style": "toolkit", "query": f"{focus} toolkit"},
+            ])
+        if len(tags) > 1:
+            queries.append({"style": "adjacent-topic", "query": f"topic:{tags[1]} library"})
+    return queries[:MAX_SUPPORT_QUERIES]
+
+
+def support_web_queries(keywords, topics, components=(), summary="") -> list[str]:
+    words = _idea_words(keywords, summary)
+    tags = sorted(_clean(topics, MAX_TOPICS), key=_topic_priority, reverse=True)
+    parts = _components(components)
+    anchor = _note_anchor(keywords, topics, summary)
+    focus = " ".join(words[:3]) or " ".join(tags[:2]).replace("-", " ")
+    if not focus and not parts:
+        return []
+    focus = focus or parts[0]
+    if parts:
+        if _domain_kind({"keywords": keywords, "topics": topics, "summary": summary}) == "notes":
+            graph = next((part for part in parts if "graph visualization" in part), None)
+            local_search = next((part for part in parts if "full-text search" in part or
+                                 "full text search" in part), None)
+            if graph:
+                # "graph visualization" alone often means bar charts. Node
+                # and edge terms found actual graph-rendering libraries in a
+                # live source search instead of Chart.js chart examples.
+                first = "javascript network graph nodes edges interactive library"
+                second = (f"{local_search} local library engine" if local_search else
+                          f"{_focused_component(parts[0], anchor)} parser library")
+                return [first, second]
+        first = _focused_component(parts[0], anchor)
+        second = parts[2] if len(parts) > 2 else parts[1] if len(parts) > 1 else focus
+        second = _focused_component(second, anchor)
+        return [f"{first} open source libraries tools",
+                f"{second} implementation architecture examples"]
+    return [f"{focus} open source libraries tools", f"{focus} implementation architecture examples"]
+
+
+def adjacent_web_query(keywords, components=(), topics=(), summary="") -> str:
+    """Explore alternate mechanisms and use cases, not another product list."""
+    parts = _components(components)
+    words = _keywords(keywords, 3)
+    focus = parts[0] if parts else " ".join(words)
+    focus = _focused_component(focus, _note_anchor(keywords, topics, summary))
+    return f"{focus} alternative approaches use cases" if focus else ""
+
+
 @dataclass
 class Candidate:
     repo: str
@@ -86,37 +251,409 @@ class Candidate:
     pushed_at: str = ""
     topics: list[str] = field(default_factory=list)
     found_by: list[str] = field(default_factory=list)   # which styles surfaced it
+    evidence_url: str = ""
 
     def public(self) -> dict:
         return {"repo": self.repo, "stars": self.stars, "language": self.language,
                 "license": self.license, "description": self.description, "url": self.url,
                 "pushed_at": self.pushed_at, "topics": self.topics,
-                "found_by": sorted(set(self.found_by))}
+                "found_by": sorted(set(self.found_by)), "evidence_url": self.evidence_url}
+
+
+VALID_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
 
 
 def merge(candidates: dict, style: str, items: list[dict]) -> None:
     """Fold one search's results into the running set, remembering provenance.
     A repo found by several styles is a stronger signal than a lone hit."""
     for item in items or []:
-        repo = str(item.get("repo") or "").strip()
-        if not repo:
+        if not isinstance(item, dict):
             continue
-        current = candidates.get(repo)
+        repo = str(item.get("repo") or "").strip()
+        if not VALID_REPO.fullmatch(repo):
+            continue
+        key = next((name for name in candidates if name.casefold() == repo.casefold()), repo)
+        current = candidates.get(key)
         if current is None:
-            current = candidates[repo] = Candidate(
-                repo=repo, stars=int(item.get("stars") or 0),
-                language=item.get("language"), license=item.get("license_spdx"),
-                description=str(item.get("description") or ""), url=str(item.get("url") or ""),
-                pushed_at=str(item.get("pushed_at") or ""), topics=list(item.get("topics") or []),
+            try:
+                stars = max(0, int(item.get("stars") or 0))
+            except (TypeError, ValueError):
+                stars = 0
+            current = candidates[key] = Candidate(
+                repo=repo, stars=stars,
+                language=str(item.get("language"))[:60] if item.get("language") else None,
+                license=str(item.get("license_spdx"))[:60] if item.get("license_spdx") else None,
+                description=str(item.get("description") or "")[:500],
+                url=f"https://github.com/{repo}",
+                pushed_at=str(item.get("pushed_at") or ""),
+                topics=[str(topic)[:80] for topic in (item.get("topics") or [])[:20]]
+                if isinstance(item.get("topics"), list) else [],
             )
+        else:
+            try:
+                current.stars = max(current.stars, max(0, int(item.get("stars") or 0)))
+            except (TypeError, ValueError):
+                pass
         current.found_by.append(style)
 
 
-def rank(candidates: dict, limit: int = 12) -> list[Candidate]:
+def rank(candidates: dict, limit: int = 12, keywords=()) -> list[Candidate]:
     """Most corroborated first, then most popular. Stars alone would bury a
     small project that every single query style agreed on."""
+    words = set(_keywords(keywords, 12))
+
+    def relevance(candidate):
+        haystack = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
+        return sum(word in haystack for word in words)
+
     return sorted(candidates.values(),
-                  key=lambda c: (-len(set(c.found_by)), -c.stars, c.repo))[:limit]
+                  key=lambda c: (-len(set(c.found_by)), -relevance(c), -c.stars,
+                                 c.repo.casefold()))[:limit]
+
+
+def _component_match(component, text):
+    part = component.lower()
+    aliases = {
+        "backlink": ("backlink", "wiki-link", "linked reference"),
+        "graph visualization": ("graph", "flowchart", "flow chart", "node layout"),
+        "full-text search": ("full-text", "full text", "fts", "search"),
+        "markdown editing": ("markdown", "editor"),
+        "text extraction": ("extract", "scrap", "crawl"),
+        "citation": ("citat", "reference", "source attribution"),
+        "robots": ("robots", "robotexclusion"),
+        "ssrf": ("ssrf", "private address"),
+    }
+    for key, choices in aliases.items():
+        if key in part:
+            return any(choice in text for choice in choices)
+    tokens = [token[:5] for token in _keywords([component], 4) if len(token) >= 4]
+    return bool(tokens) and sum(token in text for token in tokens) >= min(2, len(tokens))
+
+
+def _explicit_component_match(component, text):
+    """Require a concrete feature mention before classifying a nearby project."""
+    part = component.lower()
+    if "backlink" in part:
+        return bool(re.search(r"backlink|wiki.links?|linked references?", text))
+    if "graph visualization" in part:
+        return bool(re.search(r"graph (?:view|visual|display|explor)|interactive graphs?|"
+                              r"rendered knowledge graph|flow.?chart|node.link", text))
+    if "full-text search" in part:
+        return bool(re.search(r"full.?text|\bfts\d?\b", text))
+    if "markdown editing" in part:
+        return bool(re.search(r"markdown (?:edit|writer)|edit(?:ing|or)? markdown", text))
+    if "text extraction" in part:
+        return bool(re.search(r"(?:web|page|content|text).{0,22}extract|"
+                              r"extract.{0,22}(?:web|page|content|text)", text))
+    if "citation" in part:
+        return bool(re.search(r"citat|\bcite\b|source attribution", text))
+    return _component_match(component, text)
+
+
+def candidate_fit_score(candidate, terms):
+    text = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
+    if off_topic(text, terms):
+        return -100
+    domain = _domain_kind(terms)
+    anchor = _has_domain_anchor(text, domain)
+    components = _components(terms.get("components"))
+    hits = sum(_component_match(component, text) for component in components)
+    if components and not hits:
+        return -100
+    if domain == "web-research" and not anchor and hits < 2:
+        return -100
+    if domain == "notes" and not anchor and hits == 0:
+        return -100
+    keywords = set(_keywords(terms.get("keywords"), 12))
+    overlap = sum(word in text for word in keywords if len(word) >= 4)
+    provenance = len(set(candidate.found_by))
+    component_search = any(style.startswith("component-") for style in candidate.found_by)
+    return ((3 if anchor else 0) + 2 * hits + min(overlap, 3) +
+            min(provenance, 2) + (2 if component_search and hits else 0) +
+            (3 if candidate.evidence_url and hits else 0))
+
+
+def diverse_helpers(candidates: dict, components=(), keywords=(), limit: int = 10,
+                    terms=None) -> list[Candidate]:
+    """Keep a representative from each searched feature in the model context."""
+    ordered = rank(candidates, limit=len(candidates), keywords=[*components, *keywords])
+    if terms is not None:
+        ordered = [candidate for candidate in ordered if candidate_fit_score(candidate, terms) >= 4]
+        ordered.sort(key=lambda candidate: (-candidate_fit_score(candidate, terms),
+                                            -len(set(candidate.found_by)), -candidate.stars))
+    chosen = []
+    for index, _ in enumerate(_components(components), start=1):
+        style = f"component-{index}"
+        hit = next((candidate for candidate in ordered
+                    if style in candidate.found_by and candidate not in chosen), None)
+        if hit is not None:
+            chosen.append(hit)
+        if len(chosen) >= limit:
+            return chosen
+    chosen.extend(candidate for candidate in ordered if candidate not in chosen)
+    return chosen[:limit]
+
+
+def route_helper_products(prior: dict, helpers: dict, terms) -> None:
+    """Whole note applications belong with comparable projects, not libraries.
+
+    Search overlap is useful here: a component query can surface a relevant
+    application which the prior-art query missed. Keep its provenance so the
+    candidate ranking and verdict can still use that evidence.
+    """
+    if _domain_kind(terms) != "notes":
+        return
+    components = _components(terms.get("components"))
+    for repo, candidate in list(helpers.items()):
+        text = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
+        if off_topic(text, terms):
+            continue
+        if not re.search(r"\b(markdown|note|notes|notebook|wiki|knowledge base|knowledge garden|vault)\b", text):
+            continue
+        if re.search(r"\b(library|sdk|framework|plugin|extension|parser|database|cli)\b", text):
+            continue
+        feature_hits = sum(_explicit_component_match(component, text) for component in components)
+        product_label = bool(re.search(r"\b(app|application|notebook|knowledge base|"
+                                       r"knowledge garden|knowledge management system|workspace|vault)\b", text))
+        if feature_hits < 2 and not (product_label and feature_hits):
+            continue
+        duplicate = next((name for name in prior if name.casefold() == repo.casefold()), None)
+        if duplicate:
+            existing = prior[duplicate]
+            existing.found_by.extend(candidate.found_by)
+            if len(candidate.description) > len(existing.description):
+                existing.description = candidate.description
+            existing.stars = max(existing.stars, candidate.stars)
+        else:
+            prior[repo] = candidate
+        del helpers[repo]
+
+
+def _source_url(raw):
+    """Keep only plausible public web links before handing them to the UI.
+
+    Actual page reads still go through web_fetch's DNS and robots checks.
+    """
+    try:
+        parts = urlsplit(str(raw or "").strip())
+        host = (parts.hostname or "").rstrip(".").lower()
+        if parts.scheme not in {"https", "http"} or not host or parts.username or parts.password:
+            return ""
+        if host == "localhost" or host.endswith(".localhost"):
+            return ""
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            if not address.is_global:
+                return ""
+        return parts.geturl()
+    except ValueError:
+        return ""
+
+
+def sources_in_web_results(results, query, kind, limit=MAX_WEB_SOURCES):
+    sources = []
+    seen = set()
+    for index, item in enumerate(results or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        url = _source_url(item.get("url"))
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        raw_title = str(item.get("title") or "")
+        snippet = str(item.get("snippet") or item.get("text") or "")
+        if " ".join(snippet.split()) == " ".join(raw_title.split()):
+            snippet = ""
+        try:
+            search_rank = max(1, int(item.get("rank") or index))
+        except (TypeError, ValueError):
+            search_rank = index
+        sources.append({"url": url, "title": clean_search_title(item.get("title"), url),
+                        "snippet": snippet[:500],
+                        "query": query, "kind": kind, "verified": False,
+                        "read_error": None, "relevance": 0, "search_rank": search_rank})
+        if len(sources) >= limit:
+            break
+    return sources
+
+
+def clean_search_title(raw, url):
+    """Remove SERP breadcrumbs while retaining the publisher's actual title."""
+    title = " ".join(str(raw or "").split())
+    if "›" in title or "�" in title:
+        title = re.split(r"[›�]", title)[-1].strip()
+        title = re.sub(r"^[a-z0-9_./-]+\s+(?=[A-Z0-9])", "", title)
+    else:
+        title = re.sub(r"^\S+\s+https?://\S+\s+", "", title)
+    return (title or urlsplit(url).hostname or url)[:180]
+
+
+def _domain_kind(terms):
+    context = " ".join(str(value) for value in [terms.get("summary") or "",
+                        *(terms.get("topics") or []), *(terms.get("keywords") or [])]).lower()
+    if re.search(r"\b(note|notes|notebook|markdown|wiki|pkm)\b", context):
+        return "notes"
+    if "web" in context and re.search(r"research|page|extract|crawl|fetch", context):
+        return "web-research"
+    return "general"
+
+
+def _has_domain_anchor(text, domain):
+    if domain == "notes":
+        return bool(re.search(r"\b(markdown|note|notes|notebook|wiki|knowledge base|"
+                              r"knowledge graph|knowledge management|pkm)\b", text))
+    if domain == "web-research":
+        return bool(re.search(r"\b(web|webpage\w*|page|pages|website|crawl\w*|"
+                              r"scrap\w*|browser|robots(?:\.txt)?|http)\b", text))
+    return True
+
+
+def off_topic(text, terms):
+    """Exclude clear intent collisions seen in live synthetic research."""
+    body = str(text or "").lower()
+    summary = str(terms.get("summary") or "").lower()
+    domain = _domain_kind(terms)
+    if "independent third-party profile of a public api" in body:
+        return True
+    if domain == "notes" and not re.search(r"\b(seo|marketing)\b", summary):
+        return bool(re.search(r"\bseo\b|search.engine.optimization|organic traffic|"
+                              r"domain authority|link.building|rank tracking|"
+                              r"backlink(?:ing)? strategies|serp\b", body))
+    if domain == "web-research":
+        if "hacker" not in summary and "hacker" in body:
+            return True
+        if "excel" not in summary and re.search(r"\b(excel|spreadsheet)\b", body):
+            return True
+        if "academic" not in summary and re.search(r"academic (?:writing|paper|drafting)|"
+                                                   r"scientific paper drafting", body):
+            return True
+        if "hacker" not in summary and re.search(r"\bhacker\b", body):
+            return True
+    return False
+
+
+def relevance_score(text, terms, require_context=False) -> int:
+    """Score topic coverage; generic component pages need domain context."""
+    body = str(text or "").lower()
+    if not body:
+        return 0
+    tokens = [word for word in _keywords(
+        [*(terms.get("components") or []), *(terms.get("keywords") or [])], 14)
+        if len(word) >= 3]
+    phrases = [phrase for phrase in _components(terms.get("components"))
+               if " " in phrase]
+    token_hits = sum(bool(re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", body))
+                     for word in set(tokens))
+    phrase_hits = sum(phrase in body for phrase in phrases)
+    score = min(30, 2 * token_hits + 4 * phrase_hits)
+    if require_context and not _has_domain_anchor(body, _domain_kind(terms)):
+        return min(score, 1)
+    return score
+
+
+def source_prefetch_score(source, terms):
+    url = str(source.get("url") or "")
+    snippet = str(source.get("snippet") or "")
+    # Some search providers return the SERP breadcrumb as the snippet too. Its
+    # hostname (e.g. sysdesign.wiki) is not evidence of note-related content.
+    if "http" in snippet and ("›" in snippet or "�" in snippet):
+        snippet = ""
+    metadata = " ".join((str(source.get("title") or ""), snippet,
+                         urlsplit(url).path.replace("-", " ")))
+    if off_topic(metadata, terms):
+        return 0
+    score = relevance_score(metadata, terms, require_context=True)
+    if score < 2 and source.get("kind") == "support" and "library" in str(source.get("query") or "").lower():
+        # A reusable graph or search library may not mention Markdown notes.
+        # Its own API/library description is enough to read the primary page.
+        if re.search(r"\b(library|framework|package|sdk|api)\b", metadata.lower()) and any(
+                _component_match(part, metadata.lower()) for part in
+                _components(terms.get("components"))):
+            score = relevance_score(metadata, terms)
+    if score < 2 and source.get("kind") == "support" and "network graph nodes edges" in str(
+            source.get("query") or "").lower() and int(source.get("search_rank") or 99) <= 2:
+        # A project homepage can have only a brand name in the SERP. Read the
+        # best result once, then require actual library evidence in the body.
+        score = 2
+    if score < 2:
+        return 0
+    # A specific implementation page is usually more useful than a broad
+    # explainer with the same keywords. The model still sees every read page.
+    title = str(source.get("title") or "").lower()
+    url = url.lower()
+    if re.search(r"/(docs?|examples?|api|reference)/", url):
+        score += 3
+    if source.get("kind") in {"support", "adjacent"}:
+        if re.search(r"\b(what is|use cases|beginner|best|top \d+)\b", title):
+            score = max(0, score - 3)
+        elif "/blog/" in url and not re.search(r"architecture|implement|library|tool|code|example", title):
+            score = max(0, score - 2)
+    return score
+
+
+def evidence_excerpt(content, terms, limit=1800) -> str:
+    """Show the most relevant page window while preserving the full body too."""
+    body = str(content or "").strip()
+    if len(body) <= limit:
+        return body
+    best_start, best_score = 0, -1
+    step = max(200, limit // 4)
+    for start in range(0, len(body) - limit + 1, step):
+        score = relevance_score(body[start:start + limit], terms)
+        if score > best_score:
+            best_start, best_score = start, score
+    if best_start:
+        newline = body.rfind("\n", max(0, best_start - 100), best_start + 1)
+        if newline >= 0:
+            best_start = newline + 1
+    excerpt = body[best_start:best_start + limit].strip()
+    return ("[…]\n" if best_start else "") + excerpt + (
+        "\n[…]" if best_start + limit < len(body) else "")
+
+
+def select_sources_for_fetch(sources, terms, limit=MAX_WEB_READS):
+    """Read promising links across search intents instead of the first two."""
+    eligible = [source for source in sources if source.get("kind") in {
+        "prior", "support", "adjacent"} and
+        urlsplit(source.get("url") or "").hostname not in {"github.com", "www.github.com"} and
+        not urlsplit(source.get("url") or "").path.lower().endswith(".pdf") and
+        source_prefetch_score(source, terms) >= 2]
+    ordered = sorted(eligible, key=lambda source: (-source_prefetch_score(source, terms),
+        source.get("url") or ""))
+    selected = []
+    used_groups = set()
+    hosts = {}
+
+    def add(source):
+        host = urlsplit(source["url"]).hostname or ""
+        if source in selected or hosts.get(host, 0) >= 2:
+            return False
+        selected.append(source)
+        hosts[host] = hosts.get(host, 0) + 1
+        used_groups.add((source.get("kind"), source.get("query")))
+        return True
+
+    for source in ordered:
+        group = (source.get("kind"), source.get("query"))
+        if group not in used_groups:
+            add(source)
+        if len(selected) >= limit:
+            return selected
+    for source in ordered:
+        add(source)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def prioritized_sources(sources, limit=MAX_WEB_SOURCES):
+    """Keep fetched support evidence visible when search returns many links."""
+    return sorted(sources, key=lambda s: (not s.get("verified"),
+                                          -int(s.get("relevance") or 0),
+                                          s.get("kind") not in {"support", "adjacent"}))[:limit]
 
 
 # gist.github.com/<user>/<hash> looks exactly like a repo path but is not one:
@@ -134,6 +671,8 @@ def repos_in_web_results(results, limit=5):
     """
     found = []
     for item in results or []:
+        if not isinstance(item, dict):
+            continue
         blob = " ".join(str(item.get(k) or "") for k in ("url", "title", "snippet", "text"))
         for match in REPO_URL_RE.finditer(blob):
             repo = match.group(1).rstrip("/.")
@@ -158,20 +697,122 @@ def payload_of(outcome):
         body = json.loads(outcome["result"]["content"][0]["text"])
     except (KeyError, IndexError, TypeError, ValueError):
         return {}
-    return body.get("data", body)
+    if not isinstance(body, dict):
+        return {}
+    data = body.get("data", body)
+    return data if isinstance(data, dict) else {}
 
 
 def items_of(outcome):
     return payload_of(outcome).get("items") or []
 
 
-class ResearchRunner:
-    """One prior-art run per note, in the background.
+def apply_page_read(source, outcome, terms):
+    """Attach actual page evidence, keeping a failed read distinct from a hit."""
+    if not outcome.get("ok"):
+        source["read_error"] = "Kaynak sayfası okunamadı."
+        return
+    payload = payload_of(outcome)
+    page = str(payload.get("text") or "").strip()[:MAX_SOURCE_CONTENT]
+    if not page:
+        source["read_error"] = "Kaynak sayfası boş döndü."
+        return
+    query = str(source.get("query") or "").lower()
+    library_page = (source.get("kind") == "support" and "library" in query and
+                    re.search(r"\b(library|framework|package|sdk|api)\b", page.lower()) and
+                    any(_component_match(part, page.lower()) for part in
+                        _components(terms.get("components"))))
+    source.update({"verified": True, "read_error": None, "content": page,
+                   "excerpt": evidence_excerpt(page, terms),
+                   "relevance": relevance_score(page + " " + str(source.get("title") or ""),
+                                                terms, require_context=(
+                                                    source.get("query") != "GitHub README" and
+                                                    not library_page)),
+                   "final_url": str(payload.get("final_url") or source["url"])[:2000],
+                   "fetched_at": payload.get("fetched_at")})
 
-    A run is about six GitHub searches (the server throttles them to one per
-    six seconds), one web search and two model calls, so roughly a minute. That
-    is far past what a chat turn can hold: it reports progress over the broker
-    and keeps its result on the note.
+
+def evidence_fallback(candidates, sources, terms):
+    """A bounded factual summary when the local judge returns no verdict.
+
+    The number of search hits is not evidence of similarity. A candidate only
+    becomes an adjacent example when its own description or fetched README
+    covers at least two of the note's distinct implementation components.
+    """
+    components = _components(terms.get("components"))
+    by_url = {source.get("url"): source for source in sources if source.get("verified")}
+    supported = []
+    for candidate in candidates:
+        row = candidate.public() if isinstance(candidate, Candidate) else candidate
+        text = " ".join((str(row.get("repo") or ""), str(row.get("description") or ""),
+                         " ".join(row.get("topics") or [])))
+        source = by_url.get(row.get("url"))
+        if source:
+            text += " " + str(source.get("content") or "")[:3500]
+        if off_topic(text[:700], terms) or not _has_domain_anchor(text, _domain_kind(terms)):
+            continue
+        hits = sum(_explicit_component_match(component, text.lower()) for component in components)
+        if hits >= 2:
+            supported.append((hits, row.get("repo")))
+    supported.sort(key=lambda item: -item[0])
+    nearby = [repo for _, repo in supported[:3] if repo]
+    if nearby:
+        return {"same": [], "adjacent": nearby,
+                "verdict": "Bazı özellikler şu projelerde görülüyor: " + ", ".join(nearby) +
+                           ". Kapsam ve uygulama farkları ayrıca incelenmeli."}
+    return {"same": [], "adjacent": [],
+            "verdict": "Bu tarama yakın bir uygulamayı doğrulamadı; sonuçlar sınırlı."}
+
+
+def calibrate_prior_art(result, candidates, sources, terms):
+    """Turn the model's labels into claims supported by returned evidence.
+
+    Search descriptions can establish overlap. An exact match needs a read
+    README and explicit evidence for every listed component; a short model
+    verdict alone cannot establish that two products have identical scope.
+    """
+    components = _components(terms.get("components"))
+    rows = {c.repo: c for c in candidates}
+    readmes = {s.get("url"): s for s in sources if s.get("verified") and
+               urlsplit(s.get("url") or "").hostname == "github.com"}
+    same, adjacent = [], []
+    for label, destination in (("same", same), ("adjacent", adjacent)):
+        for repo in result.get(label) or []:
+            candidate = rows.get(repo)
+            if not candidate or repo in same or repo in adjacent:
+                continue
+            text = " ".join((candidate.repo, candidate.description,
+                             " ".join(candidate.topics))).lower()
+            readme = readmes.get(candidate.url)
+            if readme:
+                text += " " + str(readme.get("content") or "")[:3500].lower()
+            if off_topic(text[:700], terms) or not _has_domain_anchor(text, _domain_kind(terms)):
+                continue
+            hits = sum(_explicit_component_match(part, text) for part in components)
+            if components and not hits:
+                continue
+            confirmed = (label == "same" and len(components) >= 3 and
+                         hits == len(components) and readme is not None)
+            (same if confirmed else adjacent).append(repo)
+    if not components:
+        same = [repo for repo in result.get("same") or [] if repo in rows]
+        adjacent = [repo for repo in result.get("adjacent") or [] if repo in rows and repo not in same]
+    if same:
+        verdict = ("Okunan depo belgeleri şu projelerde nottaki temel işlevleri gösteriyor: " +
+                   ", ".join(same[:3]) + ". Kapsam ve deneyim farkları ayrıca incelenmeli.")
+    elif adjacent:
+        verdict = ("Notta geçen bazı işlevler şu projelerde görülüyor: " +
+                   ", ".join(adjacent[:3]) + ". Kapsamın aynı olduğu doğrulanmadı.")
+    else:
+        verdict = evidence_fallback(candidates, sources, terms)["verdict"]
+    return {"same": same[:5], "adjacent": adjacent[:5], "verdict": verdict}
+
+
+class ResearchRunner:
+    """One user-started research run per note, with progress over the broker.
+
+    Similar projects and reusable components use separate, bounded GitHub and
+    web searches. The result and its sources live in per-note assistant state.
     """
 
     def __init__(self, vault, notes, broker, tool_hub, provider_for, record_usage=None,
@@ -206,35 +847,85 @@ class ResearchRunner:
         task = self.running.get(rel)
         return task is not None and not task.done()
 
-    async def start(self, rel, content):
-        if self.busy(rel):
-            return {"status": "busy"}
-        if self.is_private(rel):
+    def _assert_public(self, rel, content):
+        # The editor sends unsaved text. Checking only the on-disk note would
+        # leak an unsaved `gizli: true` note to both search servers.
+        meta, _, _ = split_frontmatter(content)
+        private_value = meta.get("gizli", meta.get("private", ""))
+        if self.is_private(rel) or str(private_value).strip().lower() in {"true", "evet", "yes", "1"}:
             raise ApiError(403, "Bu not gizli: fikri aratmak onu disari gonderir. "
                                 "Arastirmak icin notun basindaki 'gizli' satirini kaldir.")
-        if self.tool_hub is None or not self.tool_hub.available:
+
+    async def start(self, rel, content, focus=None):
+        if self.busy(rel):
+            return {"status": "busy"}
+        self._assert_public(rel, content)
+        registry = getattr(self.tool_hub, "registry", {}) if self.tool_hub else {}
+        if not registry or not ({"git_search", "web_search"} & set(registry)):
             raise ApiError(503, "Arastirma sunuculari calismiyor.")
-        started = self._save(rel, status="running", started=now_iso(), candidates=[],
-                             verdict=None, error=None)
-        task = asyncio.create_task(self._run(rel, content))
+        focus = " ".join(str(focus or "").split())[:MAX_FOCUS_CHARS]
+        started = self._save(rel, status="running", started=now_iso(), focus=focus,
+                             candidates=[],
+                             tools=[], opportunities=[], sources=[], queries=[],
+                             verdict=None, error=None, timings={})
+        task = asyncio.create_task(self._run(rel, content, focus))
         self.running[rel] = task
         task.add_done_callback(lambda _t: self.running.pop(rel, None))
-        return {"status": "started", **started}
+        return {**started, "status": "started"}
 
-    async def _run(self, rel, content):
+    async def _run(self, rel, content, focus=""):
+        started = time.perf_counter()
+        timings = {}
+
+        async def timed(stage, step):
+            stage_started = time.perf_counter()
+            try:
+                return await step
+            finally:
+                timings[stage] = round(time.perf_counter() - stage_started, 2)
+                self._save(rel, timings=dict(timings))
+
         try:
-            terms = await self._terms(rel, content)
-            candidates = await self._search(rel, terms)
-            await self._web(rel, terms, candidates)
-            await self._judge(rel, content, rank(candidates), terms)
+            self._assert_public(rel, content)
+            research_text = (f"[ARAŞTIRMA ODAĞI]\n{focus}\n\n[NOT]\n{content}"
+                             if focus else content)
+            terms = await timed("terms", self._terms(rel, research_text))
+            self._assert_public(rel, content)
+            queries = []
+            candidates = await timed("prior_git", self._search(rel, terms, content, queries))
+            sources = await timed("prior_web", self._web(rel, terms, candidates, content, queries))
+            helpers = await timed("support", self._support(rel, terms, content, queries, sources))
+            route_helper_products(candidates, helpers, terms)
+            self._save(rel, candidates=[c.public() for c in
+                       rank(candidates, keywords=terms.get("keywords"))])
+            await timed("adjacent", self._adjacent(rel, terms, content, queries, sources))
+            if not any(entry.get("ok") for entry in queries):
+                raise ApiError(502, "Arastirma kaynaklari yanit vermedi; eslesme yok sonucu cikarilamaz.")
+            await timed("web_reads", self._fetch_sources(rel, content, sources, terms,
+                                                        helpers=helpers, query_log=queries))
+            await timed("readmes", self._fetch_helper_docs(rel, content, helpers, sources,
+                                                           terms, candidates))
+            results = await timed("judge", self._judge(
+                rel, research_text, rank(candidates, keywords=terms.get("keywords")),
+                diverse_helpers(helpers, terms.get("components") or [],
+                                terms.get("keywords") or [], terms=terms),
+                sources, terms, queries, timings))
+            timings["total"] = round(time.perf_counter() - started, 2)
+            saved = self._save(rel, status="done", finished=now_iso(), timings=dict(timings),
+                               **results)
+            self._progress(rel, "bitti", results["verdict"].get("verdict", ""), result=saved)
         except ApiError as exc:
-            self._save(rel, status="error", error=exc.message)
+            timings["total"] = round(time.perf_counter() - started, 2)
+            self._save(rel, status="error", error=exc.message, timings=dict(timings))
             self._progress(rel, "hata", exc.message)
         except asyncio.CancelledError:
-            self._save(rel, status="cancelled")
+            timings["total"] = round(time.perf_counter() - started, 2)
+            self._save(rel, status="cancelled", timings=dict(timings))
             raise
         except Exception as exc:
-            self._save(rel, status="error", error=type(exc).__name__ + ": " + str(exc))
+            timings["total"] = round(time.perf_counter() - started, 2)
+            self._save(rel, status="error", error=type(exc).__name__ + ": " + str(exc),
+                       timings=dict(timings))
             self._progress(rel, "hata", str(exc)[:200])
 
     async def _terms(self, rel, content):
@@ -242,18 +933,24 @@ class ResearchRunner:
         provider = self.provider_for("analysis", rel)
         terms = await asyncio.to_thread(llm_client.extract_search_terms, content, provider,
                                         self.record_usage)
-        if not terms.get("keywords") and not terms.get("topics"):
+        if not any(terms.get(key) for key in ("keywords", "topics", "components")):
             raise ApiError(422, "Fikirden arama terimi cikarilamadi; notu biraz daha yaz.")
         self._save(rel, terms=terms)
         self._progress(rel, "terimler", "Terimler hazir.", terms=terms)
         return terms
 
-    async def _search(self, rel, terms):
-        queries = build_queries(terms.get("keywords"), terms.get("topics"))[:MAX_GITHUB_QUERIES]
+    async def _search(self, rel, terms, content, query_log):
+        if "git_search" not in getattr(self.tool_hub, "registry", {}):
+            return {}
+        queries = build_queries(terms.get("keywords"), terms.get("topics"),
+                                terms.get("summary"))[:MAX_GITHUB_QUERIES]
         candidates = {}
         for index, entry in enumerate(queries, start=1):
+            self._assert_public(rel, content)
             label = "GitHub " + str(index) + "/" + str(len(queries)) + ": " + entry["query"]
             self._progress(rel, "arama", label, done=index - 1, total=len(queries))
+            record = {"purpose": "prior", **entry, "ok": False}
+            query_log.append(record)
             try:
                 outcome = await self.tool_hub.call(
                     "git_search", {"query": entry["query"], "per_page": PER_PAGE, "sort": "stars"})
@@ -261,29 +958,41 @@ class ResearchRunner:
                 continue
             if not outcome.get("ok"):
                 continue
+            record["ok"] = True
             merge(candidates, entry["style"], items_of(outcome))
-            self._save(rel, candidates=[c.public() for c in rank(candidates)])
+            self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"))],
+                       queries=query_log)
         self._progress(rel, "arama", str(len(candidates)) + " aday bulundu.",
                        done=len(queries), total=len(queries))
         return candidates
 
-    async def _web(self, rel, terms, candidates):
+    async def _web(self, rel, terms, candidates, content, query_log):
         """A rescue net, never the backbone: it opens a browser window and
         costs about twelve seconds, so one search and a handful of lookups."""
         query = web_query(terms.get("summary") or " ".join(terms.get("keywords") or []))
         if not query or "web_search" not in getattr(self.tool_hub, "registry", {}):
-            return
+            return []
+        self._assert_public(rel, content)
+        record = {"purpose": "prior", "style": "web", "query": query, "ok": False}
+        query_log.append(record)
         self._progress(rel, "web", "Webde capraz kontrol, tarayici acilir")
         try:
             outcome = await self.tool_hub.call("web_search", {"query": query})
         except ApiError:
-            return
+            return []
         if not outcome.get("ok"):
-            return
-        repos = repos_in_web_results(payload_of(outcome).get("results") or [])
+            return []
+        record["ok"] = True
+        results = payload_of(outcome).get("results") or []
+        sources = sources_in_web_results(results, query, "prior", limit=3)
+        sources = [source for source in sources if not off_topic(
+            " ".join(str(source.get(key) or "") for key in ("url", "title", "snippet")), terms)]
+        repos = repos_in_web_results(results)
         for repo in repos:
-            if repo in candidates:
-                candidates[repo].found_by.append("web")
+            self._assert_public(rel, content)
+            key = next((name for name in candidates if name.casefold() == repo.casefold()), None)
+            if key:
+                candidates[key].found_by.append("web")
                 continue
             try:
                 detail = await self.tool_hub.call("git_repo", {"repo": repo})
@@ -292,13 +1001,273 @@ class ResearchRunner:
             if detail.get("ok"):
                 merge(candidates, "web", [payload_of(detail)])
         self._progress(rel, "web", "Web " + str(len(repos)) + " depo onerdi.")
+        self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"))],
+                   sources=sources, queries=query_log)
+        return sources
 
-    async def _judge(self, rel, content, ranked, terms):
+    async def _support(self, rel, terms, content, query_log, sources):
+        helpers = {}
+        if "git_search" in getattr(self.tool_hub, "registry", {}):
+            queries = build_support_queries(terms.get("keywords"), terms.get("topics"),
+                                            terms.get("components"), terms.get("summary"))
+            for index, entry in enumerate(queries, start=1):
+                self._assert_public(rel, content)
+                self._progress(rel, "araclar", f"GitHub {index}/{len(queries)}: {entry['query']}",
+                               done=index - 1, total=len(queries))
+                record = {"purpose": "support", **entry, "ok": False}
+                query_log.append(record)
+                try:
+                    outcome = await self.tool_hub.call("git_search", {
+                        "query": entry["query"], "per_page": PER_PAGE, "sort": "stars"})
+                except ApiError:
+                    continue
+                if outcome.get("ok"):
+                    record["ok"] = True
+                    merge(helpers, entry["style"], items_of(outcome))
+        if "web_search" in getattr(self.tool_hub, "registry", {}):
+            for query in support_web_queries(terms.get("keywords"), terms.get("topics"),
+                                             terms.get("components"), terms.get("summary")):
+                self._assert_public(rel, content)
+                self._progress(rel, "kaynaklar", "Yardimci araclar ve uygulama ornekleri araniyor")
+                record = {"purpose": "support", "style": "web", "query": query, "ok": False}
+                query_log.append(record)
+                try:
+                    outcome = await self.tool_hub.call("web_search", {"query": query})
+                except ApiError:
+                    continue
+                if not outcome.get("ok"):
+                    continue
+                record["ok"] = True
+                results = payload_of(outcome).get("results") or []
+                existing = {source["url"]: source for source in sources}
+                for source in sources_in_web_results(results, query, "support", limit=4):
+                    if source_prefetch_score(source, terms) < 2:
+                        continue
+                    if source["url"] in existing:
+                        # A source surfaced independently in the tool search;
+                        # retain it as support evidence so it can be fetched.
+                        if existing[source["url"]]["kind"] != "support":
+                            existing[source["url"]]["kind"] = "support"
+                            existing[source["url"]]["query"] = query
+                    else:
+                        sources.append(source)
+                        existing[source["url"]] = source
+                plausible = [row for row in results if isinstance(row, dict) and not off_topic(
+                    " ".join(str(row.get(key) or "") for key in ("url", "title", "snippet")), terms)]
+                for repo in repos_in_web_results(plausible, limit=3):
+                    self._assert_public(rel, content)
+                    key = next((name for name in helpers if name.casefold() == repo.casefold()), None)
+                    if key:
+                        helpers[key].found_by.append("web")
+                        continue
+                    try:
+                        detail = await self.tool_hub.call("git_repo", {"repo": repo})
+                    except ApiError:
+                        continue
+                    if detail.get("ok"):
+                        merge(helpers, "web", [payload_of(detail)])
+        sources[:] = prioritized_sources(sources)
+        self._save(rel, sources=sources, queries=query_log)
+        return helpers
+
+    async def _adjacent(self, rel, terms, content, query_log, sources):
+        if "web_search" not in getattr(self.tool_hub, "registry", {}):
+            return
+        query = adjacent_web_query(terms.get("keywords"), terms.get("components"),
+                                   terms.get("topics"), terms.get("summary"))
+        if not query:
+            return
+        self._assert_public(rel, content)
+        self._progress(rel, "kaynaklar", "Alternatif yaklaşımlar ve komşu fikirler aranıyor")
+        record = {"purpose": "adjacent", "style": "web", "query": query, "ok": False}
+        query_log.append(record)
+        try:
+            outcome = await self.tool_hub.call("web_search", {"query": query})
+        except ApiError:
+            return
+        if not outcome.get("ok"):
+            return
+        record["ok"] = True
+        existing = {source["url"]: source for source in sources}
+        for source in sources_in_web_results(payload_of(outcome).get("results") or [],
+                                              query, "adjacent", limit=4):
+            if source_prefetch_score(source, terms) < 2:
+                continue
+            old = existing.get(source["url"])
+            if old is None:
+                sources.append(source)
+                existing[source["url"]] = source
+            elif old["kind"] == "prior":
+                old["kind"] = "adjacent"
+                old["query"] = query
+        sources[:] = prioritized_sources(sources)
+        self._save(rel, sources=sources, queries=query_log)
+
+    async def _fetch_sources(self, rel, content, sources, terms, helpers=None, query_log=None):
+        if "web_fetch" not in getattr(self.tool_hub, "registry", {}):
+            return
+        chosen = select_sources_for_fetch(sources, terms)
+        gate = asyncio.Semaphore(2)
+
+        async def read(source):
+            async with gate:
+                self._assert_public(rel, content)
+                self._progress(rel, "kaynaklar", "Kaynak sayfasi okunuyor: " + source["title"][:80])
+                query = source.get("query") or " ".join(_keywords(terms.get("keywords"), 3))
+                try:
+                    outcome = await self.tool_hub.call("web_fetch", {
+                        "url": source["url"], "query": str(query)[:200]})
+                except ApiError as exc:
+                    source["read_error"] = exc.message[:200]
+                    return
+                except Exception as exc:
+                    source["read_error"] = type(exc).__name__
+                    return
+                apply_page_read(source, outcome, terms)
+
+        await asyncio.gather(*(read(source) for source in chosen))
+        if helpers is not None and "git_search" in getattr(self.tool_hub, "registry", {}):
+            # A component library's homepage often has only its brand in the
+            # search snippet (Sigma.js was one live example). Once the page
+            # itself confirms the graph library, resolve its repository with
+            # one bounded GitHub query so it can be proposed as a tool.
+            for source in chosen:
+                if (not source.get("verified") or int(source.get("relevance") or 0) < 2 or
+                        "network graph nodes edges" not in str(source.get("query") or "").lower()):
+                    continue
+                brand = str(source.get("title") or "").split(" | ", 1)[0].strip()
+                if not re.fullmatch(r"[A-Za-z][A-Za-z0-9.+-]{2,40}", brand):
+                    continue
+                self._assert_public(rel, content)
+                record = {"purpose": "support", "style": "verified-library", "query": brand,
+                          "ok": False}
+                if query_log is not None:
+                    query_log.append(record)
+                try:
+                    outcome = await self.tool_hub.call("git_search", {
+                        "query": brand, "per_page": 10, "sort": "stars"})
+                except ApiError:
+                    break
+                if outcome.get("ok"):
+                    record["ok"] = True
+                    canonical = re.sub(r"[^a-z0-9]", "", brand.lower())
+                    for item in items_of(outcome):
+                        if not isinstance(item, dict):
+                            continue
+                        repo = str(item.get("repo") or "")
+                        repo_name = re.sub(r"[^a-z0-9]", "", repo.rsplit("/", 1)[-1].lower())
+                        if repo_name != canonical or not _component_match(
+                                "graph visualization", str(item.get("description") or "").lower()):
+                            continue
+                        merge(helpers, "verified-library", [item])
+                        key = next((name for name in helpers if name.casefold() == repo.casefold()), None)
+                        if key:
+                            helpers[key].evidence_url = source["url"]
+                        break
+                break
+        sources[:] = prioritized_sources(sources)
+        fields = {"sources": sources}
+        if query_log is not None:
+            fields["queries"] = query_log
+        self._save(rel, **fields)
+
+    async def _fetch_helper_docs(self, rel, content, helpers, sources, terms, prior=None):
+        """Read both comparable products and reusable components at the source."""
+        if "web_fetch" not in getattr(self.tool_hub, "registry", {}):
+            return
+        components = terms.get("components") or []
+        keywords = terms.get("keywords") or []
+        prior_rows = rank(prior or {}, limit=2, keywords=keywords)
+        helper_rows = diverse_helpers(helpers, components, keywords, limit=4, terms=terms)
+        desired = [(candidate, "support") for candidate in helper_rows[:2]] + [
+            (candidate, "prior") for candidate in prior_rows] + [
+            (candidate, "support") for candidate in helper_rows[2:]]
+        chosen = []
+        seen = set()
+        for candidate, kind in desired:
+            if candidate.repo.casefold() in seen:
+                continue
+            seen.add(candidate.repo.casefold())
+            chosen.append((candidate, kind))
+            if len(chosen) >= MAX_REPO_READS:
+                break
+        gate = asyncio.Semaphore(2)
+
+        async def read(candidate, kind):
+            async with gate:
+                self._assert_public(rel, content)
+                self._progress(rel, "kaynaklar", "Depo açıklaması okunuyor: " + candidate.repo)
+                existing = next((source for source in sources if source["url"] == candidate.url), None)
+                row = existing if existing is not None else {
+                    "url": candidate.url, "title": candidate.repo + " README",
+                    "snippet": candidate.description[:300], "query": "GitHub README",
+                    "kind": kind, "verified": False, "read_error": None, "relevance": 0}
+                if existing is None:
+                    sources.append(row)
+                try:
+                    outcome = await self.tool_hub.call("web_fetch", {
+                        "url": candidate.url,
+                        "query": " ".join(_keywords([*components, *keywords], 6))[:200]})
+                except ApiError as exc:
+                    row["read_error"] = exc.message[:200]
+                    return
+                except Exception as exc:
+                    row["read_error"] = type(exc).__name__
+                    return
+                apply_page_read(row, outcome, terms)
+
+        await asyncio.gather(*(read(candidate, kind) for candidate, kind in chosen))
+        sources[:] = prioritized_sources(sources)
+        self._save(rel, sources=sources)
+
+    async def _judge(self, rel, content, ranked, helpers, sources, terms, queries,
+                     timings=None):
         self._progress(rel, "degerlendirme", "Bulunanlar fikirle karsilastiriliyor")
         listed = [c.public() for c in ranked]
-        provider = self.provider_for("chat", rel)
-        result = await asyncio.to_thread(llm_client.judge_prior_art, content, listed, provider,
-                                         self.record_usage)
-        saved = self._save(rel, status="done", finished=now_iso(), candidates=listed,
-                           verdict=result, terms=terms)
-        self._progress(rel, "bitti", result.get("verdict", ""), result=saved)
+        prior_provider = self.provider_for("analysis", rel)
+        recommend_provider = self.provider_for("chat", rel)
+        prior_started = time.perf_counter()
+        if any(q.get("purpose") == "prior" and q.get("ok") for q in queries):
+            result = await asyncio.to_thread(llm_client.judge_prior_art, content, listed, prior_provider,
+                                             self.record_usage, sources=sources)
+        else:
+            result = {"same": [], "adjacent": [],
+                      "verdict": "Benzer proje aramasi tamamlanamadi; eslesme yok sonucu cikarilamaz."}
+        if timings is not None:
+            timings["prior_judge"] = round(time.perf_counter() - prior_started, 2)
+            self._save(rel, timings=dict(timings))
+        result = calibrate_prior_art(result, ranked, sources, terms)
+        self._progress(rel, "oneriler", "Yardimci araclar ve gelistirme firsatlari degerlendiriliyor")
+        helper_rows = [c.public() for c in helpers]
+        grounded_sources = [source for source in sources if source.get("verified") and
+                            int(source.get("relevance") or 0) >= 2]
+        recommendations_started = time.perf_counter()
+        recommendations = await asyncio.to_thread(
+            llm_client.recommend_research, content, helper_rows, grounded_sources,
+            recommend_provider, self.record_usage)
+        if timings is not None:
+            timings["recommendations"] = round(time.perf_counter() - recommendations_started, 2)
+            self._save(rel, timings=dict(timings))
+        selected = {item["repo"]: item for item in recommendations["tools"]}
+        tools = []
+        for candidate in helpers:
+            recommendation = selected.get(candidate.repo)
+            if not recommendation or not recommendation.get("why") or not candidate.description:
+                continue
+            evidence = next((source for source in sources if source.get("url") == candidate.url), None)
+            tools.append({"id": candidate.repo, "repo": candidate.repo, "name": candidate.repo,
+                          "url": candidate.url, "description": candidate.description,
+                          "stars": candidate.stars, "language": candidate.language,
+                          "license": candidate.license,
+                          "why": recommendation["why"],
+                          "recommended": True,
+                          "relevance": int((evidence or {}).get("relevance") or 0),
+                          "source_urls": [url for url in (candidate.url, candidate.evidence_url) if url],
+                          "found_by": sorted(set(candidate.found_by))})
+        tools.sort(key=lambda item: not item["recommended"])
+        opportunities = []
+        for item in recommendations["opportunities"]:
+            digest = hashlib.sha256((item["title"] + "\0" + item["detail"]).encode()).hexdigest()[:12]
+            opportunities.append({"id": "opp-" + digest, **item})
+        return {"candidates": listed, "verdict": result, "terms": terms, "tools": tools,
+                "opportunities": opportunities, "sources": sources, "queries": queries}

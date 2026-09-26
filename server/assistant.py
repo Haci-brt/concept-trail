@@ -677,6 +677,21 @@ class Assistant:
             self.notes.save(rel)
         self.broker.publish("written", {"path": rel, "texts": list(written)})
 
+    def propose_text(self, rel: str, text: str, source: str = "research") -> dict:
+        """Create a pending note addition; only hud_action(approve) may apply it."""
+        self.vault.note_path(rel)
+        text = (text or "").strip()
+        if not text:
+            raise ApiError(400, "Nota önerilecek metin boş olamaz.")
+        if len(text) > 6000:
+            raise ApiError(400, "Nota önerilecek metin çok uzun.")
+        node = self.notes.add_node(rel, "summary", text, status="pending", source=source)
+        self._publish_node(rel, node)
+        proposal = self._event("summary", rel, text=text, node_id=node["id"],
+                               status="pending", source=source)
+        self._record(proposal)
+        return {"text": text, "node": node, "proposal": proposal}
+
     def written(self, rel: str) -> list[str]:
         return list(self.notes.load(rel).get("assistant_text") or [])
 

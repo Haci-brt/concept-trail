@@ -1,0 +1,49 @@
+/* Research is a compact evidence board inside the note's right rail. */
+.research.card { gap: 10px; }
+.research[hidden] { display: none; }
+.research .r-body { gap: 10px; color: var(--text-2); }
+.research .r-body > .hint { line-height: 1.55; margin: 0; }
+.research .r-overview { padding: 11px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-softer); }
+.research .r-overview b { color: var(--text); font-size: 12px; }
+.research .r-overview p { margin: 5px 0; color: var(--text-2); line-height: 1.5; }
+.research .r-overview > span { display: block; color: var(--accent-strong); font-size: 11px; font-weight: 600; }
+.research .r-section { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-surface); overflow: hidden; }
+.research .r-section > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; color: var(--text); font-size: 11.5px; font-weight: 700; cursor: pointer; list-style: none; }
+.research .r-section > summary::-webkit-details-marker { display: none; }
+.research .r-section > summary span { display: inline-flex; color: var(--text-faint); transition: transform .18s ease; }
+.research .r-section:not([open]) > summary span { transform: rotate(-90deg); }
+.research .r-section[open] > summary { border-bottom: 1px solid var(--border-soft); }
+.research .r-list { display: grid; gap: 0; }
+.research .r-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: start; padding: 9px 10px; border-bottom: 1px solid var(--border-soft); }
+.research .r-result:last-child { border-bottom: 0; }
+.research .r-result > strong { min-width: 0; color: var(--text); overflow-wrap: anywhere; font-size: 11.5px; }
+.research .r-result p { grid-column: 1 / -1; margin: 0; color: var(--text-muted); line-height: 1.48; overflow-wrap: anywhere; }
+.research .r-result .r-why { color: var(--text-2); }
+.research .r-result .r-why b { color: var(--accent-strong); }
+.research .r-result .r-source-link { font-size: 10.5px; white-space: nowrap; }
+.research .r-pick { display: flex; grid-template-columns: none; align-items: flex-start; gap: 7px; min-width: 0; cursor: pointer; color: var(--text); font-size: 11.5px; font-weight: 650; }
+.research .r-pick input { flex: none; width: 14px; height: 14px; margin: 1px 0 0; accent-color: var(--accent); cursor: pointer; }
+.research .r-pick span { min-width: 0; overflow-wrap: anywhere; }
+.research a { color: var(--accent-strong); text-decoration: none; }
+.research a:hover { text-decoration: underline; }
+.research .r-meta, .research .r-source-links { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 9px; font-size: 10.5px; color: var(--text-faint); }
+.research .r-source-links a { font-size: 10.5px; overflow-wrap: anywhere; }
+.research .r-opportunity { background: var(--accent-softer); }
+.research .r-selection { display: grid; gap: 6px; padding: 9px; border-radius: var(--radius-sm); background: var(--bg-sunken); }
+.research .r-selection > span { color: var(--text-muted); font-size: 11px; }
+.research .r-selection .btn { justify-self: start; }
+.research .r-selection .btn:disabled { opacity: .55; cursor: default; }
+.research .r-proposal { display: grid; gap: 7px; padding: 10px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-softer); }
+.research .r-proposal > b { color: var(--accent-strong); }
+.research .r-proposal > p { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; color: var(--text); line-height: 1.5; }
+.research .r-proposal > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.research .r-source, .research .r-query { display: grid; gap: 3px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); overflow-wrap: anywhere; }
+.research .r-source:last-child, .research .r-query:last-child { border-bottom: 0; }
+.research .r-source > p { margin: 0; line-height: 1.4; color: var(--text-muted); }
+.research .r-query b { color: var(--text-2); font-size: 10.5px; }
+.research .r-query span { color: var(--text-muted); font-size: 10.5px; }
+.research .r-caveat { margin: 0; color: var(--text-faint); font-size: 10.5px; line-height: 1.5; }
+.research .r-private { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--text-muted); line-height: 1.5; }
+.research .r-private svg { flex: none; margin-top: 1px; }
+.research .r-err { color: var(--red); }
+.research .r-start { align-self: flex-start; }

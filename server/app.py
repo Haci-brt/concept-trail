@@ -7,8 +7,11 @@ preflight this server never approves — so other sites can't write notes or
 launch the model through the user's browser.
 """
 import asyncio
+import html
 import json
+import re
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -151,6 +154,17 @@ class ToolSettingsBody(BaseModel):
 class ResearchBody(BaseModel):
     path: str
     content: str | None = None
+    focus: str | None = None
+
+
+class ResearchChoice(BaseModel):
+    type: str
+    id: str
+
+
+class ResearchProposalBody(BaseModel):
+    path: str
+    items: list[ResearchChoice]
 
 
 class BindBody(BaseModel):
@@ -160,6 +174,63 @@ class BindBody(BaseModel):
 
 class ProviderTestBody(BaseModel):
     id: str
+
+
+def _research_proposal_text(result: dict, choices: list[ResearchChoice]) -> str:
+    """Build note text only from selected, saved research evidence."""
+    if result.get("status") != "done":
+        raise ApiError(409, "Önce araştırmayı tamamla.")
+    if not 1 <= len(choices) <= 8:
+        raise ApiError(400, "Nota önermek için 1–8 araştırma sonucu seç.")
+
+    lookup = {
+        "project": {str(row.get("repo")): row for row in result.get("candidates", [])},
+        "tool": {str(row.get("id")): row for row in result.get("tools", [])},
+        "opportunity": {str(row.get("id")): row for row in result.get("opportunities", [])},
+        "source": {str(row.get("url")): row for row in result.get("sources", [])
+                   if row.get("verified")},
+    }
+
+    def line(value, limit):
+        # Search snippets and fetched pages are untrusted, multi-line input.
+        # Keep each selected finding on one legible Markdown list item.
+        plain = html.unescape(re.sub(r"<[^>]+>", " ", str(value or "")))
+        return " ".join(plain.split())[:limit].rstrip()
+
+    lines = ["## Araştırma bulguları"]
+    seen = set()
+    for choice in choices:
+        key = (choice.type, choice.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        row = lookup.get(choice.type, {}).get(choice.id)
+        if row is None:
+            raise ApiError(404, "Seçilen araştırma sonucu bulunamadı; araştırmayı yenile.")
+
+        if choice.type == "project":
+            name = line(row.get("repo") or choice.id, 120)
+            detail = line(row.get("description"), 350)
+            lines.append(f"- **Benzer proje: {name}** — {detail}" if detail else f"- **Benzer proje: {name}**")
+        elif choice.type == "source":
+            name = line(row.get("title") or "Kaynak", 120)
+            detail = line(row.get("excerpt") or row.get("snippet"), 350)
+            lines.append(f"- **Okunan kaynak: {name}** — {detail}" if detail else f"- **Okunan kaynak: {name}**")
+        elif choice.type == "tool":
+            name = line(row.get("name") or row.get("repo") or choice.id, 120)
+            detail = line(row.get("why") or row.get("description"), 350)
+            lines.append(f"- **Araç: {name}** — {detail}" if detail else f"- **Araç: {name}**")
+        else:
+            title = line(row.get("title") or "Geliştirme fikri", 120)
+            detail = line(row.get("detail"), 350)
+            lines.append(f"- **{title}** — {detail}" if detail else f"- **{title}**")
+
+        urls = row.get("source_urls") or ([row.get("url")] if row.get("url") else [])
+        for url in list(urls)[:1]:
+            parsed = urlparse(str(url))
+            if parsed.scheme in ("http", "https") and parsed.netloc and len(str(url)) <= 220:
+                lines.append(f"  Kaynak: {url}")
+    return "\n".join(lines)
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -453,14 +524,19 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/research/start")
     async def research_start(body: ResearchBody):
-        """Runs for about a minute: several GitHub searches (throttled to one
-        per six seconds), a web cross-check and two model calls. Progress
-        arrives as `research` events, so nothing here blocks."""
+        """Search similar work and useful tools; report progress over SSE."""
         vault.note_path(body.path)
         content = body.content if body.content is not None else vault.read_note(body.path)["content"]
         if not content.strip():
             raise ApiError(400, "Bos not arastirilamaz.")
-        return await research.start(body.path, content)
+        return await research.start(body.path, content, focus=body.focus)
+
+    @app.post("/api/research/propose")
+    async def research_propose(body: ResearchProposalBody):
+        """Put selected findings through the same approval gate as chat summaries."""
+        vault.note_path(body.path)
+        text = _research_proposal_text(research.state(body.path), body.items)
+        return assistant.propose_text(body.path, text, source="research")
 
     @app.post("/api/model/launch")
     async def launch_model(body: LaunchBody):

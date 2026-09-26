@@ -95,6 +95,12 @@ const hudCard = desktopHud ? null : new HudCard($("#hudSlot"));
 
 const research = new ResearchPanel({
   getContent: () => activeTab()?.editor.value ?? null,
+  beforeStart: async (path) => {
+    const tab = tabByPath(path);
+    if (!tab) throw new Error("Not artık açık değil.");
+    await saveTab(tab);
+    if (tab.dirty) throw new Error("Not kaydedilemedi; araştırma başlatılmadı.");
+  },
 });
 $("#rightpanel").insertBefore(research.el, $("#history"));
 
@@ -147,6 +153,8 @@ function buildChrome() {
   $("#togglePanel").innerHTML = icon("panelRight", 17);
   $("#globalSearch").innerHTML = `${icon("search", 15)}<span>Notlarda ara...</span><kbd>Ctrl P</kbd>`;
   $("#globalSearch").onclick = () => palette.open();
+  $("#researchLaunch").innerHTML = `${icon("search", 15)}<span>Araştır</span>`;
+  $("#researchLaunch").onclick = () => research.open();
   $("#themeBtn").onclick = () => setTheme(theme === "light" ? "dark" : "light");
   $("#focusBtn").onclick = () => setFocusMode(!focusMode);
   applyAppearance();
@@ -185,6 +193,7 @@ function buildChrome() {
   }).join("") +
     `<span class="grow"></span>
      <button class="icon-btn ask" id="askBtn" title="Asistana şimdi sor (Ctrl+Enter)">${icon("sparkles", 18)}</button>
+     <button class="icon-btn" id="researchEditorBtn" title="Bu notu araştır">${icon("search", 17)}</button>
      <button class="icon-btn" id="previewToggle" title="Önizlemeyi aç/kapat">${icon("columns", 17)}</button>`;
   bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
   bar.addEventListener("click", (e) => {
@@ -192,6 +201,7 @@ function buildChrome() {
     const tab = activeTab();
     if (!btn || !tab) return;
     if (btn.id === "askBtn") return analyze(tab, true);
+    if (btn.id === "researchEditorBtn") return research.open();
     if (btn.id === "previewToggle") return setPreview(state.preview === "hidden" ? "preview" : "hidden");
     tools[Number(btn.dataset.tool)][2](tab.editor);
   });
@@ -784,6 +794,7 @@ function onEdit(tab) {
   clearTimeout(tab.saveTimer);
   tab.saveTimer = setTimeout(() => saveTab(tab), SAVE_MS);
   if (tab.id === state.activeId) {
+    research.contentChanged();
     renderPreviewSoon();
     renderStatus();
   }
@@ -1122,6 +1133,7 @@ function commands() {
     { label: "Yeni not", icon: "filePlus", hint: "Ctrl N", action: () => newNote("") },
     { label: "Yeni klasör", icon: "folderPlus", action: () => newFolder("") },
     { label: "Asistana şimdi sor", icon: "sparkles", hint: "Ctrl Enter", action: () => tab && analyze(tab, true) },
+    { label: "Açık notu araştır", icon: "search", action: () => research.open() },
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
     { label: state.autoAssist ? "Canlı asistanı duraklat" : "Canlı asistanı başlat", icon: state.autoAssist ? "eyeOff" : "eye", action: () => setAutoAssist(!state.autoAssist) },
     { label: "Modeli başlat", icon: "play", action: () => launchModel() },
@@ -1213,7 +1225,7 @@ function connect() {
       const tab = activeTab();
       if (event.range && tab && tab.path === event.path && state.view === "editor") tab.editor.flash(event.range);
     },
-    history_update: (event) => { historyPanel.update(event); renderViewSwitch(); },
+    history_update: (event) => { historyPanel.update(event); research.onHistoryUpdate(event); renderViewSwitch(); },
     research: (data) => research.onEvent(data),
     node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); },
     written: ({ path, texts }) => { const tab = tabByPath(path); if (tab) tab.editor.setWritten(texts); },
@@ -1230,7 +1242,7 @@ function connect() {
         tab.saved = note.content;
         tab.mtime = note.mtime;
         tab.editor.setValue(note.content);
-        if (tab.id === state.activeId) { renderPreview(); renderStatus(); }
+        if (tab.id === state.activeId) { research.contentChanged(); renderPreview(); renderStatus(); }
       } catch { /* note may have been moved meanwhile */ }
     },
     vault_changed: async (change) => {
