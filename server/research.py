@@ -1772,8 +1772,11 @@ class ResearchRunner:
         if provider is None or not candidates:
             return {}
         self._progress(rel, "rakipler", "Adaylar ayıklanıyor: aynı işi mi yapıyor, komşu alan mı")
+        # by stars, not by the order the search produced: the model echoed
+        # the order it was given, and the 41k-star competitor sat ninth behind
+        # small projects and fell under the ceiling (measured)
         rows = [{"repo": c.repo, "description": c.description, "topics": c.topics, "stars": c.stars}
-                for c in candidates]
+                for c in sorted(candidates, key=lambda c: -(c.stars or 0))]
         try:
             return await asyncio.to_thread(llm_client.classify_competitors, content, rows, provider,
                                            self.record_usage)
