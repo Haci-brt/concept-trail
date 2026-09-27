@@ -622,6 +622,7 @@ class Assistant:
         direction = (note_state.get("direction") or {}).get("text", "")
         mode = ladder.note_mode(content)
         roadmap = ladder.roadmap(self.ladder_for(rel)) if mode == "yazilim" else ""
+        lens = self._next_lens(rel) if mode == "yazilim" else None
         span = focus_span(content, nodes, span)
         coverage = section_coverage(content, nodes)
         focus = section_of(content, span)
@@ -673,6 +674,19 @@ class Assistant:
                 return
             if cancelled():
                 return
+            if climbing and lens and self._extras_wanted(rel):
+                # the model's own suggestion and research request, in their own
+                # call and through this pass's lens; a failure here never costs
+                # the pass its questions
+                try:
+                    extras = await asyncio.to_thread(llm_client.offer_extras, content,
+                                                     roadmap + ladder.lens_line(lens),
+                                                     provider, self.budget.record)
+                    result = {**extras, **result, "lens": lens[0]}
+                except Exception:
+                    pass
+                if cancelled():
+                    return
             self._apply_result(rel, content, span, result, open_nodes, mode, quiet=self._busy_quiet)
         finally:
             self._cancelled.discard(run_id)
@@ -747,6 +761,11 @@ class Assistant:
         # one open question per decision: asking "web or mobile?" twice in a
         # row is the illogical-question problem all over again
         pending = {n.get("kind") for n in self.notes.open_questions(rel)}
+
+        if result.get("suggestion"):
+            self._offer_suggestion(rel, content, result["suggestion"], quiet, result.get("lens"))
+        if result.get("research"):
+            self._offer_research(rel, result["research"], quiet)
 
         kind = result.get("type")
         if climbing and kind in ("net", "questions", "question"):
@@ -829,6 +848,72 @@ class Assistant:
             self._record(self._event("edit", rel, original=original, replacement=replacement, reason=reason,
                                      node_id=node["id"], range=[at, at + len(original)], status="pending",
                                      section=section), hud=not quiet)
+
+    # ---- what the model offers besides questions ----
+    def _next_lens(self, rel: str):
+        """The perspective of this pass: the four lenses in turn, per note."""
+        with self.notes.lock:
+            state = self.notes.load(rel)
+            turn = int(state.get("lens_turn") or 0)
+            state["lens_turn"] = turn + 1
+            self.notes.save(rel)
+        return ladder.LENSES[turn % len(ladder.LENSES)]
+
+    def _extras_wanted(self, rel: str) -> bool:
+        """Only while nothing the model offered is still waiting for an answer."""
+        nodes = self.notes.load(rel)["nodes"]
+        suggestion_waits = any(n["type"] == "summary" and n.get("status") == "pending"
+                               and n.get("source") == "model" for n in nodes)
+        research_waits = any(e.get("path") == rel and e.get("type") == "research"
+                             and e.get("status") == "pending" for e in self.history.items)
+        return not (suggestion_waits and research_waits)
+
+    @staticmethod
+    def _similar(text: str, seen: list[str], cutoff: float = 0.72) -> bool:
+        folded = fold(text)
+        return any(difflib.SequenceMatcher(None, folded, fold(old)).ratio() >= cutoff for old in seen)
+
+    def _offer_suggestion(self, rel: str, content: str, text: str, quiet: bool,
+                          lens: str | None = None) -> None:
+        """"Modelin önerisi": an argument the model thinks the note should hold.
+        A proposal like any other — only the writer's approval puts it in the
+        note. One waits at a time, and nothing offered before is offered again."""
+        with self.notes.lock:
+            state = self.notes.load(rel)
+            if any(n["type"] == "summary" and n.get("status") == "pending" and n.get("source") == "model"
+                   for n in state["nodes"]):
+                return
+            offered = state.setdefault("model_suggestions", [])
+            if self._similar(text, offered) or fold(text) in fold(content):
+                return
+            offered.append(text)
+            del offered[:-40]
+            self.notes.save(rel)
+        seen_by = {"lens": lens} if lens else {}
+        node = self.notes.add_node(rel, "summary", text, status="pending", source="model", **seen_by)
+        self._publish_node(rel, node)
+        self._record(self._event("summary", rel, text=text, node_id=node["id"], status="pending",
+                                 source="model", **seen_by), hud=not quiet)
+
+    def _offer_research(self, rel: str, request: dict, quiet: bool) -> None:
+        """The model asks to research one heading of the idea. It is only an
+        offer in the panel: the search starts when the writer accepts it."""
+        topic = request.get("topic", "").strip()
+        if len(topic) < 4:
+            return
+        with self.notes.lock:
+            state = self.notes.load(rel)
+            offered = state.setdefault("research_offers", [])
+            if self._similar(topic, offered, 0.6):
+                return
+            offered.append(topic)
+            del offered[:-40]
+            self.notes.save(rel)
+        if any(e.get("path") == rel and e.get("type") == "research" and e.get("status") == "pending"
+               for e in self.history.items):
+            return
+        self._record(self._event("research", rel, text=topic, topic=topic, why=request.get("why", ""),
+                                 status="pending"), hud=False)
 
     # ---- the decision ladder ----
     @staticmethod
@@ -1070,8 +1155,12 @@ class Assistant:
         node = self.notes.update_node(rel, node_id, status="resolved", resolved_at=now_iso())
         self._publish_node(rel, node)
         if node.get("kind") in ladder.DECISIONS:
-            # the writer answered the question that asked for this decision
-            self.set_decisions(rel, {node["kind"]: True}, by="cevap", question=node_id)
+            # the writer answered the question that asked for this decision;
+            # the answer is its value, so the next questions build on it
+            answers = [n.get("text", "") for n in self.notes.thread(rel, node_id) if n["type"] == "chat-user"]
+            value = " ".join(answers[-1].split())[:160] if answers else ""
+            self.set_decisions(rel, {node["kind"]: True}, by="cevap", question=node_id,
+                               values={node["kind"]: value} if value else None)
         question_event = self.history.find_by_node(rel, node_id, "question")
         if question_event:
             self.history.update(question_event, status="resolved")
@@ -1095,6 +1184,16 @@ class Assistant:
                 raise ApiError(400, "Sadece sorular için sohbet açılabilir.")
             self._drop_from_queue(lambda e: e["id"] == event_id)
             self.broker.publish("open_chat", event)
+        elif action in ("approve", "reject") and event["type"] == "research":
+            if event.get("status") != "pending":
+                raise ApiError(409, "Bu öneri zaten sonuçlandı.")
+            status = "approved" if action == "approve" else "rejected"
+            self.history.update(event, status=status)
+            self.broker.publish("history_update", event)
+            if action == "approve":
+                # the page that owns the note starts it: it saves first and
+                # shows the progress (see app.js start_research)
+                self.broker.publish("start_research", {"path": event["path"], "focus": event["topic"]})
         elif action in ("approve", "reject") and event["type"] == "summary":
             if event.get("status") != "pending":
                 raise ApiError(409, "Bu öneri zaten sonuçlandı.")

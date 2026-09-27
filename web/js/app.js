@@ -1271,6 +1271,15 @@ function connect() {
     },
     history_update: (event) => { historyPanel.update(event); research.onHistoryUpdate(event); renderViewSwitch(); },
     research: (data) => research.onEvent(data),
+    start_research: async ({ path, focus }) => {
+      // the writer accepted a research the assistant asked for
+      try {
+        await openNote(path);
+        research.startWith(focus);
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    },
     node: ({ path, node }) => { tree.nodeChanged(path, node); chat.nodeUpdated(path, node); ladderPanel.nodeChanged(path, node); },
     written: ({ path, texts }) => { const tab = tabByPath(path); if (tab) tab.editor.setWritten(texts); },
     ladder: ({ path, ladder, transition }) => {

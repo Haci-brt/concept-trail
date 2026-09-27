@@ -15,7 +15,10 @@ export const KINDS = {
   summary: { label: "Nota eklenme önerisi", icon: "lightbulb", tone: "summary" },
   checked: { label: "İncelendi", icon: "eye", tone: "checked" },
   phase: { label: "Evre", icon: "sprout", tone: "resolved" },
+  research: { label: "Araştırma önerisi", icon: "search", tone: "summary" },
 };
+const MODEL_SUGGESTION = { label: "Modelin önerisi", icon: "sparkles", tone: "summary" };
+const LENS_LABELS = { mimar: "Mimar gözüyle", urun: "Ürün gözüyle", guvenlik: "Güvenlik gözüyle", gelistirici: "Geliştirici gözüyle" };
 
 const STATUS_CHIP = {
   open: ["chip-open", "Açık"],
@@ -28,10 +31,10 @@ const STATUS_CHIP = {
 
 /** Waiting on you, most pressing first: a proposal holds up the note until you
  *  decide, a question only waits. Within a rank, newest first. */
-const RANK = { summary: 0, edit: 1, question: 2 };
+const RANK = { summary: 0, edit: 1, research: 2, question: 3 };
 
 function waiting(e) {
-  if (e.type === "summary" || e.type === "edit") return e.status === "pending";
+  if (e.type === "summary" || e.type === "edit" || e.type === "research") return e.status === "pending";
   return e.type === "question" && e.status === "open";
 }
 
@@ -152,7 +155,8 @@ export class HistoryPanel {
   }
 
   _item(e, settled = false) {
-    const kind = e.type === "question" ? questionKind(e) : (KINDS[e.type] || KINDS.question);
+    const kind = e.type === "question" ? questionKind(e)
+      : e.type === "summary" && e.source === "model" ? MODEL_SUGGESTION : (KINDS[e.type] || KINDS.question);
     let text = e.text || "";
     if (e.type === "edit") text = `"${e.original}" → "${e.replacement}"`;
     const chip = STATUS_CHIP[e.status];
@@ -164,6 +168,11 @@ export class HistoryPanel {
     if ((e.type === "summary" || e.type === "edit") && e.status === "pending") {
       actions = `<div class="h-actions">
         <button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}${e.type === "edit" ? "Onayla" : "Nota ekle"}</button>
+        <button class="btn btn-sm" data-act="reject">Vazgeç</button></div>`;
+    } else if (e.type === "research" && e.status === "pending") {
+      actions = `<div class="h-actions">
+        ${e.why ? `<span class="h-why">${esc(e.why)}</span>` : ""}
+        <button class="btn btn-sm btn-accent" data-act="approve">${icon("search", 13)}Araştır</button>
         <button class="btn btn-sm" data-act="reject">Vazgeç</button></div>`;
     }
 
@@ -184,6 +193,7 @@ export class HistoryPanel {
           <span class="h-text">${esc(text)}</span>
           <span class="h-meta">
             ${chip ? `<span class="chip ${chip[0]}">${chip[1]}</span>` : ""}
+            ${e.lens && LENS_LABELS[e.lens] ? `<span class="h-lens">${LENS_LABELS[e.lens]}</span>` : ""}
             ${this.allNotes ? `<span class="note">${esc(e.note)}</span>` : ""}
           </span>
         </span>

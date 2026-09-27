@@ -136,6 +136,14 @@ export class ResearchPanel {
     this.render();
   }
 
+  /** Start with a heading the assistant asked to look into. */
+  startWith(focus) {
+    this.focus = focus;
+    const field = this.el.querySelector("#researchFocus");
+    if (field) field.value = focus;
+    return this.start();
+  }
+
   async start() {
     if (!this.path || this.progress || (this.state?.status === "running" && this.state?.busy)) return;
     const path = this.path;

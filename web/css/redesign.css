@@ -393,3 +393,7 @@ body { background: var(--bg-app); }
 @media (prefers-reduced-motion: reduce) {
   .h-item, .hud-card { animation: none; }
 }
+
+/* a research the assistant asks for, and the lens a question came through */
+.h-actions .h-why { flex: 1 1 100%; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
+.h-lens { color: var(--text-faint); font-size: 10.5px; }

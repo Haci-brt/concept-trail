@@ -152,6 +152,25 @@ def may_ask(decision: str, ladder: dict) -> bool:
     return decision in ladder["open"]
 
 
+# "Her model kendi tanımlanmış gözüyle bakarak sorgulayacak": each pass one of
+# these looks at the note, in turn, and offers what it sees (llm_client.
+# offer_extras). Not the ladder's questions: told to ask "through a lens", the
+# model stopped reading decisions the note states (14/14 -> 8/14, GPT-4o-mini).
+LENSES = (
+    ("mimar", "Mimar", "parçaların nasıl bir araya geldiğine, veri akışına ve büyümeye"),
+    ("urun", "Ürün", "kullanıcının gerçek ihtiyacına, en küçük değerli sürüme ve kapsam dışına"),
+    ("guvenlik", "Güvenlik ve işletim", "verinin nerede durduğuna, kimin eriştiğine, hata ve kesintiye"),
+    ("gelistirici", "Geliştirici", "yapılabilirliğe, bağımlılıklara, test edilebilirliğe ve bakıma"),
+)
+LENS_LABELS = {lens_id: label for lens_id, label, _ in LENSES}
+
+
+def lens_line(lens) -> str:
+    lens_id, label, focus = lens
+    return (f"\n\n[BAKIŞ AÇISI] Bu turda {label} gözüyle bak: {focus} dikkat et. "
+            f"ÖNERİ bu gözden gelsin.")
+
+
 def roadmap(ladder: dict) -> str:
     """The block the model reads: finished rungs in one line, the current rung
     in full, the rest by name only — it has no business there yet."""
@@ -164,7 +183,10 @@ def roadmap(ladder: dict) -> str:
         elif level["id"] == ladder["current"]:
             lines.append(f"{index}. {level['label']}: ŞU ANKİ SEVİYE")
             for row in level["decisions"]:
-                mark = "karar verildi" if row["decided"] else "AÇIK"
+                # what was decided, not only that it was: the next question of
+                # the rung branches on the answer ("sadece Android" -> offline?)
+                mark = ("AÇIK" if not row["decided"] else
+                        f"karar verildi: {row['value']}" if row.get("value") else "karar verildi")
                 lines.append(f"   - {row['id']} ({row['label']}: {row['hint']}) — {mark}")
         else:
             lines.append(f"{index}. {level['label']}: sırası gelmedi, sorma")
