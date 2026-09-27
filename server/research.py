@@ -44,10 +44,13 @@ PRIOR_WEB_SOURCES = 5       # pages kept from each prior-art web search
 WEB_REPOS = 8               # GitHub links lifted from each web search
 RANK_LIMIT = 20             # similar projects shown and judged
 READ_CONCURRENCY = 3
-DEEP_PROJECTS = 5           # the closest similar projects looked at closely
+# How many competitors, which ones and in what order is the model's call
+# (classify_competitors); this is only a ceiling on time and cost — each
+# project looked at is three or four tool calls of up to 30 s.
+DEEP_PROJECTS = 8
 DEEP_CALL_TIMEOUT = 30      # seconds per tool call there; a slow one is skipped, not waited on
 KNOWN_STARS = 500           # "best known": a project people actually use
-COMPETITOR_POOL = 10        # candidates the model sorts into competitor / neighbour / unrelated
+COMPETITOR_POOL = RANK_LIMIT  # every ranked candidate is put to the model, not a top slice
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -1677,10 +1680,12 @@ class ResearchRunner:
         kinds = await self._competitor_kinds(rel, content, [by_repo[repo] for repo in pool])
         neighbours = []
         if kinds:
-            rival = [repo for repo in pool if kinds.get(repo, ("",))[0] == "ayni"]
-            order = [*[repo for repo in picked if repo in rival][:3], *[repo for repo in known if repo in rival], *rival]
-            neighbours = [{"repo": repo, "stars": by_repo[repo].stars, "why": kinds[repo][1]}
-                          for repo in pool if kinds.get(repo, ("",))[0] == "komsu"][:6]
+            # the model's competitors in the model's order: which and how many
+            # is its judgement; the closest-three-then-stars rule is only the
+            # fallback for when it gave none
+            order = [repo for repo, (kind, _) in kinds.items() if kind == "ayni"]
+            neighbours = [{"repo": repo, "stars": by_repo[repo].stars, "why": why}
+                          for repo, (kind, why) in kinds.items() if kind == "komsu"][:6]
         else:
             order = [*closest, *known]
         chosen = [by_repo[repo] for repo in dict.fromkeys(order)][:DEEP_PROJECTS]

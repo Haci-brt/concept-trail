@@ -217,14 +217,14 @@ async def test_a_neighbour_is_named_but_not_compared(runner, monkeypatch):
     monkeypatch.setattr(llm_client, "compare_projects",
                         lambda note, comps, projects, *a, **k: looked.extend(p["repo"] for p in projects) or {})
     monkeypatch.setattr(llm_client, "classify_competitors", lambda note, rows, *a: {
-        "ellite/Wallos": ("ayni", "aileler için abonelik takibi"), "small/subs": ("ayni", ""),
-        "getlago/lago": ("komsu", "şirketler için faturalama")})
+        "ellite/Wallos": ("ayni", "aileler için abonelik takibi"), "getlago/lago": ("komsu", "şirketler için faturalama"),
+        "small/subs": ("ayni", "")})
     runner.provider_for = lambda role, rel: object()
     rel = runner.vault.create_note("", "fikir", "Ailece abonelik takibi")
     deep = await runner._deep(rel, "Ailece abonelik takibi", subscription_candidates(),
                               {"same": [], "adjacent": ["small/subs"]}, [],
                               {"keywords": ["subscription tracking"], "components": ["renewal reminders"]})
-    assert looked == ["small/subs", "ellite/Wallos"]
+    assert looked == ["ellite/Wallos", "small/subs"]     # the model's order, not the verdict's
     assert deep["neighbours"] == [{"repo": "getlago/lago", "stars": 8000, "why": "şirketler için faturalama"}]
 
 
@@ -236,8 +236,24 @@ async def test_when_every_candidate_is_a_neighbour_none_is_compared(runner, monk
     runner.provider_for = lambda role, rel: object()
     rel = runner.vault.create_note("", "fikir", "x")
     deep = await runner._deep(rel, "x", subscription_candidates(), {}, [], {"keywords": ["subscription tracking"]})
-    assert deep["projects"] == [] and [n["repo"] for n in deep["neighbours"]] == [
+    assert deep["projects"] == [] and sorted(n["repo"] for n in deep["neighbours"]) == [
         "ellite/Wallos", "getlago/lago", "small/subs"]
+
+
+@pytest.mark.anyio
+async def test_how_many_competitors_is_the_models_call_up_to_a_ceiling(runner, monkeypatch):
+    looked = []
+    monkeypatch.setattr(llm_client, "compare_projects",
+                        lambda note, comps, projects, *a, **k: looked.extend(p["repo"] for p in projects) or {})
+    many = [R.Candidate(repo=f"o/r{i}", url="u", stars=i, description="subscription tracker", topics=[],
+                        found_by=["topic"]) for i in range(12)]
+    # the model names the eleventh candidate first and ten of them in all
+    monkeypatch.setattr(llm_client, "classify_competitors", lambda note, rows, *a: {
+        f"o/r{i}": ("ayni", "") for i in [11, *range(9)]})
+    runner.provider_for = lambda role, rel: object()
+    rel = runner.vault.create_note("", "fikir", "x")
+    await runner._deep(rel, "x", many, {}, [], {"keywords": ["subscription tracking"]})
+    assert looked[0] == "o/r11" and len(looked) == R.DEEP_PROJECTS
 
 
 @pytest.mark.anyio
