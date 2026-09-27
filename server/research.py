@@ -31,12 +31,18 @@ from server.store import now_iso
 from server.vault import split_frontmatter
 
 MAX_KEYWORDS = 6
-MAX_TOPICS = 4
-MAX_GITHUB_QUERIES = 6      # each costs ~6s: the server throttles searches
-MAX_SUPPORT_QUERIES = 6
-MAX_WEB_SOURCES = 16
-MAX_WEB_READS = 4
-MAX_REPO_READS = 4
+# Widened 2026-09-27: one big model now does the research and there is no
+# rush, so it asks more ways, reads more pages and keeps more of what it finds.
+MAX_TOPICS = 5
+MAX_GITHUB_QUERIES = 10     # each costs ~6s: the server throttles searches
+MAX_SUPPORT_QUERIES = 10
+MAX_WEB_SOURCES = 30
+MAX_WEB_READS = 8
+MAX_REPO_READS = 8
+PRIOR_WEB_SOURCES = 5       # pages kept from each prior-art web search
+WEB_REPOS = 8               # GitHub links lifted from each web search
+RANK_LIMIT = 20             # similar projects shown and judged
+READ_CONCURRENCY = 3
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -98,7 +104,15 @@ def _idea_words(keywords, summary=""):
     return selected[:MAX_KEYWORDS] or words
 
 
-def build_queries(keywords, topics, summary="") -> list[dict]:
+def _is_component_topic(tag, components):
+    """"graph-visualization" is a part of the idea, not the idea: asked as a
+    prior-art topic it filled the similar-projects list with chart libraries."""
+    words = tag.replace("-", " ")
+    parts = [part.replace("-", " ") for part in _components(components)]
+    return any(words in part or part in words for part in parts)
+
+
+def build_queries(keywords, topics, summary="", components=()) -> list[dict]:
     """One query per proven style, built from what the model extracted.
 
     Returns [{"style", "query"}] in the order they should run; the caller cuts
@@ -114,8 +128,13 @@ def build_queries(keywords, topics, summary="") -> list[dict]:
             queries.append({"style": style, "query": query})
 
     # the single most effective style in the trial: a specific topic on its own
-    # Reserve two of the six execution slots for both measured star gates.
-    for tag in tags[:2]:
+    # The six measured styles run first, both star gates among them; the
+    # widening only adds after them, so a cut never costs a proven query.
+    # A one-word topic ("markdown") is a whole category: alone it returned the
+    # most starred Markdown tools (rich, pandoc), not note apps. It still
+    # narrows a pair, so it only stands alone when nothing specific is left.
+    specific = [tag for tag in tags if "-" in tag] + [tag for tag in tags if "-" not in tag]
+    for tag in specific[:2]:
         add("topic", f"topic:{tag.replace(' ', '-')}")
     if len(tags) >= 2:
         add("topic-pair", f"topic:{tags[0].replace(' ', '-')} topic:{tags[1].replace(' ', '-')}")
@@ -123,6 +142,17 @@ def build_queries(keywords, topics, summary="") -> list[dict]:
         add("kisa", " ".join(words[:3]))
         for gate in STAR_GATES:
             add("populer", f"{' '.join(words[:2])} stars:>{gate}")
+    # the widening: the idea's third topic, another pair, other words, and
+    # projects that only describe the idea in their README
+    extra = [tag for tag in specific[2:] if "-" in tag and not _is_component_topic(tag, components)]
+    if extra:
+        add("topic", f"topic:{extra[0].replace(' ', '-')}")
+        if tags:
+            add("topic-pair", f"topic:{tags[0].replace(' ', '-')} topic:{extra[0].replace(' ', '-')}")
+    if len(words) > 3:
+        add("kisa", " ".join(words[1:4]))
+    if words:
+        add("readme", f"{' '.join(words[:2])} in:readme stars:>100")
     return queries
 
 
@@ -133,6 +163,20 @@ def web_query(summary: str) -> str:
     return f"best open source {summary} github" if summary else ""
 
 
+def prior_web_queries(summary: str, keywords=()) -> list[str]:
+    """Three ways of asking the web who already built this: the open-source
+    leaders, the products people compare (closed ones included, which GitHub
+    never shows), and small projects their makers announced themselves."""
+    summary = " ".join(str(summary or "").split())[:180]
+    words = " ".join(_keywords(keywords, 3))
+    queries = [web_query(summary)]
+    if summary:
+        queries.append(f"{summary} alternatives")
+    if words:
+        queries.append(f"Show HN {words}")
+    return [query for query in queries if query]
+
+
 def _components(items):
     seen = []
     for raw in items or []:
@@ -141,7 +185,7 @@ def _components(items):
         phrase = " ".join(tokens[:3])
         if phrase and phrase not in seen:
             seen.append(phrase)
-    return seen[:4]
+    return seen[:6]
 
 
 def _note_anchor(keywords, topics, summary=""):
@@ -183,6 +227,15 @@ def build_support_queries(keywords, topics, components=(), summary="") -> list[d
         for index, part in enumerate(parts, start=1):
             queries.append({"style": f"component-{index}",
                             "query": _focused_component(part, anchor)})
+        # The same features as GitHub topics, most starred first: that is
+        # where the libraries themselves are (a notes-anchored query returned
+        # note apps; "graph visualization" alone returned a charting library).
+        for index, part in enumerate(parts[:4], start=1):
+            # a topic is lowercase letters, digits and hyphens: "robots.txt
+            # respect" can never be one, so it would only cost a search
+            if len(part.split()) <= 3 and re.fullmatch(r"[a-z0-9 -]+", part):
+                queries.append({"style": f"component-topic-{index}",
+                                "query": "topic:" + part.replace(" ", "-")})
         if tags and len(parts) < 3:
             queries.append({"style": "topic-library", "query": f"topic:{tags[0]} library"})
         if focus and len(parts) < 3:
@@ -226,8 +279,12 @@ def support_web_queries(keywords, topics, components=(), summary="") -> list[str
         first = _focused_component(parts[0], anchor)
         second = parts[2] if len(parts) > 2 else parts[1] if len(parts) > 1 else focus
         second = _focused_component(second, anchor)
-        return [f"{first} open source libraries tools",
-                f"{second} implementation architecture examples"]
+        queries = [f"{first} open source libraries tools",
+                   f"{second} implementation architecture examples"]
+        if len(parts) > 2:
+            # the component the first two left out
+            queries.append(f"{_focused_component(parts[1], anchor)} open source libraries tools")
+        return queries
     return [f"{focus} open source libraries tools", f"{focus} implementation architecture examples"]
 
 
@@ -299,7 +356,13 @@ def merge(candidates: dict, style: str, items: list[dict]) -> None:
 
 # The styles whose agreement was measured to mean something: different ways
 # of asking GitHub (and the web) "who already built this idea?".
-PRIOR_STYLES = ("topic", "topic-pair", "topic-duz", "kisa", "populer", "web")
+PRIOR_STYLES = ("topic", "topic-pair", "topic-duz", "kisa", "populer", "readme", "web")
+# Styles that ask the same thing count once: "topic:a topic:b" only ever
+# returns repos that "topic:a" already returns, so a small repo carrying both
+# topics was counted as confirmed three times for one property. With the
+# widened searches that pushed pr-agent and danger out of the top 20.
+STYLE_FAMILY = {"topic": "topic", "topic-pair": "topic", "topic-duz": "words", "kisa": "words",
+                "populer": "popular", "readme": "readme", "web": "web"}
 
 
 def prior_families(candidate) -> set[str]:
@@ -311,10 +374,10 @@ def prior_families(candidate) -> set[str]:
     the same question, not confirmed by two. Counting them as corroboration
     put 0-star repos above 11k-star prior art in the live evaluation.
     """
-    return {style for style in candidate.found_by if style in PRIOR_STYLES}
+    return {STYLE_FAMILY[style] for style in candidate.found_by if style in STYLE_FAMILY}
 
 
-def rank(candidates: dict, limit: int = 12, keywords=()) -> list[Candidate]:
+def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=()) -> list[Candidate]:
     """Most corroborated by independent prior-art styles first; a product that
     only a component search surfaced comes after everything a prior-art query
     found. Within a tier relevance, then popularity. Stars alone would bury a
@@ -327,10 +390,24 @@ def rank(candidates: dict, limit: int = 12, keywords=()) -> list[Candidate]:
 
     def key(c):
         prior = prior_families(c)
-        support = bool(set(c.found_by) - prior)
+        support = any(style not in STYLE_FAMILY for style in c.found_by)
         return (-len(prior), -support, -relevance(c), -c.stars, c.repo.casefold())
 
-    return sorted(candidates.values(), key=key)[:limit]
+    ordered = sorted(candidates.values(), key=key)
+    # A fifth of the list goes to the best known prior art the corroboration
+    # order left out: with ten searches, small repos that several narrow
+    # queries all matched pushed a 16k-star project like Foam off the list.
+    popular = limit // 4
+    head = ordered[:limit - popular]
+    tail = ordered[limit - popular:]
+    # ...but only prior art that says so itself: an "in:readme" search also
+    # returns awesome-lists and interview guides whose READMEs mention
+    # everything, and by stars alone they took every one of these places
+    enough = min(2, len(words))
+    known = sorted((c for c in tail if prior_families(c) and relevance(c) >= enough),
+                   key=lambda c: (-c.stars, c.repo.casefold()))
+    others = [c for c in tail if c not in known]     # in their own order, after the known ones
+    return head + (known + others)[:limit - len(head)]
 
 
 def _component_match(component, text):
@@ -395,7 +472,7 @@ def candidate_fit_score(candidate, terms):
             (3 if candidate.evidence_url and hits else 0))
 
 
-def diverse_helpers(candidates: dict, components=(), keywords=(), limit: int = 10,
+def diverse_helpers(candidates: dict, components=(), keywords=(), limit: int = 20,
                     terms=None) -> list[Candidate]:
     """Keep a representative from each searched feature in the model context."""
     ordered = rank(candidates, limit=len(candidates), keywords=[*components, *keywords])
@@ -404,14 +481,28 @@ def diverse_helpers(candidates: dict, components=(), keywords=(), limit: int = 1
         ordered.sort(key=lambda candidate: (-candidate_fit_score(candidate, terms),
                                             -len(set(candidate.found_by)), -candidate.stars))
     chosen = []
-    for index, _ in enumerate(_components(components), start=1):
-        style = f"component-{index}"
+    count = len(_components(components))
+    styles = [f"component-{index}" for index in range(1, count + 1)]
+    styles += [f"component-topic-{index}" for index in range(1, min(count, 4) + 1)]
+    for style in styles:
         hit = next((candidate for candidate in ordered
                     if style in candidate.found_by and candidate not in chosen), None)
         if hit is not None:
             chosen.append(hit)
         if len(chosen) >= limit:
             return chosen
+    # The libraries themselves: the most starred results of each topic search.
+    # Scored by fit alone they lost to small note apps that merely say
+    # "markdown" (the recommender then saw plotly and a 4-star search repo).
+    for index in range(1, min(count, 4) + 1):
+        style = f"component-topic-{index}"
+        known = sorted((candidate for candidate in ordered
+                        if style in candidate.found_by and candidate not in chosen),
+                       key=lambda candidate: -candidate.stars)
+        for candidate in known[:2]:
+            chosen.append(candidate)
+            if len(chosen) >= limit:
+                return chosen
     chosen.extend(candidate for candidate in ordered if candidate not in chosen)
     return chosen[:limit]
 
@@ -684,7 +775,7 @@ REPO_URL_RE = re.compile(r"(?<!gist\.)github\.com/([A-Za-z0-9][\w.-]*/[\w.-]+)",
 SKIP_OWNERS = {"topics", "search", "features", "about", "pricing", "orgs", "sponsors", "collections"}
 
 
-def repos_in_web_results(results, limit=5):
+def repos_in_web_results(results, limit=WEB_REPOS):
     """GitHub links the web search turned up.
 
     In the trial the web search found leaders GitHub's own search had missed
@@ -984,7 +1075,7 @@ class ResearchRunner:
         if "git_search" not in getattr(self.tool_hub, "registry", {}):
             return {}
         queries = build_queries(terms.get("keywords"), terms.get("topics"),
-                                terms.get("summary"))[:MAX_GITHUB_QUERIES]
+                                terms.get("summary"), terms.get("components"))[:MAX_GITHUB_QUERIES]
         candidates = {}
         for index, entry in enumerate(queries, start=1):
             self._assert_public(rel, content)
@@ -1023,27 +1114,33 @@ class ResearchRunner:
         return candidates
 
     async def _web(self, rel, terms, candidates, content, query_log):
-        """A rescue net, never the backbone: it opens a browser window and
-        costs about twelve seconds, so one search and a handful of lookups."""
-        query = web_query(terms.get("summary") or " ".join(terms.get("keywords") or []))
-        if not query or "web_search" not in getattr(self.tool_hub, "registry", {}):
+        """Asks the web the same question three ways (see prior_web_queries).
+        Each search opens a browser window and costs about twelve seconds."""
+        if "web_search" not in getattr(self.tool_hub, "registry", {}):
             return []
-        self._assert_public(rel, content)
-        record = {"purpose": "prior", "style": "web", "query": query, "ok": False}
-        query_log.append(record)
-        self._progress(rel, "web", "Webde capraz kontrol, tarayici acilir")
-        try:
-            outcome = await self.tool_hub.call("web_search", {"query": query})
-        except ApiError:
-            return []
-        results = payload_of(outcome).get("results") or [] if outcome.get("ok") else []
-        log_result(record, outcome, results)
-        if not outcome.get("ok"):
-            return []
-        sources = sources_in_web_results(results, query, "prior", limit=3)
-        sources = [source for source in sources if not off_topic(
-            " ".join(str(source.get(key) or "") for key in ("url", "title", "snippet")), terms)]
-        repos = repos_in_web_results(results)
+        queries = prior_web_queries(terms.get("summary") or " ".join(terms.get("keywords") or []),
+                                    terms.get("keywords"))
+        sources, repos = [], []
+        for index, query in enumerate(queries, start=1):
+            self._assert_public(rel, content)
+            record = {"purpose": "prior", "style": "web", "query": query, "ok": False}
+            query_log.append(record)
+            self._progress(rel, "web", f"Webde capraz kontrol {index}/{len(queries)}, tarayici acilir")
+            try:
+                outcome = await self.tool_hub.call("web_search", {"query": query})
+            except ApiError:
+                continue
+            results = payload_of(outcome).get("results") or [] if outcome.get("ok") else []
+            log_result(record, outcome, results)
+            if not outcome.get("ok"):
+                continue
+            seen = {source["url"] for source in sources}
+            sources.extend(source for source in sources_in_web_results(results, query, "prior",
+                                                                        limit=PRIOR_WEB_SOURCES)
+                           if source["url"] not in seen and not off_topic(
+                               " ".join(str(source.get(key) or "") for key in ("url", "title", "snippet")),
+                               terms))
+            repos.extend(repo for repo in repos_in_web_results(results) if repo not in repos)
         for repo in repos:
             self._assert_public(rel, content)
             key = next((name for name in candidates if name.casefold() == repo.casefold()), None)
@@ -1149,7 +1246,7 @@ class ResearchRunner:
         if not outcome.get("ok"):
             return
         existing = {source["url"]: source for source in sources}
-        for source in sources_in_web_results(results, query, "adjacent", limit=4):
+        for source in sources_in_web_results(results, query, "adjacent", limit=6):
             if source_prefetch_score(source, terms) < 2:
                 continue
             old = existing.get(source["url"])
@@ -1166,7 +1263,7 @@ class ResearchRunner:
         if "web_fetch" not in getattr(self.tool_hub, "registry", {}):
             return
         chosen = select_sources_for_fetch(sources, terms)
-        gate = asyncio.Semaphore(2)
+        gate = asyncio.Semaphore(READ_CONCURRENCY)
 
         async def read(source):
             async with gate:
@@ -1236,11 +1333,11 @@ class ResearchRunner:
             return
         components = terms.get("components") or []
         keywords = terms.get("keywords") or []
-        prior_rows = rank(prior or {}, limit=2, keywords=keywords)
-        helper_rows = diverse_helpers(helpers, components, keywords, limit=4, terms=terms)
-        desired = [(candidate, "support") for candidate in helper_rows[:2]] + [
+        prior_rows = rank(prior or {}, limit=4, keywords=keywords)
+        helper_rows = diverse_helpers(helpers, components, keywords, limit=6, terms=terms)
+        desired = [(candidate, "support") for candidate in helper_rows[:3]] + [
             (candidate, "prior") for candidate in prior_rows] + [
-            (candidate, "support") for candidate in helper_rows[2:]]
+            (candidate, "support") for candidate in helper_rows[3:]]
         chosen = []
         seen = set()
         for candidate, kind in desired:
@@ -1250,7 +1347,7 @@ class ResearchRunner:
             chosen.append((candidate, kind))
             if len(chosen) >= MAX_REPO_READS:
                 break
-        gate = asyncio.Semaphore(2)
+        gate = asyncio.Semaphore(READ_CONCURRENCY)
 
         async def read(candidate, kind):
             async with gate:

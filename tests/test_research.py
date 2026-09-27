@@ -10,7 +10,7 @@ import pytest
 import json
 
 from core import llm_client
-from server.research import (Candidate, MAX_GITHUB_QUERIES, MAX_WEB_READS, build_queries,
+from server.research import (Candidate, MAX_GITHUB_QUERIES, MAX_SUPPORT_QUERIES, MAX_WEB_READS, build_queries,
                              build_support_queries, support_web_queries, diverse_helpers,
                              adjacent_web_query, relevance_score, evidence_excerpt,
                              select_sources_for_fetch, source_prefetch_score,
@@ -19,7 +19,7 @@ from server.research import (Candidate, MAX_GITHUB_QUERIES, MAX_WEB_READS, build
                              apply_page_read,
                              sources_in_web_results, prioritized_sources,
                              items_of, merge, payload_of,
-                             rank, repos_in_web_results, web_query)
+                             rank, repos_in_web_results, web_query, prior_web_queries)
 
 
 # ---------------------------------------------------------------- the queries
@@ -97,7 +97,9 @@ def test_all_four_named_components_fit_in_support_search_budget():
     queries = build_support_queries(["local markdown", "idea tree"], ["note-taking"], parts)
     assert all(any(query["query"].startswith(part) for query in queries) for part in parts)
     assert "memory retrieval markdown notes" in {q["query"] for q in queries}
-    assert len(queries) <= 6
+    # each named feature is also asked as a GitHub topic, where the libraries are
+    assert {"topic:question-linking", "topic:graph-visualization"} <= {q["query"] for q in queries}
+    assert len(queries) <= MAX_SUPPORT_QUERIES
 
 
 def test_helper_shortlist_represents_each_searched_component():
@@ -197,7 +199,27 @@ def test_markdown_backlinks_do_not_search_seo_backlinking():
         "full-text search local library engine"]
     assert adjacent_web_query(terms["keywords"], terms["components"], terms["topics"],
                               terms["summary"]).startswith("backlinking markdown notes")
-    assert len(prior) + len(support) + 4 == 14  # prior web, two support web, adjacent web
+    # the six measured styles still run first; the widening only comes after
+    assert [q["style"] for q in prior[:6]] == ["topic", "topic", "topic-pair", "kisa",
+                                               "populer", "populer"]
+    assert len(prior) == MAX_GITHUB_QUERIES == 10
+    web = prior_web_queries(terms["summary"], terms["keywords"])
+    assert len(prior) + len(support) + len(web) + 2 + 1 == 24  # + two support web, adjacent web
+
+
+def test_the_web_is_asked_who_built_it_three_ways():
+    queries = prior_web_queries("local Markdown notebook with backlinks", ["markdown", "backlinks"])
+    assert queries == ["best open source local Markdown notebook with backlinks github",
+                       "local Markdown notebook with backlinks alternatives",
+                       "Show HN markdown backlinks"]
+    assert prior_web_queries("", []) == []
+
+
+def test_readme_matches_count_as_prior_art_not_as_a_component():
+    found = {}
+    merge(found, "readme", [row("small/notes", 40)])
+    merge(found, "component-1", [row("big/lib", 9000)])
+    assert [c.repo for c in rank(found)] == ["small/notes", "big/lib"]
 
 
 def test_web_research_searches_pages_instead_of_generic_extraction():
@@ -212,7 +234,9 @@ def test_web_research_searches_pages_instead_of_generic_extraction():
     assert [q["query"] for q in prior[:2]] == ["topic:web-research", "topic:page-extraction"]
     assert support[0]["query"] == "text extraction web pages"
     assert support[1]["query"] == "citation generation web pages"
-    assert len(support) == 4
+    # "robots.txt respect" cannot be a GitHub topic, so it costs no topic search
+    assert [q["query"] for q in support[4:]] == ["topic:text-extraction", "topic:citation-generation",
+                                                "topic:ssrf-blocking"]
 
 
 @pytest.mark.anyio
@@ -373,7 +397,7 @@ def test_page_research_prefetch_favors_implementation_docs_over_definition_pages
     ]
     assert source_prefetch_score(rows[1], terms) > source_prefetch_score(rows[0], terms)
     assert [s["url"] for s in select_sources_for_fetch(rows, terms)] == [rows[1]["url"]]
-    assert MAX_WEB_READS == 4
+    assert MAX_WEB_READS == 8
 
 
 def test_verified_support_sources_survive_a_full_source_budget():
@@ -891,3 +915,112 @@ async def test_an_unknown_topic_gets_one_plain_text_retry(runner):
     assert first["empty"] is True and first["count"] == 0
     assert retry["style"] == "topic-duz" and retry["query"] == "markdown notebook"
     assert retry["count"] == 1 and retry["empty"] is False
+
+
+# ---------------------------------------------------------------- a bad reply is not the end
+def test_a_reply_cut_off_mid_list_keeps_its_whole_entries():
+    candidates = [{"repo": "a/one"}, {"repo": "b/two"}]
+    raw = ('<think>x</think>{"tools":[{"repo":"a/one","why":"graph layout"},'
+           '{"repo":"b/two","why":"search index"},{"repo":"b/tw')
+    result = llm_client.parse_research_recommendations(raw, candidates, [])
+    assert [tool["repo"] for tool in result["tools"]] == ["a/one", "b/two"]
+
+
+def test_an_empty_recommendation_is_asked_once_more(monkeypatch):
+    replies = iter(["<think>uzun uzun</think>", '{"tools":[{"repo":"a/one","why":"graph layout"}]}'])
+    monkeypatch.setattr(llm_client, "_complete_thinking_capped", lambda *a, **k: next(replies))
+    result = llm_client.recommend_research("fikir", [{"repo": "a/one", "description": "d"}], [])
+    assert [tool["repo"] for tool in result["tools"]] == ["a/one"]
+
+
+def test_search_terms_are_asked_once_more_when_the_answer_is_empty(monkeypatch):
+    replies = iter(["<think>bitmedi", "ANAHTAR: markdown, notes\nKONU: note-taking\nOZET: notes"])
+    monkeypatch.setattr(llm_client, "_complete_thinking_capped", lambda *a, **k: next(replies))
+    assert llm_client.extract_search_terms("# Not")["keywords"] == ["markdown", "notes"]
+
+
+def test_a_part_of_the_idea_is_not_searched_as_the_idea_itself():
+    """Live: topic:graph-visualization as a prior-art query filled the
+    similar-projects list with chart libraries and Jupyter notebooks."""
+    queries = build_queries(["markdown notebook", "backlinks", "knowledge graph", "local search"],
+                            ["markdown-notebook", "knowledge-graph", "graph-visualization", "local-first"],
+                            components=["graph visualization", "backlinks"])
+    asked = {q["query"] for q in queries}
+    assert "topic:graph-visualization" not in asked
+    assert "topic:local-first" in asked
+
+
+def test_a_topic_pair_is_not_a_second_confirmation_of_its_topic():
+    """topic:a topic:b returns a subset of topic:a — one property, not two votes."""
+    found = {}
+    merge(found, "topic", [row("tiny/bot", 3)])
+    merge(found, "topic-pair", [row("tiny/bot", 3)])
+    merge(found, "topic", [row("qodo-ai/pr-agent", 8000)])
+    merge(found, "populer", [row("qodo-ai/pr-agent", 8000)])
+    assert [c.repo for c in rank(found)] == ["qodo-ai/pr-agent", "tiny/bot"]
+
+
+def test_the_model_may_write_the_labels_with_turkish_letters():
+    '''Live: every component was lost because the model wrote BİLEŞEN, not BILESEN.'''
+    terms = llm_client.parse_search_terms(
+        "<think>x</think>ANAHTAR: markdown, notes\n**BİLEŞEN:** graph view, full-text search\n"
+        "KONU: note-taking\n- ÖZET: A local notebook")
+    assert terms["components"] == ["graph view", "full-text search"]
+    assert terms["summary"] == "A local notebook"
+    judged = llm_client.parse_prior_art("AYNI:\nKOMŞU: a/one\nKARAR: yakın", ["a/one"])
+    assert judged["adjacent"] == ["a/one"]
+
+
+def test_a_one_word_topic_does_not_stand_alone_while_a_specific_one_is_left():
+    queries = build_queries(["markdown notebook"], ["note-taking", "markdown", "knowledge-graph"])
+    asked = [q["query"] for q in queries if q["style"] == "topic"]
+    assert "topic:markdown" not in asked
+    assert asked[:2] == ["topic:note-taking", "topic:knowledge-graph"]
+    assert "topic:note-taking topic:markdown" in {q["query"] for q in queries}   # it still narrows a pair
+
+
+def test_the_best_known_prior_art_keeps_a_place_on_the_list():
+    """Live: with ten searches, small repos matched by several narrow queries
+    filled all 20 places and pushed a 16k-star Foam off the list."""
+    found = {}
+    for i in range(20):
+        merge(found, "topic", [row(f"small/r{i}", 5)])
+        merge(found, "kisa", [row(f"small/r{i}", 5)])
+    merge(found, "topic", [row("foambubble/foam", 16000)])
+    top = [c.repo for c in rank(found)]
+    assert len(top) == 20 and "foambubble/foam" in top
+    # corroboration still decides the first three quarters
+    assert all(repo.startswith("small/") for repo in top[:15])
+
+
+def test_the_most_starred_library_of_a_topic_search_reaches_the_recommender():
+    found = {}
+    for i in range(20):
+        merge(found, "component-1", [row(f"notes/app{i}", 3, description="markdown notes graph view")])
+    merge(found, "component-topic-1", [row("cytoscape/cytoscape.js", 10000,
+                                           description="Graph theory library for visualisation")])
+    terms = {"keywords": ["markdown notes"], "topics": ["note-taking"], "components": ["graph visualization"],
+             "summary": "markdown notes with a graph view"}
+    shortlist = diverse_helpers(found, ["graph visualization"], ["markdown notes"], terms=terms)
+    assert "cytoscape/cytoscape.js" in [c.repo for c in shortlist]
+
+
+def test_an_awesome_list_does_not_take_the_place_of_prior_art():
+    """Live: 'markdown notebook in:readme' returned sindresorhus/awesome (510k
+    stars) and it took a place meant for the best known similar project."""
+    found = {}
+    for i in range(20):
+        merge(found, "topic", [row(f"small/r{i}", 5, description="markdown notebook app")])
+        merge(found, "kisa", [row(f"small/r{i}", 5, description="markdown notebook app")])
+    merge(found, "readme", [row("sindresorhus/awesome", 510000, description="Awesome lists")])
+    merge(found, "topic", [row("foambubble/foam", 16000, description="knowledge base in markdown",
+                               topics=["markdown", "notebook"])])
+    top = [c.repo for c in rank(found, keywords=["markdown notebook"])]
+    assert "foambubble/foam" in top and "sindresorhus/awesome" not in top
+
+
+def test_components_left_out_are_taken_from_the_keywords():
+    """Live: 1 reply in 4 had no BILESEN line; its keywords still named the parts."""
+    terms = llm_client.parse_search_terms(
+        "ANAHTAR: web scraping, content extraction, SSRF protection\nKONU: web-crawling\nOZET: x")
+    assert terms["components"] == ["content extraction", "SSRF protection"]

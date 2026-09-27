@@ -26,6 +26,13 @@ CASES = [
         "focus": "page extraction, crawling, citations, and safe fetching tools",
         "known": ["crawl4ai", "trafilatura", "scrapy", "playwright", "readability"],
     },
+    {
+        # a Turkish note outside the two domains the heuristics were tuned on
+        "name": "Kod inceleme botu",
+        "content": "# Kod inceleme botu\n\nPull request'leri otomatik inceleyen bir GitHub uygulaması yapmak istiyorum. Değişen dosyaları okuyup riskli kısımlara satır yorumu bıraksın, statik analiz çalıştırsın ve sadece önemli uyarıları yazsın.\n",
+        "focus": "",
+        "known": ["pr-agent", "reviewdog", "danger", "sonarqube", "semgrep"],
+    },
 ]
 
 
@@ -87,6 +94,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://127.0.0.1:8877")
     parser.add_argument("--timeout", type=float, default=360)
-    parser.add_argument("--case", type=int, choices=(1, 2), help="Yalnız seçilen sentetik fikri çalıştır")
+    parser.add_argument("--case", type=int, choices=range(1, len(CASES) + 1),
+                        help="Yalnız seçilen sentetik fikri çalıştır")
     options = parser.parse_args()
     run(options.url, options.timeout, CASES[options.case - 1:options.case] if options.case else CASES)
