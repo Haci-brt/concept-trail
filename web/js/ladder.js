@@ -6,7 +6,7 @@ import { api } from "./api.js";
 import { icon } from "./icons.js";
 import { esc, toast } from "./util.js";
 
-const BY = { not: "notta yazıyor", cevap: "soruya cevap verdin", sen: "sen işaretledin" };
+const BY = { not: "notta yazıyor", cevap: "soruya cevap verdin", sen: "sen işaretledin", rota: "rotayı düzelttiğinde söyledin" };
 
 export class LadderPanel {
   /** showWaiting(): bring the list of waiting questions into view. */
@@ -92,7 +92,7 @@ export class LadderPanel {
          <span class="lg-phase">${esc(s.phase_label)}</span>${waiting}<button class="lg-correct" data-act="direction">Rotayı düzelt</button><span class="lg-count">${s.made}/${s.total}</span></div>`;
     const label = level.id === s.current ? `${esc(level.label)} · şimdi bunu netleştiriyoruz`
       : level.done ? `${esc(level.label)} · tamam` : `${esc(level.label)} · sırası gelmedi`;
-    const direction = this.direction ? `<div class="lg-direction" title="${esc(this.direction.text)}">Son yön: ${esc(this.direction.text)}</div>` : "";
+    const direction = this.direction ? `<div class="lg-direction" title="${esc(this.direction.text)}">Son yön: ${esc(this.direction.summary || this.direction.text)}</div>` : "";
     this.root.innerHTML = `${head}${direction}<div class="lg-bar">${bar}</div>
       <div class="lg-level">${label}</div><div class="lg-chips">${chips}</div>`;
   }

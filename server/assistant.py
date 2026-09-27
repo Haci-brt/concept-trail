@@ -848,20 +848,98 @@ class Assistant:
     def ladder_for(self, rel: str) -> dict:
         return ladder.state(self.notes.load(rel).get("decisions"))
 
-    def set_direction(self, rel: str, category: str, text: str) -> dict:
-        """The writer's latest correction supersedes stale assistant work."""
-        categories = {"amac", "kullanici", "kapsam", "cikti", "diger"}
+    DIRECTION_CATEGORIES = {"amac", "kullanici", "kapsam", "cikti", "diger"}
+
+    def _check_direction(self, category: str, text: str) -> tuple[str, str]:
         category, text = category.strip(), text.strip()
-        if category not in categories:
+        if category not in self.DIRECTION_CATEGORIES:
             raise ApiError(400, "Düzeltme alanı bilinmiyor.")
         if not text or len(text) > 2000:
             raise ApiError(400, "Yönlendirme 1–2000 karakter olmalı.")
+        return category, text
+
+    def _direction_targets(self, rel: str) -> tuple[dict, dict, dict]:
+        """What a correction can touch: made decisions, open questions,
+        pending proposals — each as {id: short description}."""
+        state = self.notes.load(rel)
+        rung = ladder.state(state.get("decisions"))
+        decisions = {}
+        for level in rung["levels"]:
+            for decision in level["decisions"]:
+                if decision["decided"]:
+                    said = f" = {decision['value']}" if decision.get("value") else ""
+                    decisions[decision["id"]] = f"{level['label']} · {decision['label']}{said}"
+        questions = {n["id"]: f"[{n.get('kind') or 'soru'}] {n['text'][:200]}"
+                     for n in state["nodes"] if n["type"] == "question" and n.get("status") == "open"}
+        proposals = {n["id"]: n["text"][:200] for n in state["nodes"]
+                     if n["type"] in ("edit", "summary") and n.get("status") == "pending"}
+        return decisions, questions, proposals
+
+    def _fallback_direction_plan(self, category, decisions, questions, proposals) -> dict:
+        """Without a model: the old, cautious reading — everything waiting is
+        stale, and any correction but the output style reopens every decision."""
+        return {"summary": "Model şu an ulaşılamadığı için etkiler tek tek değerlendirilemedi: "
+                           "bekleyen bütün sorular ve öneriler kapanacak"
+                           + ("." if category == "cikti" else ", verilmiş kararlar yeniden sorulacak."),
+                "update": {},
+                "reopen": [] if category == "cikti" else list(decisions),
+                "drop_questions": list(questions), "drop_proposals": list(proposals),
+                "fallback": True}
+
+    async def preview_direction(self, rel: str, category: str, text: str) -> dict:
+        """The correction compared with the note's goal and decisions: a short
+        summary of the new course and exactly what it would reopen or close.
+        Nothing changes until the writer approves it (set_direction)."""
+        category, text = self._check_direction(category, text)
+        content = self.vault.read_note(rel)["content"]
+        decisions, questions, proposals = self._direction_targets(rel)
+        previous = (self.notes.load(rel).get("direction") or {}).get("text", "")
+        plan = None
+        try:
+            provider = self.provider_for("analysis", rel)
+            plan = await asyncio.to_thread(llm_client.plan_direction, content, category, text,
+                                           decisions, questions, proposals, previous,
+                                           provider, self.budget.record)
+        except Exception:
+            self.check_now()
+        if plan is None:
+            plan = self._fallback_direction_plan(category, decisions, questions, proposals)
+        plan.setdefault("update", {})
+        # a correction of the goal or the audience is about that very decision,
+        # even when the model does not say so (measured: it closed the team
+        # question but kept "Kullanıcı = ekipteki herkes")
+        if category in decisions and category not in plan["update"] and category not in plan["reopen"]:
+            plan["reopen"] = [category, *plan["reopen"]]
+        labels = {**decisions, **questions, **proposals}
+        for decision, value in plan["update"].items():
+            labels[decision] = f"{ladder.DECISIONS[decision][1]}: {value}"
+        return {**plan, "category": category, "text": text,
+                "items": {key: labels[key] for key in
+                          [*plan["update"], *plan["reopen"], *plan["drop_questions"], *plan["drop_proposals"]]}}
+
+    def set_direction(self, rel: str, category: str, text: str, plan: dict | None = None) -> dict:
+        """The writer's latest correction supersedes stale assistant work.
+
+        plan: what the writer approved from preview_direction. Only those
+        decisions reopen and only those questions and proposals close, ids
+        checked again against the note as it is now. Without a plan, the old
+        cautious reading applies (see _fallback_direction_plan)."""
+        category, text = self._check_direction(category, text)
         content = self.vault.read_note(rel)["content"]
         if self.busy == rel:
             self.cancel_running("direction")
             self._next_force = (rel, content)
 
-        entry = {"category": category, "text": text, "created": now_iso()}
+        if plan is None:
+            plan = self._fallback_direction_plan(category, *self._direction_targets(rel))
+        reopen = {str(item) for item in plan.get("reopen") or []}
+        updates = {str(key): " ".join(str(value).split())[:160]
+                   for key, value in (plan.get("update") or {}).items()
+                   if str(key) in ladder.DECISIONS and str(value).strip()}
+        drop = {str(item) for item in [*(plan.get("drop_questions") or []), *(plan.get("drop_proposals") or [])]}
+        summary = " ".join(str(plan.get("summary") or "").split())[:500]
+        entry = {"category": category, "text": text, "created": now_iso(),
+                 **({"summary": summary} if summary else {})}
         closed, discarded = [], []
         with self.notes.lock:
             state = self.notes.load(rel)
@@ -872,12 +950,18 @@ class Assistant:
             state["direction"] = entry
             state["last_question"] = ""
             state["analyzed_text"] = ""
-            # A changed goal or audience can invalidate all downstream choices.
-            # Output-style feedback does not change the software decisions.
-            if category != "cikti":
-                state["decisions"] = {}
-                state["phase"] = ladder.state({})["phase"]
+            decided = state.setdefault("decisions", {})
+            before = ladder.state(decided)
+            for decision in reopen & set(decided):
+                del decided[decision]
+            for decision, value in updates.items():
+                # the correction itself said it: no need to ask again
+                decided[decision] = {"by": "rota", "at": now_iso(), "value": value}
+            after = ladder.state(decided)
+            state["phase"] = after["phase"]
             for node in state["nodes"]:
+                if node["id"] not in drop:
+                    continue
                 if node["type"] == "question" and node.get("status") == "open":
                     node.update(status="dismissed", dismissed_at=now_iso(), dismissed_by="direction")
                     closed.append(node.copy())
@@ -895,7 +979,11 @@ class Assistant:
         affected = {n["id"] for n in closed + discarded}
         self._drop_from_queue(lambda e: e.get("path") == rel and e.get("node_id") in affected)
         rung = self.ladder_for(rel)
-        self.broker.publish("ladder", {"path": rel, "ladder": rung, "transition": None})
+        change = ladder.transition(before, after)
+        self.broker.publish("ladder", {"path": rel, "ladder": rung, "transition": change})
+        if change:
+            self._record(self._event("phase", rel, text=change["body"], title=change["title"],
+                                     phase=change["phase"]), hud=False)
         return {"direction": entry, "closed_questions": len(closed),
                 "discarded_proposals": len(discarded), "ladder": rung}
 

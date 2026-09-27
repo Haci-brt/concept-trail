@@ -79,22 +79,44 @@ export class DirectionDialog {
     if (option && !this.textarea.value.trim()) this.textarea.placeholder = option.example;
   }
 
-  _review() {
+  /** The correction goes to the model, which compares it with the note's goal
+   *  and decisions: a short summary of the new course and exactly what it
+   *  would reopen or close. Nothing changes before "Yönü kaydet". */
+  async _review() {
     const text = this.textarea.value.trim();
     const error = this.dialog.querySelector(".field-error");
     if (!this.category) { error.textContent = "Önce neyi düzeltmek istediğini seç."; return; }
     if (!text) { error.textContent = "İstediğin yönü bir cümleyle yaz."; this.textarea.focus(); return; }
     error.textContent = "";
+    const next = this.dialog.querySelector('[data-act="next"]');
+    next.disabled = true;
+    next.textContent = "Etkisi inceleniyor…";
+    try {
+      this.plan = await api.post("/api/assistant/direction/preview", {
+        path: this.path, category: this.category, text,
+      });
+    } catch (err) {
+      error.textContent = err.message;
+      return;
+    } finally {
+      next.disabled = false;
+      next.textContent = "Önizle";
+    }
     const option = OPTIONS.find((o) => o.id === this.category);
+    const group = (title, ids) => ids.length ? `<div class="direction-group"><b>${title}</b>
+        ${ids.map((id) => `<label class="direction-item"><input type="checkbox" data-plan-id="${esc(id)}" checked>
+          <span>${esc(this.plan.items[id] || id)}</span></label>`).join("")}</div>` : "";
     const review = this.dialog.querySelector(".direction-review");
-    review.innerHTML = `<strong>Şöyle ilerleyeceğim</strong>
-      <p><b>${esc(option.label)}:</b> ${esc(text)}</p>
-      <ul>
-        <li>Sonraki soru ve önerilerde bu yön öncelikli olacak.</li>
-        ${this.openQuestions ? `<li>${this.openQuestions} bekleyen soru kapatılacak.</li>` : ""}
-        ${this.pending ? `<li>${this.pending} bekleyen öneri kaldırılacak.</li>` : ""}
-        ${this.category !== "cikti" ? "<li>Önceki tasarım kararları yeniden değerlendirilecek.</li>" : ""}
-      </ul>`;
+    review.innerHTML = `<strong>Yeni gidişat</strong>
+      <p>${esc(this.plan.summary)}</p>
+      <p class="direction-said"><b>${esc(option.label)}:</b> ${esc(text)}</p>
+      ${group("Güncellenecek kararlar", Object.keys(this.plan.update || {}))}
+      ${group("Yeniden sorulacak kararlar", this.plan.reopen)}
+      ${group("Kapanacak sorular", this.plan.drop_questions)}
+      ${group("Kaldırılacak öneriler", this.plan.drop_proposals)}
+      ${!Object.keys(this.plan.update || {}).length && !this.plan.reopen.length && !this.plan.drop_questions.length && !this.plan.drop_proposals.length
+        ? "<p class=\"direction-none\">Verilmiş kararlar ve bekleyen sorular bu yönle çelişmiyor; hepsi korunacak.</p>" : ""}
+      <p class="direction-hint">İşaretini kaldırdığın kalem olduğu gibi kalır. Sonraki sorular bu yöne göre gelecek.</p>`;
     review.hidden = false;
     this.textarea.hidden = true;
     this.dialog.querySelector(".direction-options").hidden = true;
@@ -125,9 +147,19 @@ export class DirectionDialog {
     if (action !== "save") return;
     const button = this.dialog.querySelector('[data-act="save"]');
     button.disabled = true;
+    // only what stayed ticked is applied
+    const kept = new Set([...this.dialog.querySelectorAll("[data-plan-id]")]
+      .filter((box) => box.checked).map((box) => box.dataset.planId));
+    const plan = this.plan && {
+      summary: this.plan.summary,
+      update: Object.fromEntries(Object.entries(this.plan.update || {}).filter(([id]) => kept.has(id))),
+      reopen: this.plan.reopen.filter((id) => kept.has(id)),
+      drop_questions: this.plan.drop_questions.filter((id) => kept.has(id)),
+      drop_proposals: this.plan.drop_proposals.filter((id) => kept.has(id)),
+    };
     try {
       const result = await api.post("/api/assistant/direction", {
-        path: this.path, category: this.category, text: this.textarea.value.trim(),
+        path: this.path, category: this.category, text: this.textarea.value.trim(), plan,
       });
       this.close();
       this.onSaved?.(this.path, result);

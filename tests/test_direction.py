@@ -88,3 +88,78 @@ def test_analysis_reads_latest_direction_and_can_ground_its_decision(monkeypatch
     assert "[KULLANICININ SON YÖNÜ" in captured["messages"][1]["content"]
     assert "eski notla çeliştiğinde son yönü esas al" in captured["messages"][0]["content"]
     assert result["known"] == ["amac"]
+
+
+# ---------------------------------------------------------------- the model reads the correction
+@pytest.mark.anyio
+async def test_only_what_the_correction_affects_is_reopened(writer, monkeypatch):
+    """A small correction must not throw away a 12/15 roadmap."""
+    assistant, rel = writer
+    assistant.set_decisions(rel, {"amac": True, "kullanici": True, "platform": True}, by="sen")
+    keep = assistant.notes.add_node(rel, "question", "Veriler nerede duracak?", status="open", kind="calisma")
+    stale = assistant.notes.add_node(rel, "question", "Ekip rolleri ne olacak?", status="open", kind="kullanici")
+
+    def plan(note, category, text, decisions, questions, proposals, previous, provider, on_usage):
+        assert set(decisions) == {"amac", "kullanici", "platform"}
+        return {"summary": "Artık yalnız bireysel kullanım için soruyorum.",
+                "reopen": ["kullanici"], "drop_questions": [stale["id"]], "drop_proposals": []}
+
+    monkeypatch.setattr(llm_client, "plan_direction", plan)
+    preview = await assistant.preview_direction(rel, "kullanici", "Ekip yok, sadece ben kullanacağım.")
+    assert preview["summary"].startswith("Artık yalnız")
+    assert set(preview["items"]) == {"kullanici", stale["id"]}
+    assert "kullanici" in assistant.notes.load(rel)["decisions"]      # nothing changed yet
+
+    assistant.set_direction(rel, "kullanici", "Ekip yok, sadece ben kullanacağım.", preview)
+    state = assistant.notes.load(rel)
+    assert set(state["decisions"]) == {"amac", "platform"}
+    assert assistant.notes.find_node(rel, keep["id"])["status"] == "open"
+    assert assistant.notes.find_node(rel, stale["id"])["status"] == "dismissed"
+    assert state["direction"]["summary"].startswith("Artık yalnız")
+
+
+def test_ids_the_model_made_up_are_ignored():
+    raw = '{"ozet": "Kapsam daraldı.", "kararlar": ["platform", "hayali"], "sorular": ["q9"], "oneriler": []}'
+    plan = llm_client.parse_direction_plan(raw, {"platform": "Platform"}, {"q1": "soru"}, {})
+    assert plan == {"summary": "Kapsam daraldı.", "update": {}, "reopen": ["platform"],
+                    "drop_questions": [], "drop_proposals": []}
+
+
+@pytest.mark.anyio
+async def test_a_value_the_correction_states_is_taken_not_asked_again(writer, monkeypatch):
+    """Measured on GPT-4o-mini: 'sadece ben kullanacağım' contradicted
+    'Kullanıcı = ekipteki herkes' — the answer is in the correction itself."""
+    assistant, rel = writer
+    assistant.set_decisions(rel, {"kullanici": True}, by="not", values={"kullanici": "ekipteki herkes"})
+    monkeypatch.setattr(llm_client, "plan_direction", lambda *a, **k: llm_client.parse_direction_plan(
+        '{"ozet": "Bireysel kullanım.", "guncelle": {"kullanici": "sadece ben", "uydurma": "x"}, '
+        '"kararlar": ["kullanici"], "sorular": [], "oneriler": []}', {"kullanici": "Kullanıcı"}, {}, {}))
+    preview = await assistant.preview_direction(rel, "kullanici", "Sadece ben kullanacağım.")
+    assert preview["update"] == {"kullanici": "sadece ben"} and preview["reopen"] == []
+    assistant.set_direction(rel, "kullanici", "Sadece ben kullanacağım.", preview)
+    decided = assistant.notes.load(rel)["decisions"]["kullanici"]
+    assert decided["by"] == "rota" and decided["value"] == "sadece ben"
+
+
+@pytest.mark.anyio
+async def test_correcting_the_audience_always_offers_that_decision(writer, monkeypatch):
+    assistant, rel = writer
+    assistant.set_decisions(rel, {"kullanici": True}, by="not", values={"kullanici": "ekip"})
+    monkeypatch.setattr(llm_client, "plan_direction", lambda *a, **k: {
+        "summary": "Bireysel.", "update": {}, "reopen": [], "drop_questions": [], "drop_proposals": []})
+    preview = await assistant.preview_direction(rel, "kullanici", "Tek kişilik olsun.")
+    assert preview["reopen"] == ["kullanici"]
+    assert llm_client.parse_direction_plan("anlaşılmadı", {}, {}, {}) is None
+
+
+@pytest.mark.anyio
+async def test_without_a_model_the_preview_says_so_and_stays_cautious(writer, monkeypatch):
+    assistant, rel = writer
+    assistant.set_decisions(rel, {"amac": True}, by="sen")
+
+    def down(*args, **kwargs):
+        raise llm_client.ProviderError("kapalı")
+
+    monkeypatch.setattr(llm_client, "plan_direction", down)
+    preview = await assistant.preview_direction(rel, "kapsam", "İlk sürüm çok küçük olsun.")
+    assert preview["fallback"] is True and preview["reopen"] == ["amac"]

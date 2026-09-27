@@ -140,6 +140,7 @@ class DirectionBody(BaseModel):
     path: str
     category: str
     text: str
+    plan: dict | None = None     # what the writer approved from the preview
 
 
 class NodeBody(BaseModel):
@@ -500,9 +501,14 @@ def create_app(settings: Settings) -> FastAPI:
                 "mode": mode, "ladder": assistant.ladder_for(path),
                 "direction": state.get("direction")}
 
+    @app.post("/api/assistant/direction/preview")
+    async def preview_direction(body: DirectionBody):
+        """What the correction would change, for the writer to approve first."""
+        return await assistant.preview_direction(body.path, body.category, body.text)
+
     @app.post("/api/assistant/direction")
     def set_direction(body: DirectionBody):
-        return assistant.set_direction(body.path, body.category, body.text)
+        return assistant.set_direction(body.path, body.category, body.text, body.plan)
 
     @app.post("/api/assistant/decision")
     def set_decision(body: DecisionBody):
