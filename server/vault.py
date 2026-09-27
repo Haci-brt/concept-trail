@@ -29,6 +29,16 @@ def fold(text: str) -> str:
     return text.translate({ord("İ"): "i", ord("I"): "i", ord("ı"): "i"}).casefold()
 
 
+_TR_ASCII = str.maketrans("çğıöşüâî", "cgiosuai")
+
+
+def plain(text: str) -> str:
+    """fold() with the Turkish letters spelled in ASCII: the form patterns
+    written without them ("onemlidir", "dusunmelisin") have to be matched
+    against — fold() alone leaves "önemlidir" as it is."""
+    return fold(text).translate(_TR_ASCII)
+
+
 def split_frontmatter(text: str) -> tuple[dict, str, int]:
     """Return (meta, body, number of lines the frontmatter occupied)."""
     match = FRONTMATTER_RE.match(text)

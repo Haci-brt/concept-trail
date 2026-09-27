@@ -167,6 +167,7 @@ export class HistoryPanel {
     let actions = "";
     if ((e.type === "summary" || e.type === "edit") && e.status === "pending") {
       actions = `<div class="h-actions">
+        ${e.why ? `<span class="h-why">Notta dayandığı: ${esc(e.why)}</span>` : ""}
         <button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}${e.type === "edit" ? "Onayla" : "Nota ekle"}</button>
         <button class="btn btn-sm" data-act="reject">Vazgeç</button></div>`;
     } else if (e.type === "research" && e.status === "pending") {

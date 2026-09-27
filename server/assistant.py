@@ -763,7 +763,8 @@ class Assistant:
         pending = {n.get("kind") for n in self.notes.open_questions(rel)}
 
         if result.get("suggestion"):
-            self._offer_suggestion(rel, content, result["suggestion"], quiet, result.get("lens"))
+            self._offer_suggestion(rel, content, result["suggestion"], quiet, result.get("lens"),
+                                   result.get("basis", ""))
         if result.get("research"):
             self._offer_research(rel, result["research"], quiet)
 
@@ -874,7 +875,7 @@ class Assistant:
         return any(difflib.SequenceMatcher(None, folded, fold(old)).ratio() >= cutoff for old in seen)
 
     def _offer_suggestion(self, rel: str, content: str, text: str, quiet: bool,
-                          lens: str | None = None) -> None:
+                          lens: str | None = None, basis: str = "") -> None:
         """"Modelin önerisi": an argument the model thinks the note should hold.
         A proposal like any other — only the writer's approval puts it in the
         note. One waits at a time, and nothing offered before is offered again."""
@@ -890,6 +891,8 @@ class Assistant:
             del offered[:-40]
             self.notes.save(rel)
         seen_by = {"lens": lens} if lens else {}
+        if basis:                       # what in the note it follows from
+            seen_by["why"] = basis
         node = self.notes.add_node(rel, "summary", text, status="pending", source="model", **seen_by)
         self._publish_node(rel, node)
         self._record(self._event("summary", rel, text=text, node_id=node["id"], status="pending",

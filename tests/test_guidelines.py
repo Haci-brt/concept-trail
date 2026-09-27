@@ -109,8 +109,35 @@ def test_a_suggestion_remembers_the_lens_it_came_through(assistant):
 
 def test_vague_advice_is_not_a_suggestion():
     assert llm_client.parse_extras("ÖNERİ: Güvenlik hakkında daha fazla düşünmek faydalı olabilir.") == {}
+    # Turkish letters: fold() left "önemlidir" unmatched by the ASCII pattern (live run)
+    assert llm_client.parse_extras("ÖNERİ: SQLite yapısının iyi tasarlanması ve senkronun yönetilmesi önemlidir.") == {}
+    assert llm_client.parse_extras("ÖNERİ: Veri akışı için API entegrasyonları düşünülmelidir.") == {}
     assert llm_client.parse_extras("ARAŞTIR: Güvenlik | önemli") == {}
     assert llm_client.parse_extras("YOK") == {}
+
+
+NOTE = "# Harcama\n\nFişleri fotoğrafla çeken bir telefon uygulaması. Ailem de kullanacak. İnternet yokken de çalışmalı."
+
+
+def test_a_suggestion_names_two_things_in_the_note():
+    raw = "ÖNERİ: Her fiş, kimin harcaması olduğuyla etiketlenmeli. | ailem de kullanacak + fişleri fotoğrafla"
+    assert llm_client.parse_extras(raw, NOTE) == {
+        "suggestion": "Her fiş, kimin harcaması olduğuyla etiketlenmeli.",
+        "basis": "ailem de kullanacak + fişleri fotoğrafla"}
+
+
+def test_a_suggestion_without_a_basis_in_the_note_is_dropped():
+    assert llm_client.parse_extras("ÖNERİ: Her fiş, kimin harcaması olduğuyla etiketlenmeli.", NOTE) == {}
+    assert llm_client.parse_extras("ÖNERİ: Kullanıcılar rol tabanlı yetkilendirilmeli. | ekip yönetimi + "
+                                   "kurumsal müşteriler", NOTE) == {}
+
+
+def test_the_basis_is_shown_with_the_suggestion(assistant):
+    rel = note(assistant)
+    apply(assistant, rel, {"type": "net", "suggestion": "Her fiş kimin harcaması olduğuyla etiketlenmeli.",
+                           "basis": "ailem de kullanacak + fişleri fotoğrafla"})
+    offer = next(e for e in assistant.history.items if e["type"] == "summary")
+    assert offer["why"] == "ailem de kullanacak + fişleri fotoğrafla"
 
 
 # ---------------------------------------------------------------- answers become values

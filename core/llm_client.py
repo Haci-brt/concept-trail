@@ -13,7 +13,7 @@ import requests
 
 from server import tools as tools_module
 from server.ladder import DECISION_IDS, grounded, normalize_decision
-from server.vault import fold
+from server.vault import fold, plain
 
 # Who serves a request is decided by server/providers.py; this module only
 # knows how to speak the OpenAI chat-completions shape to whatever it is given.
@@ -638,7 +638,8 @@ QUESTION_PARTICLE = re.compile(r"(?:^|\s)m[ıiuü](?:y[ıiuü]m|s[ıiuü]n|d[ıi
 VAGUE_SUGGESTION = re.compile(r"faydali olabilir|dusunmelisin|dusunmek|onemli olabilir|onemlidir|"
                               r"artirabilir|gelistirebilir|iyilestirebilir|daha fazla|dikkat etmelisin|"
                               r"goz onunde bulundur|degerlendirmelisin|kullanici dostu|kolay kullanim|"
-                              r"sezgisel|verimli hale|deneyimini")
+                              r"sezgisel|verimli hale|deneyimini|dusunulmeli|durulmali|kolaylastir|"
+                              r"guvenligini artir|onem tasi")
 VAGUE_TOPIC = re.compile(r"(veri )?guvenli[gk]i?|kullanici deneyimi|performans|olceklenebilirlik|"
                          r"en iyi uygulamalar|test|dokumantasyon|mimari")
 
@@ -646,15 +647,27 @@ VAGUE_TOPIC = re.compile(r"(veri )?guvenli[gk]i?|kullanici deneyimi|performans|o
 EXTRA_LINE = re.compile(r"^[ \t>*#-]*\**(?:[OÖoö]NER[İIıi]|AR[AaA]\S*T[İIıi]R)\**\s*:", re.IGNORECASE)
 
 
-def parse_extras(raw: str) -> dict:
-    """ÖNERİ and ARAŞTIR lines, kept only when they say something definite."""
-    suggestion, research = "", None
+def _basis_in_note(basis: str, note: str) -> list[str]:
+    """The two things in the note a suggestion says it follows from, each
+    found in the note — or nothing. A suggestion that cannot name them is
+    advice any idea would get (measured: most of GPT-4o-mini's were)."""
+    parts = [" ".join(p.split()) for p in re.split(r"\s*\+\s*|\s*;\s*", basis or "") if p.strip()]
+    found = [p for p in parts if grounded(p, note)]
+    return found[:3] if len(found) >= 2 else []
+
+
+def parse_extras(raw: str, note: str | None = None) -> dict:
+    """ÖNERİ and ARAŞTIR lines, kept only when they say something definite.
+    Given the note, a suggestion also has to name two things in it that it
+    follows from; they travel with it as its basis."""
+    suggestion, basis, research = "", "", None
     suggest_re = re.compile(_label("ONERI") + r"(.+)$", re.IGNORECASE)
     research_re = re.compile(_label("ARASTIR") + r"(.+)$", re.IGNORECASE)
     for line in (raw or "").splitlines():
         offered = suggest_re.match(line)
         if offered and not suggestion:
-            suggestion = " ".join(offered.group(1).strip(" *<>").split())[:300]
+            text, _, basis = offered.group(1).partition("|")
+            suggestion = " ".join(text.strip(" *<>").split())[:300]
             continue
         asked = research_re.match(line)
         if asked and research is None:
@@ -663,9 +676,13 @@ def parse_extras(raw: str) -> dict:
                 research = {"topic": " ".join(topic.split())[:120], "why": " ".join(why.split())[:240]}
     found = {}
     # a two-idea run-on sentence (measured, 270 characters) is not one suggestion
-    if 12 < len(suggestion) <= 220 and not VAGUE_SUGGESTION.search(fold(suggestion)) and fold(suggestion) != "yok":
-        found["suggestion"] = suggestion
-    if research and len(research["topic"].split()) >= 2 and not VAGUE_TOPIC.fullmatch(fold(research["topic"])):
+    if 12 < len(suggestion) <= 220 and not VAGUE_SUGGESTION.search(plain(suggestion)) and plain(suggestion) != "yok":
+        grounds = _basis_in_note(basis, note) if note is not None else []
+        if note is None or grounds:
+            found["suggestion"] = suggestion
+            if grounds:
+                found["basis"] = " + ".join(grounds)
+    if research and len(research["topic"].split()) >= 2 and not VAGUE_TOPIC.fullmatch(plain(research["topic"])):
         found["research"] = research
     return found
 
@@ -677,11 +694,16 @@ EXTRAS_PROMPT = (
     "/no_think\n"
     "Bir yazılım tasarım notu ve şimdiye kadar verilmiş kararları veriliyor. İki şey arıyorsun; "
     "bulamadığını yazma. Hiçbiri yoksa yalnızca YOK yaz.\n\n"
-    "ÖNERİ: <notta yazan en az iki şeyin birlikte doğurduğu, notta yazmayan somut bir tasarım "
-    "sonucu, tek cümle>\n"
-    "Örnek: not 'vardiyalı ekipler' ve 'ortak tablet' diyorsa → 'Tablet vardiyada el değiştireceği "
-    "için hızlı kullanıcı değiştirme gerekir.' Genel tavsiye ('faydalı olabilir', 'düşünmelisin', "
-    "'önemlidir') ÖNERİ değildir; notu tekrar etmek de değildir.\n\n"
+    "ÖNERİ: <yeni bir gereksinim, kural ya da parça, tek cümle> | <onu doğuran, notta yazan iki "
+    "şey, notun kendi kelimeleriyle, + ile ayrılmış>\n"
+    "ÖNERİ, notta yazan iki şeyin BİRLİKTE doğurduğu ve notta HİÇ geçmeyen bir şey söylemeli: "
+    "yazar okuyunca 'bunu düşünmemiştim' demeli.\n"
+    "İyi: not 'vardiyalı ekipler' ve 'ortak tablet' diyorsa → 'ÖNERİ: Tablet vardiyada el "
+    "değiştireceği için her kayıt kimin girdiğini tutmalı ve kullanıcı değiştirmek tek dokunuş "
+    "olmalı. | vardiyalı ekipler + ortak tablet'\n"
+    "Kötü (notu tekrar ediyor): 'Uygulama ortak tablette çalışabilmeli.' Kötü (her fikre uyar): "
+    "'Kullanıcı dostu ve güvenli olmalı.' Genel tavsiye ('faydalı olabilir', 'düşünülmeli', "
+    "'önemlidir') ÖNERİ değildir. Böyle bir şey bulamıyorsan ÖNERİ yazma.\n\n"
     "ARAŞTIR: <belirli bir teknik yetenek> | <neden>\n"
     "Notta başkalarının hazır çözdüğü belirli bir yetenek varsa yaz (ör. 'iki cihaz arası "
     "çevrimdışı senkron'). Genel konular (güvenlik, kullanıcı deneyimi, performans) değildir.\n\n"
@@ -697,7 +719,7 @@ def offer_extras(full_text: str, roadmap: str = "", provider=None, on_usage=None
         [{"role": "system", "content": EXTRAS_PROMPT},
          {"role": "user", "content": "\n\n".join(parts)}],
         temperature=0.3, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
-    return parse_extras(_strip_think(content))
+    return parse_extras(_strip_think(content), full_text)
 
 
 def asks(value: str) -> bool:
@@ -1336,7 +1358,7 @@ def parse_comparison(raw: str, repos: list[str], components: list[str]) -> dict:
                          "shared": _short_list(item.get("ortak"), 4),
                          "missing": _short_list(item.get("eksik"), 4),
                          "weak": [w for w in _short_list(item.get("zayif"), 3)
-                                  if not NO_EVIDENCE.search(fold(w))],
+                                  if not NO_EVIDENCE.search(plain(w))],
                          "lesson": " ".join(str(item.get("ders") or "").split())[:240]})
     by_component = {component.casefold(): component for component in components}
     matrix = {}

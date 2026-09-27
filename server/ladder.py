@@ -13,7 +13,7 @@ enough to start building, and the writer is told so.
 Nothing here talks to a model or the disk: it is the rulebook the assistant,
 the prompt and the panel all read from.
 """
-from server.vault import fold, split_frontmatter
+from server.vault import fold, plain, split_frontmatter
 
 # (level id, label, ((decision id, label, what deciding it means), ...))
 LEVELS = (
@@ -80,11 +80,8 @@ PHASE_LABELS = {**LEVEL_LABELS, PRODUCT: "Ürün evresi"}
 # `tur: fikir` in the frontmatter: a note that is not about building software
 IDEA_TYPES = ("fikir", "genel", "not", "gunluk", "günlük")
 
-_ASCII = str.maketrans("çğıöşüâî", "cgiosuai")
-
-
 def _key(text: str) -> str:
-    return "".join(ch for ch in fold(str(text)).translate(_ASCII) if ch.isalnum())
+    return "".join(ch for ch in plain(str(text)) if ch.isalnum())
 
 
 _LOOKUP = {**{_key(d): d for d in DECISION_IDS},
@@ -97,7 +94,7 @@ def normalize_decision(raw: str) -> str | None:
 
 
 def _stems(text: str) -> set[str]:
-    words = "".join(ch if ch.isalnum() else " " for ch in fold(str(text)).translate(_ASCII)).split()
+    words = "".join(ch if ch.isalnum() else " " for ch in plain(str(text))).split()
     # four letters: Turkish roots are short and the suffixes pile up after
     # them ("aile" / "ailem" / "ailemin")
     return {w[:4] for w in words if len(w) >= 3}
