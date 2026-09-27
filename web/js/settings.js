@@ -233,17 +233,19 @@ export class SettingsDialog {
   }
 
   _renderBudget() {
-    const { calls = 0, tokens = 0, limits = {} } = this.usage || {};
+    const { calls = 0, tokens = 0, usd = 0, limits = {} } = this.usage || {};
     this.el.querySelector(".budget").innerHTML = `
       <div class="budget-now">
+        <div><b>$${Number(usd).toFixed(4)}</b><span>bugünkü harcama</span></div>
         <div><b>${calls}</b><span>bugünkü uzak istek</span></div>
         <div><b>${tokens.toLocaleString("tr-TR")}</b><span>bugünkü token</span></div>
       </div>
       <div class="budget-limits">
-        <label>Günlük istek sınırı<input class="field" data-limit="daily_calls" type="number" min="0" value="${numberOr(limits.daily_calls, 300)}"></label>
-        <label>Günlük token sınırı<input class="field" data-limit="daily_tokens" type="number" min="0" value="${numberOr(limits.daily_tokens, 400000)}"></label>
+        <label>Günlük harcama sınırı ($)<input class="field" data-limit="daily_usd" type="number" min="0" step="0.05" value="${numberOr(limits.daily_usd, 0.5)}"></label>
+        <label>Günlük istek sınırı<input class="field" data-limit="daily_calls" type="number" min="0" value="${numberOr(limits.daily_calls, 2000)}"></label>
+        <label>Günlük token sınırı<input class="field" data-limit="daily_tokens" type="number" min="0" value="${numberOr(limits.daily_tokens, 3000000)}"></label>
       </div>
-      <p class="hint">Sınır dolunca uzak model yerine yerel modele düşer. Yerel çağrılar sayılmaz, sınırlanmaz.</p>`;
+      <p class="hint">Harcama, OpenRouter'ın her istek için bildirdiği gerçek maliyettir. Sınır dolunca uzak model yerine (varsa) yerel modele düşer; yerel çağrılar sayılmaz, sınırlanmaz.</p>`;
   }
 
   _renderTools() {

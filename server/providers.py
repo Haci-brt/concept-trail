@@ -98,6 +98,10 @@ class Provider:
         }
         if self.model:
             payload["model"] = self.model
+        if "openrouter.ai" in self.base_url and "usage" not in payload:
+            # OpenRouter reports each call's real cost only when asked; the
+            # budget's dollar cap depends on it, whoever added the provider
+            payload["usage"] = {"include": True}
         if tools:
             # only ever sent to a provider that declares it understands them:
             # an endpoint that does not will reject the whole request
