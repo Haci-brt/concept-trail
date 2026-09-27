@@ -331,15 +331,18 @@ export class ResearchPanel {
     if (!deep || !Array.isArray(deep.projects) || !deep.projects.length) return "";
     const projects = deep.projects;
     const short = (repo) => String(repo).split("/").pop();
-    const mark = { var: ["✓", "var"], kismen: ["◐", "kısmen"], yok: ["—", "yok"] };
+    // new results only say "var" (with the passage) or nothing; older ones
+    // may still carry kısmen / yok from when the model filled the table
+    const mark = { var: ["✓", "okunan kanıtta geçiyor"], kismen: ["◐", "kısmen"], yok: ["—", "yok"] };
     const components = (deep.components || []).filter((c) => deep.matrix?.[c]);
     const table = components.length ? `<div class="r-matrix-wrap"><table class="r-matrix">
         <thead><tr><th>Fikrin parçası</th>${projects.map((p) => `<th title="${esc(p.repo)}">${esc(short(p.repo))}</th>`).join("")}</tr></thead>
         <tbody>${components.map((c) => `<tr><th title="${esc(c)}">${esc(deep.labels?.[c] || c)}</th>${projects.map((p) => {
           const cell = mark[deep.matrix[c]?.[p.repo]];
-          return cell ? `<td class="m-${deep.matrix[c][p.repo]}" title="${esc(cell[1])}">${cell[0]}</td>` : '<td class="m-unknown" title="kanıt yok">?</td>';
+          const quote = deep.quotes?.[c]?.[p.repo];
+          return cell ? `<td class="m-${deep.matrix[c][p.repo]}" title="${esc(quote ? `${cell[1]}: ${quote}` : cell[1])}">${cell[0]}</td>` : '<td class="m-unknown" title="okunan kanıtta geçmiyor; bu, projede olmadığını göstermez">?</td>';
         }).join("")}</tr>`).join("")}</tbody></table>
-        <p class="r-matrix-key">✓ var · ◐ kısmen · — yok · ? kanıt yok</p></div>` : "";
+        <p class="r-matrix-key">${deep.quotes ? "✓ projenin README'sinde ya da sitesinde geçiyor (üstüne gel: alıntı) · ? okunan kısımda geçmiyor, yokluk kanıtı değil" : "✓ var · ◐ kısmen · — yok · ? kanıt yok"}</p></div>` : "";
     const list = (title, items) => items?.length ? `<div class="r-deep-list"><b>${title}</b><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>` : "";
     const cards = projects.map((p) => {
       const href = safeUrl(p.url || `https://github.com/${p.repo}`);
@@ -349,7 +352,7 @@ export class ResearchPanel {
       return `<article class="r-result r-deep-card"><div class="r-deep-top"><strong>${esc(p.repo)}</strong>${href ? `<a class="r-source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">Kaynak ↗</a>` : ""}</div>
         ${facts.length ? `<div class="r-meta">${facts.map((f) => `<span>${f}</span>`).join("")}</div>` : ""}
         ${p.summary ? `<p>${esc(p.summary)}</p>` : p.description ? `<p>${esc(p.description)}</p>` : ""}
-        ${list("Fikrinle ortak", p.shared)}${list("Fikrinde olup onda olmayan", p.missing)}
+        ${p.unseen ? `${list("Kanıtında geçen parçalar", p.shared)}${list("Okunan kısımda geçmeyen (yokluk kanıtı değil)", p.unseen)}` : `${list("Fikrinle ortak", p.shared)}${list("Fikrinde olup onda olmayan", p.missing)}`}
         ${list("Zayıf noktası", p.weak)}${p.lesson ? `<p class="r-why"><b>Alınacak ders:</b> ${esc(p.lesson)}</p>` : ""}
         ${p.issues?.length ? `<details class="r-page"><summary>Son issue başlıkları <span>${p.issues.length}</span></summary><ul class="r-issues">${p.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></details>` : ""}
       </article>`;
@@ -359,8 +362,8 @@ export class ResearchPanel {
     return `<section class="r-deep"><div class="r-evidence-head"><div><span class="r-eyebrow">RAKİP ANALİZİ</span>
         <h3>En yakın ${projects.length} proje, fikrinle karşılaştırıldı</h3></div></div>
       ${table}
-      ${insights("Fikrini ayıracak noktalar", deep.differentiators)}
-      ${insights("Geliştirme argümanları", deep.arguments)}
+      ${insights(deep.quotes ? "Fikrini ayırabilecek noktalar" : "Fikrini ayıracak noktalar", deep.differentiators)}
+      ${insights(deep.quotes ? "Rakiplerden çıkan öneriler (alıntıyla)" : "Geliştirme argümanları", deep.arguments)}
       ${this._group(`Projeler yakından (${projects.length})`, cards, false)}</section>`;
   }
 

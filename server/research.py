@@ -878,6 +878,118 @@ def readme_homepage(text: str, repo: str) -> str | None:
     return sites[0][1] if sites else None
 
 
+def _mentions(text: str, phrase: str) -> int:
+    """Where `phrase` starts a word in `text`, in any case, or -1.
+    "search" finds "Search" and "searching", not "research"."""
+    phrase = " ".join(phrase.split())
+    if len(phrase) < 3:
+        return -1
+    found = re.search(r"(?<![a-z0-9])" + re.escape(phrase).replace(r"\ ", r"[\s-]+"), text, re.IGNORECASE)
+    return found.start() if found else -1
+
+
+NEAR_STOP = {"with", "from", "into", "that", "this", "your", "their", "them", "have", "when", "each"}
+
+
+def _near(text: str, component: str, window: int = 60) -> int:
+    """Where every word of a multi-word component appears within `window`
+    characters of the first, as a word start ("report warnings" finds
+    "reports lint warnings"), or -1. The phrases the model offers follow the
+    idea's own wording; READMEs say it their way (measured: 22 misses)."""
+    stems = [w[:4] for w in re.findall(r"[a-z0-9]+", component.lower()) if len(w) >= 4 and w not in NEAR_STOP]
+    if len(stems) < 2:
+        return -1
+    for first in re.finditer(r"(?<![a-z0-9])" + re.escape(stems[0]), text, re.IGNORECASE):
+        around = text[max(0, first.start() - window):first.start() + window]
+        if all(re.search(r"(?<![a-z0-9])" + re.escape(stem), around, re.IGNORECASE) for stem in stems[1:]):
+            return first.start()
+    return -1
+
+
+# words too common in READMEs to say anything about a feature
+LOOSE_STOP = NEAR_STOP | {"code", "user", "users", "data", "file", "files", "note", "notes", "tool", "tools",
+                          "support", "based", "open", "source", "using", "make", "more", "like", "allow",
+                          "feature", "features", "system", "project", "application", "easy", "simple"}
+
+
+def _hinted(text: str, phrases: list[str]) -> bool:
+    """Any word of the component or its phrases at a word start, however
+    far from the others: "reporter" for "report warnings", "DB graphs" for
+    "graph visualization". Not enough to say a project has it; enough that
+    saying the README is silent about it would mislead."""
+    words = {w for phrase in phrases for w in re.findall(r"[a-z0-9]+", phrase.lower())
+             if len(w) >= 4 and w not in LOOSE_STOP}
+    stems = {w[:4] if len(w) <= 5 else w[:5] for w in words}
+    return any(re.search(r"(?<![a-z0-9])" + re.escape(stem), text, re.IGNORECASE) for stem in stems)
+
+
+def _snippet(text: str, at: int, width: int = 90) -> str:
+    start = max(0, at - width // 3)
+    return ("…" if start else "") + " ".join(text[start:start + width].split()) + "…"
+
+
+def _quoted(quote: str, text: str) -> bool:
+    """Is a model's "quote" really in the evidence? Word for word, or nearly:
+    four in five of its words, in a text the model saw."""
+    words = re.findall(r"[a-z0-9]{3,}", quote.lower())
+    if len(words) < 3:
+        return False
+    if " ".join(quote.lower().split()) in " ".join(text.lower().split()):
+        return True
+    return sum(_mentions(text, word) >= 0 for word in words) >= 0.8 * len(words)
+
+
+def ground_comparison(parsed: dict, gathered: list[dict], components: list[str]) -> dict:
+    """The comparison as the evidence supports it.
+
+    A cell is "var" only where the project's README, site or description
+    mentions the component (its name or a phrase the model offered), with
+    the passage kept to show; everywhere else it stays unknown, never "yok" —
+    a README that does not mention search is no proof Logseq has none. A
+    differentiator is a component no project's evidence mentions, said as
+    exactly that. An argument survives only if its quote is in that
+    project's evidence."""
+    evidence = {facts["repo"]: " ".join(str(facts.get(key) or "") for key in
+                                        ("evidence", "readme", "site", "description"))
+                for facts in gathered}
+    labels = dict(parsed.get("labels") or {})
+    matrix, quotes, hinted = {}, {}, {}
+    for component in components:
+        phrases = list(dict.fromkeys([component, *(parsed.get("keywords") or {}).get(component, [])]))
+        for repo, text in evidence.items():
+            if _hinted(text, phrases):
+                hinted.setdefault(component, set()).add(repo)
+            at = next((pos for pos in (_mentions(text, phrase) for phrase in phrases) if pos >= 0), -1)
+            if at < 0:
+                at = _near(text, component)
+            if at >= 0:
+                matrix.setdefault(component, {})[repo] = "var"
+                quotes.setdefault(component, {})[repo] = _snippet(text, at)
+    analysed = {item["repo"]: item for item in parsed.get("projects") or []}
+    projects = []
+    for repo in evidence:
+        seen = [c for c in components if repo in matrix.get(c, {})]
+        # "not in what was read" only where not even a word of it is: the
+        # rest is neither shown as there nor as missing
+        silent = [c for c in components if c not in seen and repo not in hinted.get(c, set())]
+        projects.append({**analysed.get(repo, {"repo": repo}), "repo": repo,
+                         "shared": [labels.get(c, c) for c in seen],
+                         "unseen": [labels.get(c, c) for c in silent]})
+    differentiators = []
+    if len(evidence) >= 2:
+        for component in components:
+            if component not in matrix and not hinted.get(component):
+                differentiators.append(
+                    f"“{labels.get(component, component)}”, incelenen {len(evidence)} projenin okunan README "
+                    "ve sitelerinde geçmiyor; fikrini ayırabilecek bir nokta olabilir (yokluk kanıtı değil, "
+                    "doğrulamak gerekir).")
+    arguments = [f"{item['idea']} ({item['repo']}: “{item['quote']}”)"
+                 for item in parsed.get("arguments") or []
+                 if item.get("repo") in evidence and _quoted(item.get("quote", ""), evidence[item["repo"]])]
+    return {"projects": projects, "matrix": matrix, "quotes": quotes, "labels": labels,
+            "differentiators": differentiators[:4], "arguments": arguments[:4]}
+
+
 def issue_titles(payload: dict, limit: int = 8) -> list[str]:
     rows = []
     if isinstance(payload, dict):
@@ -1519,6 +1631,7 @@ class ResearchRunner:
                     page = await call("web_fetch", {"url": candidate.url, "query": query})
                     readme = str((page or {}).get("text") or "") or readme
                 facts["readme"] = readme[:1500]
+                facts["evidence"] = readme          # all of it, for ground_comparison; not stored
                 if not homepage.startswith("http"):
                     homepage = readme_homepage(readme, candidate.repo) or ""
                     if homepage:
@@ -1532,11 +1645,12 @@ class ResearchRunner:
         components = _components(terms.get("components")) or _keywords(terms.get("keywords"), 4)
         self._progress(rel, "rakipler", "Benzer projeler fikirle karşılaştırılıyor")
         try:
-            comparison = await asyncio.to_thread(
+            parsed = await asyncio.to_thread(
                 llm_client.compare_projects, content, components, gathered,
                 self.provider_for("analysis", rel), self.record_usage)
         except Exception:
-            comparison = {"projects": [], "matrix": {}, "differentiators": [], "arguments": []}
+            parsed = {}                         # the matrix still comes from the evidence
+        comparison = ground_comparison(parsed, gathered, components)
         analysed = {item["repo"]: item for item in comparison["projects"]}
         projects = []
         for facts in gathered:
@@ -1552,7 +1666,7 @@ class ResearchRunner:
                      "text": text} for text in texts]
 
         return {"components": components, "projects": projects, "matrix": comparison["matrix"],
-                "labels": comparison.get("labels") or {},
+                "quotes": comparison["quotes"], "labels": comparison["labels"],
                 "differentiators": ids(comparison["differentiators"], "ayrisma"),
                 "arguments": ids(comparison["arguments"], "arguman")}
 

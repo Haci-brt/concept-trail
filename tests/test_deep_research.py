@@ -17,26 +17,100 @@ def envelope(payload):
 
 
 # ---------------------------------------------------------------- reading the model
-def test_the_comparison_keeps_only_given_projects_components_and_values():
+def test_the_comparison_keeps_only_given_projects_and_components():
     raw = ('{"projeler": [{"repo": "foambubble/foam", "ozet": "VS Code içinde not ağı", '
-           '"ortak": ["backlink"], "eksik": ["çevrimdışı mobil"], "zayif": ["büyük kasada yavaş"], '
-           '"ders": "graf görünümü eklenti olabilir"}, {"repo": "uydurma/proje", "ozet": "x"}], '
-           '"tablo": {"Graph visualization": {"foambubble/foam": "kısmen", "uydurma/proje": "var"}, '
-           '"Uydurma bileşen": {"foambubble/foam": "var"}, "backlinks": {"foambubble/foam": "belki"}}, '
-           '"ayrisma": ["Hiçbiri soru soran bir asistan içermiyor."], "argumanlar": []}')
+           '"zayif": ["büyük kasada yavaş"], "ders": "Graf görünümü eklenti olarak başlayabilir."}, '
+           '{"repo": "uydurma/proje", "ozet": "x"}], '
+           '"anahtarlar": {"Graph visualization": ["graph view", "x"], "Uydurma bileşen": ["y y y"]}, '
+           '"argumanlar": [{"repo": "foambubble/foam", "kanit": "graph visualization of your notes", '
+           '"oneri": "Graf ilk sürümde salt okunur olabilir."}, {"repo": "uydurma/proje", "kanit": "a b c", '
+           '"oneri": "Bir şey yap."}]}')
     result = llm_client.parse_comparison(raw, ["foambubble/foam"], ["graph visualization", "backlinks"])
     assert [p["repo"] for p in result["projects"]] == ["foambubble/foam"]
     assert result["projects"][0]["weak"] == ["büyük kasada yavaş"]
-    assert result["matrix"] == {"graph visualization": {"foambubble/foam": "kismen"}}
-    assert result["differentiators"] == ["Hiçbiri soru soran bir asistan içermiyor."]
+    assert result["keywords"] == {"graph visualization": ["graph view"]}
+    assert [a["repo"] for a in result["arguments"]] == ["foambubble/foam"]
+
+
+def test_a_flat_absence_claim_is_dropped():
+    """Measured: "Logseq has no graph view", "none of them offer full-text search"."""
+    raw = ('{"projeler": [{"repo": "a/b", "ozet": "Not uygulaması; tam metin arama sunmuyor.", '
+           '"ders": "Hiçbiri çevrimdışı çalışmıyor, bu fırsat."}], '
+           '"argumanlar": [{"repo": "a/b", "kanit": "local first notes", '
+           '"oneri": "Projelerin hiçbiri yerel arama desteklemiyor, sen ekle."}]}')
+    result = llm_client.parse_comparison(raw, ["a/b"], [])
+    assert result["projects"][0]["summary"] == "" and result["projects"][0]["lesson"] == ""
+    assert result["arguments"] == []
+    # said about what was read, it may stand
+    assert not llm_client.overclaims("Okunan README'lerde tam metin aramadan söz edilmiyor.")
 
 
 def test_components_get_turkish_names_for_the_reader():
-    raw = ('{"projeler": [], "tablo": {"full text search": {"a/b": "var"}}, '
+    raw = ('{"projeler": [], '
            '"adlar": {"Full text search": "tam metin arama", "uydurma": "x y", "backlinks": "backlinks"}}')
     result = llm_client.parse_comparison(raw, ["a/b"], ["full text search", "backlinks"])
-    assert result["matrix"] == {"full text search": {"a/b": "var"}}
     assert result["labels"] == {"full text search": "tam metin arama"}
+
+
+# ---------------------------------------------------------------- what the evidence supports
+LOGSEQ = {"repo": "logseq/logseq", "evidence": "A privacy-first platform. Graph view of your pages, "
+                                               "bidirectional links and block references."}
+REVIEWDOG = {"repo": "reviewdog/reviewdog", "evidence": "reviewdog posts review comments to code hosting "
+                                                        "services from the output of any lint tool."}
+
+
+def test_the_matrix_comes_from_the_evidence_and_never_says_no():
+    parsed = {"keywords": {"graph visualization": ["graph view"], "full-text search": ["full-text", "search"]},
+              "labels": {"full-text search": "tam metin arama"}}
+    result = R.ground_comparison(parsed, [LOGSEQ, REVIEWDOG], ["graph visualization", "full-text search"])
+    assert result["matrix"] == {"graph visualization": {"logseq/logseq": "var"}}
+    assert "Graph view of your pages" in result["quotes"]["graph visualization"]["logseq/logseq"]
+    assert all(value == "var" for row in result["matrix"].values() for value in row.values())
+    # Logseq's README never says "search": unknown, said as unknown
+    assert result["differentiators"] == [
+        "“tam metin arama”, incelenen 2 projenin okunan README ve sitelerinde geçmiyor; fikrini "
+        "ayırabilecek bir nokta olabilir (yokluk kanıtı değil, doğrulamak gerekir)."]
+    logseq = next(p for p in result["projects"] if p["repo"] == "logseq/logseq")
+    assert logseq["shared"] == ["graph visualization"] and logseq["unseen"] == ["tam metin arama"]
+
+
+def test_reviewdog_is_not_said_to_lack_line_comments():
+    parsed = {"keywords": {"comment on lines": ["review comments", "inline comment"],
+                           "run static analysis": ["lint", "linter"]}}
+    result = R.ground_comparison(parsed, [REVIEWDOG, LOGSEQ], ["comment on lines", "run static analysis"])
+    assert result["matrix"]["comment on lines"] == {"reviewdog/reviewdog": "var"}
+    assert result["matrix"]["run static analysis"] == {"reviewdog/reviewdog": "var"}
+    assert result["differentiators"] == []
+
+
+def test_a_component_said_another_way_is_still_found():
+    """The idea says "report warnings"; reviewdog's README says "reports lint warnings"."""
+    text = "It reports lint warnings as review comments on the changed lines."
+    assert R._near(text, "report warnings") >= 0 and R._near(text, "comment on lines") >= 0
+    assert R._near("reports are generated. " + "x" * 80 + " warnings", "report warnings") == -1
+    result = R.ground_comparison({}, [{"repo": "r/d", "evidence": text}], ["report warnings"])
+    assert result["matrix"] == {"report warnings": {"r/d": "var"}}
+
+
+def test_silence_is_claimed_only_where_nothing_hints_at_it():
+    """reviewdog says "reporter", not "report warnings": no "none of them mentions it"."""
+    reviewdog = {"repo": "r/d", "evidence": "Reporter: GitHub PullRequest review comment (-reporter=github-pr-review)"}
+    other = {"repo": "o/x", "evidence": "An AI bot."}
+    result = R.ground_comparison({}, [reviewdog, other], ["report warnings", "offline sync"])
+    assert "report warnings" not in result["matrix"]
+    assert [d.split("”")[0] for d in result["differentiators"]] == ["“offline sync"]
+    assert next(p for p in result["projects"] if p["repo"] == "r/d")["unseen"] == ["offline sync"]
+
+
+def test_an_argument_needs_its_quote_in_that_projects_evidence():
+    parsed = {"arguments": [
+        {"repo": "reviewdog/reviewdog", "quote": "from the output of any lint tool",
+         "idea": "Bot kendi analizini yazmak yerine mevcut linter çıktısını okuyabilir."},
+        {"repo": "reviewdog/reviewdog", "quote": "supports forty languages out of the box",
+         "idea": "Kırk dili desteklemeli."}]}
+    result = R.ground_comparison(parsed, [REVIEWDOG], [])
+    assert result["arguments"] == ["Bot kendi analizini yazmak yerine mevcut linter çıktısını okuyabilir. "
+                                   "(reviewdog/reviewdog: “from the output of any lint tool”)"]
 
 
 def test_no_evidence_is_not_a_weakness():
@@ -137,10 +211,11 @@ async def test_the_closest_projects_are_looked_at_and_compared(runner, monkeypat
 
     def compare(note, components, projects, provider, on_usage):
         seen["projects"] = projects
-        return {"projects": [{"repo": "org/notes", "summary": "Not ağı", "shared": [], "missing": [],
-                              "weak": ["çevrimdışı eşitleme"], "lesson": ""}],
-                "matrix": {"backlinks": {"org/notes": "var"}},
-                "differentiators": ["Soru soran asistan yok."], "arguments": ["Önce çevrimdışı."]}
+        return {"projects": [{"repo": "org/notes", "summary": "Not ağı", "weak": ["çevrimdışı eşitleme"],
+                              "lesson": ""}],
+                "keywords": {"backlinks": ["backlink"]}, "labels": {"backlinks": "geri bağlantılar"},
+                "arguments": [{"repo": "org/notes", "quote": "Page text about graphs",
+                               "idea": "Graf görünümü sayfa metninden üretilebilir."}]}
 
     monkeypatch.setattr(llm_client, "compare_projects", compare)
     rel = runner.vault.create_note("", "fikir", "Markdown not ağı")
@@ -151,8 +226,9 @@ async def test_the_closest_projects_are_looked_at_and_compared(runner, monkeypat
     gathered = seen["projects"][0]
     assert gathered["issues"] == ["Sync loses notes offline"] and gathered["site"].startswith("Page text")
     assert deep["projects"][0]["stars"] == 900 and deep["projects"][0]["weak"] == ["çevrimdışı eşitleme"]
-    assert deep["differentiators"][0]["text"] == "Soru soran asistan yok."
-    assert deep["differentiators"][0]["id"].startswith("ayr-")
+    assert deep["matrix"] == {"backlinks": {"org/notes": "var"}} and "evidence" not in deep["projects"][0]
+    assert deep["arguments"][0]["text"].startswith("Graf görünümü sayfa metninden üretilebilir.")
+    assert deep["arguments"][0]["id"].startswith("arg-")
 
 
 @pytest.mark.anyio
