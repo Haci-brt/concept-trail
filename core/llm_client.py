@@ -127,8 +127,8 @@ LADDER_SYSTEM_PROMPT = (
     "da sorma. Ayrıntıyı (hangi alanlar, hangi sıklık, hangi kütüphane) sonraki seviyeler sorar.\n"
     "- Her soru tek bir kararı sorsun, en fazla 15 kelime olsun, tek cümleyle cevaplanabilsin. "
     "Uygunsa tipik seçenekleri say.\n"
-    "- Soruyu notta yazana bağla; notta bir ipucu varsa onu an: 'Telefondan kayıt dedin; "
-    "mobil uygulama mı, telefondan açılan bir web sayfası mı?'\n"
+    "- Soruyu notta yazana bağla; notta bir ipucu varsa onu an: 'Sunucuda çalışacak dedin; "
+    "kendi sunucun mu, bir bulut servisi mi?' Not kararı zaten söylüyorsa bu örneği sorma.\n"
     "- Soyut ya da 'ne hissederdin' türünden soru sorma; her soru bir tasarım kararına götürsün.\n"
     "- Açıklama, giriş cümlesi, selamlama veya <think> bloğu YAZMA.\n"
     "- [KULLANICININ SON YÖNÜ] varsa, eski notla çeliştiğinde son yönü esas al; "
@@ -637,7 +637,8 @@ QUESTION_PARTICLE = re.compile(r"(?:^|\s)m[ıiuü](?:y[ıiuü]m|s[ıiuü]n|d[ıi
 # suggestion worth an approval card
 VAGUE_SUGGESTION = re.compile(r"faydali olabilir|dusunmelisin|dusunmek|onemli olabilir|onemlidir|"
                               r"artirabilir|gelistirebilir|iyilestirebilir|daha fazla|dikkat etmelisin|"
-                              r"goz onunde bulundur|degerlendirmelisin")
+                              r"goz onunde bulundur|degerlendirmelisin|kullanici dostu|kolay kullanim|"
+                              r"sezgisel|verimli hale|deneyimini")
 VAGUE_TOPIC = re.compile(r"(veri )?guvenli[gk]i?|kullanici deneyimi|performans|olceklenebilirlik|"
                          r"en iyi uygulamalar|test|dokumantasyon|mimari")
 
