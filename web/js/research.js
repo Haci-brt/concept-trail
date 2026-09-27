@@ -321,6 +321,19 @@ export class ResearchPanel {
     if (this.items.length) out += `<div class="r-selection"><span>Notuna almak istediklerini seç (en fazla 8). Seçim doğrudan nota yazılmaz.</span><button class="btn btn-sm btn-accent" data-act="propose" disabled>${icon("pencil", 13)}Seçilenleri nota öner</button></div>`;
     if (this.proposal) out += this._proposal();
     if (sources.length) out += `<div class="r-evidence-head"><div><span class="r-eyebrow">KAYNAK OKUMASI</span><h3>Kaynakların içinde ne var?</h3></div><div class="r-filter" role="group" aria-label="Kaynak filtresi"><button data-act="filter" data-filter="read" class="${this.sourceFilter === "read" ? "on" : ""}">Okunan ${read}</button><button data-act="filter" data-filter="all" class="${this.sourceFilter === "all" ? "on" : ""}">Tümü ${sources.length}</button><button data-act="filter" data-filter="unread" class="${this.sourceFilter === "unread" ? "on" : ""}">Okunmayan ${sources.length - read}</button></div></div><div class="r-source-grid">${sourceCards.length ? sourceCards.join("") : '<p class="hint">Bu filtrede kaynak yok.</p>'}</div>`;
+    // the rules the model gave for this idea: shown so a wrong one is seen
+    // (and corrected through the research focus) rather than silently applied
+    const profile = s.terms?.profile;
+    if (profile && (profile.anchors?.length || profile.topics?.length)) {
+      const row = (label, value) => value ? `<div class="r-query"><b>${label}</b><span>${esc(value)}</span></div>` : "";
+      out += this._group("Bu fikir için arama kuralları (modelden)", [
+        row("Alan", [profile.domain, profile.product].filter(Boolean).join(" · ")),
+        row("Çekirdek kavram", (profile.anchors || []).join(", ")),
+        row("GitHub etiketleri", (profile.topics || []).join(", ")),
+        row("Geri alınan komşu alanlar", (profile.confusions || []).map((c) => `${c.area}: ${(c.signals || []).join(", ")}`).join(" · ")),
+        row("Parçaların diğer adları", Object.entries(profile.synonyms || {}).map(([k, v]) => `${k}: ${v.join(", ")}`).join(" · ")),
+      ].filter(Boolean), false);
+    }
     if (Array.isArray(s.queries) && s.queries.length) out += this._group(`Arama yolları (${s.queries.length})`, s.queries.map((q) => `<div class="r-query${q.empty ? " empty" : ""}"><b>${esc(q.purpose || q.style || "Arama")}${!q.ok ? " · yanıt alınamadı" : q.empty ? " · boş döndü" : typeof q.count === "number" ? ` ✓ ${q.count} sonuç` : " ✓"}</b><span>${esc(q.query || "")}</span></div>`), false);
     return out + `<p class="r-caveat">Bulunamaması fikrin özgün olduğu anlamına gelmez. Notuna alma işlemi ayrıca onay ister.</p>`;
   }

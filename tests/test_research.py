@@ -22,6 +22,30 @@ from server.research import (Candidate, MAX_GITHUB_QUERIES, MAX_SUPPORT_QUERIES,
                              rank, repos_in_web_results, web_query, prior_web_queries)
 
 
+# What the model's research profile says for the two ideas these tests were
+# first written for. The rules used to be written by hand for exactly these
+# two; now they come from the model per idea, and the tests pin that the
+# code applies them (and applies nothing field-specific without them).
+NOTES_PROFILE = {
+    "domain": "yerel Markdown not defteri", "product": "markdown notes",
+    "anchors": ["markdown", "note"], "topics": ["markdown-notebook", "knowledge-graph"],
+    "confusions": [{"area": "SEO", "signals": ["seo", "search engine optimization", "organic traffic",
+                                               "link building", "rank tracking"]}],
+    "synonyms": {"backlinking": ["backlink", "wiki-link", "linked reference"],
+                 "graph visualization": ["graph view", "network graph", "flow chart", "node-link"],
+                 "full-text search": ["full-text", "full text", "fts"]},
+    "ambiguous": ["backlinking", "full-text search", "memory retrieval"],
+    "library_queries": {"graph visualization": "javascript network graph nodes edges interactive library"},
+    "rival_kind": "app"}
+WEB_PROFILE = {
+    "domain": "web araştırma asistanı", "product": "web pages",
+    "anchors": ["web", "page", "crawl", "robots"], "topics": ["web-research", "page-extraction"],
+    "confusions": [{"area": "güvenlik saldırısı", "signals": ["hacker"]},
+                   {"area": "tablo", "signals": ["excel", "spreadsheet"]}],
+    "synonyms": {"text extraction": ["extract", "scrap", "crawl"], "robots.txt respect": ["robots.txt"]},
+    "ambiguous": ["text extraction", "citation generation"], "library_queries": {}, "rival_kind": "app"}
+
+
 # ---------------------------------------------------------------- the queries
 def test_every_proven_style_is_represented():
     styles = {q["style"] for q in build_queries(["html", "markdown", "converter"],
@@ -81,10 +105,15 @@ def test_note_components_drive_distinct_tool_and_architecture_searches():
                                     ["syntax highlighting", "graph visualization"])
     assert "syntax highlighting" in [q["query"] for q in queries]
     assert "graph visualization" in [q["query"] for q in queries]
+    # the model's library search for a part whose bare name finds bar charts
     assert support_web_queries(["note", "taking"], ["note-taking"],
-                               ["syntax highlighting", "graph visualization"]) == [
+                               ["graph visualization", "syntax highlighting"], profile=NOTES_PROFILE) == [
         "javascript network graph nodes edges interactive library",
-        "syntax highlighting parser library"]
+        "syntax highlighting implementation architecture examples"]
+    # without a profile no part gets a hand-made query
+    assert support_web_queries(["note", "taking"], ["note-taking"],
+                               ["graph visualization", "syntax highlighting"])[0] == \
+        "graph visualization open source libraries tools"
 
 
 def test_adjacent_query_explores_approaches_instead_of_more_product_names():
@@ -94,8 +123,10 @@ def test_adjacent_query_explores_approaches_instead_of_more_product_names():
 
 def test_all_four_named_components_fit_in_support_search_budget():
     parts = ["question linking", "memory retrieval", "graph visualization", "research sourcing"]
-    queries = build_support_queries(["local markdown", "idea tree"], ["note-taking"], parts)
+    queries = build_support_queries(["local markdown", "idea tree"], ["note-taking"], parts,
+                                    profile=NOTES_PROFILE)
     assert all(any(query["query"].startswith(part) for query in queries) for part in parts)
+    # "memory retrieval" alone is databases; the profile says so, and names the product
     assert "memory retrieval markdown notes" in {q["query"] for q in queries}
     # each named feature is also asked as a GitHub topic, where the libraries are
     assert {"topic:question-linking", "topic:graph-visualization"} <= {q["query"] for q in queries}
@@ -117,7 +148,7 @@ def test_helper_shortlist_represents_each_searched_component():
 def test_helper_shortlist_excludes_seo_profile_excel_and_hacker_noise():
     note_terms = {"summary": "A local Markdown notebook with backlinks and graph views",
                   "keywords": ["markdown", "backlinks", "graph visualization"],
-                  "components": ["backlinking", "graph visualization"]}
+                  "components": ["backlinking", "graph visualization"], "profile": NOTES_PROFILE}
     note_rows = {
         "didi/LogicFlow": Candidate("didi/LogicFlow", description="Flow chart editing framework",
                                      found_by=["component-2"]),
@@ -132,25 +163,31 @@ def test_helper_shortlist_excludes_seo_profile_excel_and_hacker_noise():
     assert [row.repo for row in selected] == ["didi/LogicFlow"]
     assert candidate_fit_score(note_rows["noise/seo"], note_terms) < 0
 
-    web_terms = {"summary": "Web research assistant with page extraction and robots rules",
+    web_terms = {"summary": "Web research assistant that extracts and cites pages",
                  "keywords": ["web research", "page extraction"],
-                 "components": ["text extraction", "robots.txt respect"]}
+                 "components": ["text extraction"], "profile": WEB_PROFILE}
     web_rows = {
-        "adbar/trafilatura": Candidate("adbar/trafilatura",
-            description="Crawling, scraping and text extraction on the Web",
-            found_by=["component-1"]),
         "noise/scraper-to-excel": Candidate("noise/scraper-to-excel",
-            description="Web scraper that exports Excel files", found_by=["component-1"]),
-        "noise/Xsearch4Hacker": Candidate("noise/Xsearch4Hacker",
-            description="Search webpages by keyword", found_by=["component-1"]),
+            description="Scraper that exports Excel files", found_by=["component-1"]),
+        "good/extractor": Candidate("good/extractor",
+            description="Extract readable text from web pages", found_by=["component-1"]),
     }
-    assert [row.repo for row in diverse_helpers(web_rows, web_terms["components"],
-        web_terms["keywords"], terms=web_terms)] == ["adbar/trafilatura"]
+    assert [r.repo for r in diverse_helpers(web_rows, web_terms["components"], web_terms["keywords"],
+                                            terms=web_terms)] == ["good/extractor"]
+
+
+def test_without_a_profile_no_field_is_thrown_out():
+    """The SEO / excel / hacker lists knew two ideas. With no profile from the
+    model, nothing is excluded for belonging to another field."""
+    from server.research import off_topic
+    assert not off_topic("SEO backlinks and rank tracking", {"summary": "markdown notes"})
+    assert not off_topic("Web scraper that exports Excel files", {"summary": "web research"})
 
 
 def test_whole_note_apps_move_to_comparable_projects_but_plugins_stay_tools():
     terms = {"summary": "Local Markdown notes with backlinks and graph view",
-             "components": ["backlinking", "graph visualization", "full-text search"]}
+             "components": ["backlinking", "graph visualization", "full-text search"],
+             "profile": NOTES_PROFILE}
     prior = {"other/notebook": Candidate("other/notebook", description="Markdown notes app")}
     helpers = {
         "paragon-ux/trellis": Candidate("paragon-ux/trellis",
@@ -166,6 +203,10 @@ def test_whole_note_apps_move_to_comparable_projects_but_plugins_stay_tools():
     assert "paragon-ux/trellis" in prior
     assert "paragon-ux/trellis" not in helpers
     assert {"iwe-org/vscode-iwe", "graph/lib"} <= set(helpers)
+    # a profile that says rivals are libraries moves nothing
+    helpers2 = {"paragon-ux/trellis": helpers.get("paragon-ux/trellis") or prior["paragon-ux/trellis"]}
+    route_helper_products({}, helpers2, {**terms, "profile": {**NOTES_PROFILE, "rival_kind": "library"}})
+    assert set(helpers2) == {"paragon-ux/trellis"}
 
 
 def test_model_terms_cannot_inject_search_qualifiers():
@@ -183,28 +224,30 @@ def test_multiword_keywords_search_as_words_not_literal_hyphenated_terms():
 def test_markdown_backlinks_do_not_search_seo_backlinking():
     terms = {"keywords": ["local-first", "markdown", "knowledge graph", "backlinks",
                           "full-text search", "graph visualization"],
-             "topics": ["local-first", "markdown-notebook", "knowledge-graph", "full-text-search"],
+             "topics": ["local-first", "full-text-search"],
              "components": ["backlinking", "graph visualization", "full-text search", "markdown editing"],
              "summary": "A local Markdown notebook with backlinks, graph views, and full-text search."}
-    prior = build_queries(terms["keywords"], terms["topics"], terms["summary"])
+    prior = build_queries(terms["keywords"], terms["topics"], terms["summary"], profile=NOTES_PROFILE)
     support = build_support_queries(terms["keywords"], terms["topics"],
-                                    terms["components"], terms["summary"])
+                                    terms["components"], terms["summary"], profile=NOTES_PROFILE)
+    # the topics the model says such projects carry come first
     assert prior[0]["query"] == "topic:markdown-notebook"
     assert prior[1]["query"] == "topic:knowledge-graph"
     assert {q["query"] for q in support} >= {
         "backlinking markdown notes", "full-text search markdown notes"}
-    assert support_web_queries(terms["keywords"], terms["topics"], terms["components"],
-                               terms["summary"]) == [
-        "javascript network graph nodes edges interactive library",
-        "full-text search local library engine"]
+    support_web = support_web_queries(terms["keywords"], terms["topics"], terms["components"],
+                                      terms["summary"], profile=NOTES_PROFILE)
+    assert support_web == ["backlinking markdown notes open source libraries tools",
+                           "full-text search markdown notes implementation architecture examples",
+                           "javascript network graph nodes edges interactive library"]
     assert adjacent_web_query(terms["keywords"], terms["components"], terms["topics"],
-                              terms["summary"]).startswith("backlinking markdown notes")
+                              terms["summary"], profile=NOTES_PROFILE).startswith("backlinking markdown notes")
     # the six measured styles still run first; the widening only comes after
     assert [q["style"] for q in prior[:6]] == ["topic", "topic", "topic-pair", "kisa",
                                                "populer", "populer"]
     assert len(prior) == MAX_GITHUB_QUERIES == 10
     web = prior_web_queries(terms["summary"], terms["keywords"])
-    assert len(prior) + len(support) + len(web) + 2 + 1 == 24  # + two support web, adjacent web
+    assert len(prior) + len(support) + len(web) + len(support_web) + 1 <= 25   # + adjacent web
 
 
 def test_the_web_is_asked_who_built_it_three_ways():
@@ -225,12 +268,12 @@ def test_readme_matches_count_as_prior_art_not_as_a_component():
 def test_web_research_searches_pages_instead_of_generic_extraction():
     terms = {"keywords": ["evidence-based", "web research", "page extraction", "crawler",
                           "citation", "safe fetching"],
-             "topics": ["web research", "local workspace", "page extraction", "robot compliance"],
+             "topics": ["local workspace", "robot compliance"],
              "components": ["text extraction", "citation generation", "robots.txt respect", "SSRF blocking"],
              "summary": "A local research assistant that extracts and cites web page content."}
-    prior = build_queries(terms["keywords"], terms["topics"], terms["summary"])
+    prior = build_queries(terms["keywords"], terms["topics"], terms["summary"], profile=WEB_PROFILE)
     support = build_support_queries(terms["keywords"], terms["topics"],
-                                    terms["components"], terms["summary"])
+                                    terms["components"], terms["summary"], profile=WEB_PROFILE)
     assert [q["query"] for q in prior[:2]] == ["topic:web-research", "topic:page-extraction"]
     assert support[0]["query"] == "text extraction web pages"
     assert support[1]["query"] == "citation generation web pages"
@@ -356,7 +399,7 @@ def test_serp_title_breadcrumb_is_removed_without_changing_source_url():
 def test_note_graph_prefetch_rejects_seo_and_generic_search_architecture():
     terms = {"summary": "Markdown notebook with backlinks and full-text search",
              "keywords": ["markdown", "backlinks", "full-text search"],
-             "components": ["backlinking", "full-text search"]}
+             "components": ["backlinking", "full-text search"], "profile": NOTES_PROFILE}
     sources = [
         {"url": "https://abun.com/backlinking-strategies", "title": "Backlink Strategies for SEO",
          "kind": "adjacent", "query": "backlinks", "snippet": "organic traffic"},
@@ -385,7 +428,7 @@ def test_primary_graph_library_page_can_be_read_without_markdown_words():
 def test_page_research_prefetch_favors_implementation_docs_over_definition_pages():
     terms = {"summary": "Web research assistant that extracts and cites page content",
              "keywords": ["web research", "page extraction", "citation"],
-             "components": ["text extraction", "robots.txt respect"]}
+             "components": ["text extraction", "robots.txt respect"], "profile": WEB_PROFILE}
     rows = [
         {"url": "https://parseur.com/blog/text-extraction", "title": "What is text extraction?",
          "kind": "adjacent", "query": "extraction", "snippet": "Text extraction use cases"},
@@ -824,7 +867,7 @@ async def test_verified_branded_graph_library_resolves_one_github_repo(runner):
     helpers, queries = {}, []
     terms = {"summary": "Markdown notebook with a graph view",
              "keywords": ["markdown", "graph visualization"],
-             "components": ["graph visualization"]}
+             "components": ["graph visualization"], "profile": NOTES_PROFILE}
     await runner._fetch_sources(rel, "# Markdown notes graph view", sources, terms,
                                 helpers=helpers, query_log=queries)
     assert sources[0]["verified"] and sources[0]["relevance"] >= 2

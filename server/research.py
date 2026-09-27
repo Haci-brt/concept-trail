@@ -51,6 +51,11 @@ DEEP_PROJECTS = 8
 DEEP_CALL_TIMEOUT = 30      # seconds per tool call there; a slow one is skipped, not waited on
 KNOWN_STARS = 500           # "best known": a project people actually use
 COMPETITOR_POOL = RANK_LIMIT  # every ranked candidate is put to the model, not a top slice
+# A topic search that finds a handful of projects spent a place the idea's
+# other topics could use: the model's niche "family-recipes" (3 results) took
+# the place of grocery-list (50), and Tandoor and KitchenOwl were not found.
+THIN_TOPIC = 10
+MAX_TOPIC_SWAPS = 2
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -82,31 +87,27 @@ def _keywords(items, limit: int) -> list[str]:
     return seen
 
 
-def _topic_priority(topic):
-    token = topic.replace("-", " ")
-    score = 0
-    if re.search(r"\b(note|notes|notebook|wiki|pkm)\b", token):
-        score += 5
-    if "markdown" in token:
-        score += 2
-    if "knowledge graph" in token:
-        score += 1
-    if "page extraction" in token or "web research" in token:
-        score += 3
-    if token in {"local first", "local workspace", "full text search", "open source"}:
-        score -= 4
-    return score
+def _profile(terms) -> dict:
+    """The idea's own search rules (llm_client.research_profile); {} without one."""
+    return (terms or {}).get("profile") or {}
 
 
-def _idea_words(keywords, summary=""):
-    phrases = [str(item).lower().strip() for item in (keywords or [])]
-    informative = [phrase for phrase in phrases if phrase not in {
-        "evidence-based", "local-first", "open-source", "safe fetching"}]
-    words = _keywords(informative or phrases, MAX_KEYWORDS)
-    domain = [word for word in _keywords([summary], 20) if word in {
-        "note", "notes", "notebook", "markdown", "wiki", "knowledge", "graph", "backlinks"}]
+def _tags(topics, profile=None) -> list[str]:
+    """The topics to search: the ones the model says projects like this carry
+    first, then the ones it read off the idea. (The ranking of notes, wiki
+    and markdown topics above all others that stood here came from the first
+    test idea, a notes app, and did nothing for any other idea.)"""
+    return _clean([*((profile or {}).get("topics") or []), *(topics or [])], MAX_TOPICS)
+
+
+def _idea_words(keywords, summary="", profile=None):
+    """The words that say what the idea is, from its keywords. (The profile's
+    anchors are for ranking, not for queries: put first here they made the
+    popular-project query "code review pull request review stars:>5000",
+    which found nothing, and reviewdog and danger were never found — measured.)"""
+    words = _keywords([str(item).lower().strip() for item in (keywords or [])], MAX_KEYWORDS)
     selected = []
-    for word in [*domain, *words]:
+    for word in words:
         if word not in selected and word not in {"local-first", "open-source"}:
             selected.append(word)
     return selected[:MAX_KEYWORDS] or words
@@ -155,14 +156,14 @@ def _anchor_word(keywords) -> str:
     return ""
 
 
-def build_queries(keywords, topics, summary="", components=()) -> list[dict]:
+def build_queries(keywords, topics, summary="", components=(), profile=None) -> list[dict]:
     """One query per proven style, built from what the model extracted.
 
     Returns [{"style", "query"}] in the order they should run; the caller cuts
     the list at MAX_GITHUB_QUERIES.
     """
-    words = _idea_words(keywords, summary)
-    tags = sorted(_clean(topics, MAX_TOPICS), key=_topic_priority, reverse=True)
+    words = _idea_words(keywords, summary, profile)
+    tags = _tags(topics, profile)
     queries: list[dict] = []
 
     def add(style: str, query: str):
@@ -177,6 +178,10 @@ def build_queries(keywords, topics, summary="", components=()) -> list[dict]:
     # most starred Markdown tools (rich, pandoc), not note apps. It still
     # narrows a pair, so it only stands alone when nothing specific is left.
     specific = [tag for tag in tags if "-" in tag] + [tag for tag in tags if "-" not in tag]
+    # GitHub's naming, from the keywords, ahead of the model's own topics too:
+    # "meal planning" -> topic:meal-planner found Mealie, Tandoor and
+    # KitchenOwl; without it the model's recipe-management and family-recipes
+    # found neither Tandoor nor KitchenOwl in four runs (measured)
     agent = _agent_topics(keywords)
     specific = [*agent[:1], *[tag for tag in specific if tag not in agent[:1]]]
     for tag in specific[:2]:
@@ -233,37 +238,32 @@ def _components(items):
     return seen[:6]
 
 
-def _note_anchor(keywords, topics, summary=""):
-    text = " ".join([*map(str, keywords or []), *map(str, topics or []), str(summary or "")]).lower()
-    if "markdown" in text and re.search(r"\bnote(?:book|s)?\b", text):
-        return "markdown notes"
-    if "note-taking" in text or re.search(r"\bnote(?:book|s)?\b", text):
-        return "note taking"
-    if re.search(r"\bweb\b", text) and re.search(r"research|page|extract|crawl|fetch", text):
-        return "web pages"
-    return ""
+def _context_phrase(profile) -> str:
+    """What this kind of product is called ("recipe manager")."""
+    return " ".join(str((profile or {}).get("product") or "").split())[:40]
 
 
-def _needs_anchor(phrase):
-    return bool(re.search(r"backlink|\bsearch\b|retriev|\bmemory\b|"
-                          r"\btext extraction\b|\bcitation\b", phrase))
+def _ambiguous(phrase, profile) -> bool:
+    """A component whose name alone means something else — the model says
+    which ("search" alone is web search engines, not searching one's notes)."""
+    return phrase.casefold() in {str(p).casefold() for p in ((profile or {}).get("ambiguous") or [])}
 
 
-def _focused_component(phrase, anchor):
-    return f"{phrase} {anchor}" if anchor and _needs_anchor(phrase) else phrase
+def _focused_component(phrase, profile=None):
+    context = _context_phrase(profile)
+    return f"{phrase} {context}" if context and _ambiguous(phrase, profile) else phrase
 
 
-def build_support_queries(keywords, topics, components=(), summary="") -> list[dict]:
+def build_support_queries(keywords, topics, components=(), summary="", profile=None) -> list[dict]:
     """Find reusable pieces of an idea, not only whole products like it.
 
     The model supplies concepts; query wording is mechanical and short. Repo
     search handles qualifiers differently from web search, so these avoid long
     natural-language questions and are capped separately from prior-art.
     """
-    words = _idea_words(keywords, summary)
-    tags = sorted(_clean(topics, MAX_TOPICS), key=_topic_priority, reverse=True)
+    words = _idea_words(keywords, summary, profile)
+    tags = _tags(topics, profile)
     parts = _components(components)
-    anchor = _note_anchor(keywords, topics, summary)
     focus = " ".join(words[:2])
     queries = []
     if parts:
@@ -271,7 +271,7 @@ def build_support_queries(keywords, topics, components=(), summary="") -> list[d
         # suffix excluded real graph and editor libraries in a live trial.
         for index, part in enumerate(parts, start=1):
             queries.append({"style": f"component-{index}",
-                            "query": _focused_component(part, anchor)})
+                            "query": _focused_component(part, profile)})
         # The same features as GitHub topics, most starred first: that is
         # where the libraries themselves are (a notes-anchored query returned
         # note apps; "graph visualization" alone returned a charting library).
@@ -299,46 +299,38 @@ def build_support_queries(keywords, topics, components=(), summary="") -> list[d
     return queries[:MAX_SUPPORT_QUERIES]
 
 
-def support_web_queries(keywords, topics, components=(), summary="") -> list[str]:
-    words = _idea_words(keywords, summary)
-    tags = sorted(_clean(topics, MAX_TOPICS), key=_topic_priority, reverse=True)
+def support_web_queries(keywords, topics, components=(), summary="", profile=None) -> list[str]:
+    words = _idea_words(keywords, summary, profile)
+    tags = _tags(topics, profile)
     parts = _components(components)
-    anchor = _note_anchor(keywords, topics, summary)
+    libraries = {str(k).casefold(): str(v) for k, v in ((profile or {}).get("library_queries") or {}).items()}
     focus = " ".join(words[:3]) or " ".join(tags[:2]).replace("-", " ")
     if not focus and not parts:
         return []
     focus = focus or parts[0]
     if parts:
-        if _domain_kind({"keywords": keywords, "topics": topics, "summary": summary}) == "notes":
-            graph = next((part for part in parts if "graph visualization" in part), None)
-            local_search = next((part for part in parts if "full-text search" in part or
-                                 "full text search" in part), None)
-            if graph:
-                # "graph visualization" alone often means bar charts. Node
-                # and edge terms found actual graph-rendering libraries in a
-                # live source search instead of Chart.js chart examples.
-                first = "javascript network graph nodes edges interactive library"
-                second = (f"{local_search} local library engine" if local_search else
-                          f"{_focused_component(parts[0], anchor)} parser library")
-                return [first, second]
-        first = _focused_component(parts[0], anchor)
+        def libraries_for(part):
+            # the model's words for finding a library for this part: "graph
+            # visualization" alone found bar charts, a phrase naming network
+            # graphs found the graph libraries (live trial, notes idea)
+            return (libraries.get(part.casefold()) or
+                    f"{_focused_component(part, profile)} open source libraries tools")
         second = parts[2] if len(parts) > 2 else parts[1] if len(parts) > 1 else focus
-        second = _focused_component(second, anchor)
-        queries = [f"{first} open source libraries tools",
-                   f"{second} implementation architecture examples"]
+        queries = [libraries_for(parts[0]),
+                   f"{_focused_component(second, profile)} implementation architecture examples"]
         if len(parts) > 2:
             # the component the first two left out
-            queries.append(f"{_focused_component(parts[1], anchor)} open source libraries tools")
+            queries.append(libraries_for(parts[1]))
         return queries
     return [f"{focus} open source libraries tools", f"{focus} implementation architecture examples"]
 
 
-def adjacent_web_query(keywords, components=(), topics=(), summary="") -> str:
+def adjacent_web_query(keywords, components=(), topics=(), summary="", profile=None) -> str:
     """Explore alternate mechanisms and use cases, not another product list."""
     parts = _components(components)
     words = _keywords(keywords, 3)
     focus = parts[0] if parts else " ".join(words)
-    focus = _focused_component(focus, _note_anchor(keywords, topics, summary))
+    focus = _focused_component(focus, profile)
     return f"{focus} alternative approaches use cases" if focus else ""
 
 
@@ -422,19 +414,32 @@ def prior_families(candidate) -> set[str]:
     return {STYLE_FAMILY[style] for style in candidate.found_by if style in STYLE_FAMILY}
 
 
-def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=()) -> list[Candidate]:
+def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=(), terms=None) -> list[Candidate]:
     """Most corroborated by independent prior-art styles first; a product that
     only a component search surfaced comes after everything a prior-art query
     found. Within a tier relevance, then popularity. Stars alone would bury a
     small project that every single query style agreed on."""
     words = set(_keywords(keywords, 12))
-    anchor = _anchor_word(keywords)[:5]
+    anchors = [a for a in (_profile(terms).get("anchors") or [_anchor_word(keywords)]) if a]
+    # any telling word of the concept, for pushing back what is about something
+    # else: the model named "personal wiki" and "knowledge graph" for a notes
+    # idea, and SiYuan ("personal knowledge management") fell off the list
+    # while only the whole phrases counted (measured, before/after run)
+    touch = {_anchor_stem(w) for a in anchors for w in re.findall(r"[a-z0-9]+", a.lower())
+             if len(w) >= 4 and w not in PLAIN_WORDS}
+
+    def haystack(candidate):
+        return " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
 
     def about_it(candidate):
-        """Mentions the idea's own noun: medicine reminders that three queries
+        """Touches the idea's own concept: medicine reminders that three queries
         agreed on outranked every subscription tracker without this."""
-        haystack = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
-        return not anchor or bool(re.search(r"(?<![a-z0-9])" + re.escape(anchor), haystack))
+        return not touch or any(_mentions(haystack(candidate), stem) >= 0 for stem in touch)
+
+    def names_it(candidate):
+        """Names the concept itself, the whole phrase: for the best-known
+        places, which by a word alone went to lists and code-graph engines."""
+        return not anchors or any(_mentions(haystack(candidate), _anchor_stem(a)) >= 0 for a in anchors)
 
     def relevance(candidate):
         haystack = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
@@ -443,7 +448,10 @@ def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=()) -> list[Candida
     def key(c):
         prior = prior_families(c)
         support = any(style not in STYLE_FAMILY for style in c.found_by)
-        return (not about_it(c), -len(prior), -support, -relevance(c), -c.stars, c.repo.casefold())
+        # a field the model named as a confusion goes last, but stays: a
+        # wrong rule costs a place in the list, never the project
+        return (off_topic(haystack(c), terms), not about_it(c), -len(prior), -support, -relevance(c),
+                -c.stars, c.repo.casefold())
 
     ordered = sorted(candidates.values(), key=key)
     # A fifth of the list goes to the best known prior art the corroboration
@@ -456,64 +464,46 @@ def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=()) -> list[Candida
     # returns awesome-lists and interview guides whose READMEs mention
     # everything, and by stars alone they took every one of these places
     enough = min(2, len(words))
-    known = sorted((c for c in tail if prior_families(c) and relevance(c) >= enough),
+    known = sorted((c for c in tail if prior_families(c) and relevance(c) >= enough and names_it(c)
+                    and not off_topic(haystack(c), terms)),
                    key=lambda c: (-c.stars, c.repo.casefold()))
     others = [c for c in tail if c not in known]     # in their own order, after the known ones
     return head + (known + others)[:limit - len(head)]
 
 
-def _component_match(component, text):
-    part = component.lower()
-    aliases = {
-        "backlink": ("backlink", "wiki-link", "linked reference"),
-        "graph visualization": ("graph", "flowchart", "flow chart", "node layout"),
-        "full-text search": ("full-text", "full text", "fts", "search"),
-        "markdown editing": ("markdown", "editor"),
-        "text extraction": ("extract", "scrap", "crawl"),
-        "citation": ("citat", "reference", "source attribution"),
-        "robots": ("robots", "robotexclusion"),
-        "ssrf": ("ssrf", "private address"),
-    }
-    for key, choices in aliases.items():
-        if key in part:
-            return any(choice in text for choice in choices)
+def _synonyms(component, terms) -> list[str]:
+    table = {str(k).casefold(): v for k, v in (_profile(terms).get("synonyms") or {}).items()}
+    return [str(s).lower() for s in table.get(str(component).casefold(), [])]
+
+
+def _component_match(component, text, terms=None):
+    """Does the text speak of this part of the idea: in one of the phrases the
+    model gave for it, or failing those, in most of its own words. (A table
+    of aliases for backlinks, graphs, full-text search, citations, robots.txt
+    and SSRF stood here — the parts of the first two test ideas.)"""
+    if any(phrase and phrase in text for phrase in _synonyms(component, terms)):
+        return True
     tokens = [token[:5] for token in _keywords([component], 4) if len(token) >= 4]
     return bool(tokens) and sum(token in text for token in tokens) >= min(2, len(tokens))
 
 
-def _explicit_component_match(component, text):
-    """Require a concrete feature mention before classifying a nearby project."""
-    part = component.lower()
-    if "backlink" in part:
-        return bool(re.search(r"backlink|wiki.links?|linked references?", text))
-    if "graph visualization" in part:
-        return bool(re.search(r"graph (?:view|visual|display|explor)|interactive graphs?|"
-                              r"rendered knowledge graph|flow.?chart|node.link", text))
-    if "full-text search" in part:
-        return bool(re.search(r"full.?text|\bfts\d?\b", text))
-    if "markdown editing" in part:
-        return bool(re.search(r"markdown (?:edit|writer)|edit(?:ing|or)? markdown", text))
-    if "text extraction" in part:
-        return bool(re.search(r"(?:web|page|content|text).{0,22}extract|"
-                              r"extract.{0,22}(?:web|page|content|text)", text))
-    if "citation" in part:
-        return bool(re.search(r"citat|\bcite\b|source attribution", text))
-    return _component_match(component, text)
+def _explicit_component_match(component, text, terms=None):
+    """A concrete mention before a nearby project is classified: the
+    component or one of the model's phrases for it, as words."""
+    synonyms = _synonyms(component, terms)
+    if any(_mentions(text, phrase) >= 0 for phrase in [component, *synonyms]):
+        return True
+    return False if synonyms else _component_match(component, text)
 
 
 def candidate_fit_score(candidate, terms):
     text = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
     if off_topic(text, terms):
         return -100
-    domain = _domain_kind(terms)
-    anchor = _has_domain_anchor(text, domain)
+    anchor = _has_anchor(text, terms)
     components = _components(terms.get("components"))
-    hits = sum(_component_match(component, text) for component in components)
+    hits = sum(_component_match(component, text, terms) for component in components)
     if components and not hits:
-        return -100
-    if domain == "web-research" and not anchor and hits < 2:
-        return -100
-    if domain == "notes" and not anchor and hits == 0:
         return -100
     keywords = set(_keywords(terms.get("keywords"), 12))
     overlap = sum(word in text for word in keywords if len(word) >= 4)
@@ -527,7 +517,7 @@ def candidate_fit_score(candidate, terms):
 def diverse_helpers(candidates: dict, components=(), keywords=(), limit: int = 20,
                     terms=None) -> list[Candidate]:
     """Keep a representative from each searched feature in the model context."""
-    ordered = rank(candidates, limit=len(candidates), keywords=[*components, *keywords])
+    ordered = rank(candidates, limit=len(candidates), keywords=[*components, *keywords], terms=terms)
     if terms is not None:
         ordered = [candidate for candidate in ordered if candidate_fit_score(candidate, terms) >= 4]
         ordered.sort(key=lambda candidate: (-candidate_fit_score(candidate, terms),
@@ -560,26 +550,29 @@ def diverse_helpers(candidates: dict, components=(), keywords=(), limit: int = 2
 
 
 def route_helper_products(prior: dict, helpers: dict, terms) -> None:
-    """Whole note applications belong with comparable projects, not libraries.
+    """Whole applications of the idea's kind belong with comparable projects,
+    not libraries.
 
     Search overlap is useful here: a component query can surface a relevant
     application which the prior-art query missed. Keep its provenance so the
-    candidate ranking and verdict can still use that evidence.
+    candidate ranking and verdict can still use that evidence. Only when the
+    model's profile says rivals are applications, and only what names the
+    idea's own concept.
     """
-    if _domain_kind(terms) != "notes":
+    profile = _profile(terms)
+    if not profile or profile.get("rival_kind") == "library":
         return
     components = _components(terms.get("components"))
+    product_words = [w for w in re.findall(r"[a-z]+", str(profile.get("product") or "")) if len(w) >= 4]
     for repo, candidate in list(helpers.items()):
         text = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
-        if off_topic(text, terms):
-            continue
-        if not re.search(r"\b(markdown|note|notes|notebook|wiki|knowledge base|knowledge garden|vault)\b", text):
+        if off_topic(text, terms) or not _has_anchor(text, terms):
             continue
         if re.search(r"\b(library|sdk|framework|plugin|extension|parser|database|cli)\b", text):
             continue
-        feature_hits = sum(_explicit_component_match(component, text) for component in components)
-        product_label = bool(re.search(r"\b(app|application|notebook|knowledge base|"
-                                       r"knowledge garden|knowledge management system|workspace|vault)\b", text))
+        feature_hits = sum(_explicit_component_match(component, text, terms) for component in components)
+        product_label = bool(re.search(r"\b(app|application|workspace|self-hosted)\b", text) or
+                             any(_mentions(text, word) >= 0 for word in product_words))
         if feature_hits < 2 and not (product_label and feature_hits):
             continue
         duplicate = next((name for name in prior if name.casefold() == repo.casefold()), None)
@@ -656,47 +649,31 @@ def clean_search_title(raw, url):
     return (title or urlsplit(url).hostname or url)[:180]
 
 
-def _domain_kind(terms):
-    context = " ".join(str(value) for value in [terms.get("summary") or "",
-                        *(terms.get("topics") or []), *(terms.get("keywords") or [])]).lower()
-    if re.search(r"\b(note|notes|notebook|markdown|wiki|pkm)\b", context):
-        return "notes"
-    if "web" in context and re.search(r"research|page|extract|crawl|fetch", context):
-        return "web-research"
-    return "general"
+def _anchor_stem(anchor: str) -> str:
+    anchor = " ".join(str(anchor).lower().split())
+    return anchor if " " in anchor or len(anchor) <= 5 else anchor[:5]
 
 
-def _has_domain_anchor(text, domain):
-    if domain == "notes":
-        return bool(re.search(r"\b(markdown|note|notes|notebook|wiki|knowledge base|"
-                              r"knowledge graph|knowledge management|pkm)\b", text))
-    if domain == "web-research":
-        return bool(re.search(r"\b(web|webpage\w*|page|pages|website|crawl\w*|"
-                              r"scrap\w*|browser|robots(?:\.txt)?|http)\b", text))
-    return True
+def _has_anchor(text, terms):
+    """Does the text name the idea's own concept (the profile's anchors, e.g.
+    "subscription", "code review")? Without a profile nothing is required —
+    the notes and web-research words that stood here fit two ideas only."""
+    anchors = _profile(terms).get("anchors") or []
+    if not anchors:
+        return True
+    return any(_mentions(str(text), _anchor_stem(anchor)) >= 0 for anchor in anchors)
 
 
 def off_topic(text, terms):
-    """Exclude clear intent collisions seen in live synthetic research."""
-    body = str(text or "").lower()
-    summary = str(terms.get("summary") or "").lower()
-    domain = _domain_kind(terms)
-    if "independent third-party profile of a public api" in body:
-        return True
-    if domain == "notes" and not re.search(r"\b(seo|marketing)\b", summary):
-        return bool(re.search(r"\bseo\b|search.engine.optimization|organic traffic|"
-                              r"domain authority|link.building|rank tracking|"
-                              r"backlink(?:ing)? strategies|serp\b", body))
-    if domain == "web-research":
-        if "hacker" not in summary and "hacker" in body:
-            return True
-        if "excel" not in summary and re.search(r"\b(excel|spreadsheet)\b", body):
-            return True
-        if "academic" not in summary and re.search(r"academic (?:writing|paper|drafting)|"
-                                                   r"scientific paper drafting", body):
-            return True
-        if "hacker" not in summary and re.search(r"\bhacker\b", body):
-            return True
+    """Another field that shares the idea's words, as the model named them
+    for this idea ("newsletter", "mailing list" for a subscription tracker),
+    in a text that does not name the idea's own concept at all. The hand
+    list that stood here (SEO for notes; hacker, excel, academic for web
+    research) knew two ideas."""
+    body = str(text or "")
+    for area in _profile(terms).get("confusions") or []:
+        if any(_mentions(body, signal) >= 0 for signal in area.get("signals") or []):
+            return not _has_anchor(body, terms)
     return False
 
 
@@ -714,9 +691,13 @@ def relevance_score(text, terms, require_context=False) -> int:
                      for word in set(tokens))
     phrase_hits = sum(phrase in body for phrase in phrases)
     score = min(30, 2 * token_hits + 4 * phrase_hits)
-    if require_context and not _has_domain_anchor(body, _domain_kind(terms)):
+    if require_context and not _has_anchor(body, terms):
         return min(score, 1)
     return score
+
+
+def _library_queries(terms) -> set[str]:
+    return {str(q) for q in (_profile(terms).get("library_queries") or {}).values()}
 
 
 def source_prefetch_score(source, terms):
@@ -735,11 +716,11 @@ def source_prefetch_score(source, terms):
         # A reusable graph or search library may not mention Markdown notes.
         # Its own API/library description is enough to read the primary page.
         if re.search(r"\b(library|framework|package|sdk|api)\b", metadata.lower()) and any(
-                _component_match(part, metadata.lower()) for part in
+                _component_match(part, metadata.lower(), terms) for part in
                 _components(terms.get("components"))):
             score = relevance_score(metadata, terms)
-    if score < 2 and source.get("kind") == "support" and "network graph nodes edges" in str(
-            source.get("query") or "").lower() and int(source.get("search_rank") or 99) <= 2:
+    if score < 2 and source.get("kind") == "support" and str(
+            source.get("query") or "") in _library_queries(terms) and int(source.get("search_rank") or 99) <= 2:
         # A project homepage can have only a brand name in the SERP. Read the
         # best result once, then require actual library evidence in the body.
         score = 2
@@ -1111,7 +1092,7 @@ def apply_page_read(source, outcome, terms):
     query = str(source.get("query") or "").lower()
     library_page = (source.get("kind") == "support" and "library" in query and
                     re.search(r"\b(library|framework|package|sdk|api)\b", page.lower()) and
-                    any(_component_match(part, page.lower()) for part in
+                    any(_component_match(part, page.lower(), terms) for part in
                         _components(terms.get("components"))))
     source.update({"verified": True, "read_error": None, "content": page,
                    "excerpt": evidence_excerpt(page, terms),
@@ -1140,9 +1121,9 @@ def evidence_fallback(candidates, sources, terms):
         source = by_url.get(row.get("url"))
         if source:
             text += " " + str(source.get("content") or "")[:3500]
-        if off_topic(text[:700], terms) or not _has_domain_anchor(text, _domain_kind(terms)):
+        if off_topic(text[:700], terms) or not _has_anchor(text, terms):
             continue
-        hits = sum(_explicit_component_match(component, text.lower()) for component in components)
+        hits = sum(_explicit_component_match(component, text.lower(), terms) for component in components)
         if hits >= 2:
             supported.append((hits, row.get("repo")))
     supported.sort(key=lambda item: -item[0])
@@ -1177,9 +1158,9 @@ def calibrate_prior_art(result, candidates, sources, terms):
             readme = readmes.get(candidate.url)
             if readme:
                 text += " " + str(readme.get("content") or "")[:3500].lower()
-            if off_topic(text[:700], terms) or not _has_domain_anchor(text, _domain_kind(terms)):
+            if off_topic(text[:700], terms) or not _has_anchor(text, terms):
                 continue
-            hits = sum(_explicit_component_match(part, text) for part in components)
+            hits = sum(_explicit_component_match(part, text, terms) for part in components)
             if components and not hits:
                 continue
             confirmed = (label == "same" and len(components) >= 3 and
@@ -1294,7 +1275,7 @@ class ResearchRunner:
             helpers = await timed("support", self._support(rel, terms, content, queries, sources))
             route_helper_products(candidates, helpers, terms)
             self._save(rel, candidates=[c.public() for c in
-                       rank(candidates, keywords=terms.get("keywords"))])
+                       rank(candidates, keywords=terms.get("keywords"), terms=terms)])
             await timed("adjacent", self._adjacent(rel, terms, content, queries, sources))
             if not any(entry.get("ok") for entry in queries):
                 raise ApiError(502, "Arastirma kaynaklari yanit vermedi; eslesme yok sonucu cikarilamaz.")
@@ -1302,7 +1283,7 @@ class ResearchRunner:
                                                         helpers=helpers, query_log=queries))
             await timed("readmes", self._fetch_helper_docs(rel, content, helpers, sources,
                                                            terms, candidates))
-            ranked = rank(candidates, keywords=terms.get("keywords"))
+            ranked = rank(candidates, keywords=terms.get("keywords"), terms=terms)
             results = await timed("judge", self._judge(
                 rel, research_text, ranked,
                 diverse_helpers(helpers, terms.get("components") or [],
@@ -1337,6 +1318,9 @@ class ResearchRunner:
                                         self.record_usage)
         if not any(terms.get(key) for key in ("keywords", "topics", "components")):
             raise ApiError(422, "Fikirden arama terimi cikarilamadi; notu biraz daha yaz.")
+        profile = await self._research_profile(rel, content, terms)
+        if profile:
+            terms = {**terms, "profile": profile}
         self._save(rel, terms=terms)
         self._progress(rel, "terimler", "Terimler hazir.", terms=terms)
         return terms
@@ -1345,9 +1329,14 @@ class ResearchRunner:
         if "git_search" not in getattr(self.tool_hub, "registry", {}):
             return {}
         queries = build_queries(terms.get("keywords"), terms.get("topics"),
-                                terms.get("summary"), terms.get("components"))[:MAX_GITHUB_QUERIES]
+                                terms.get("summary"), terms.get("components"),
+                                _profile(terms))[:MAX_GITHUB_QUERIES]
         candidates = {}
-        for index, entry in enumerate(queries, start=1):
+        spare = [f"topic:{tag}" for tag in _tags(terms.get("topics"), _profile(terms))]
+        swaps, index = 0, 0
+        while index < len(queries):
+            entry = queries[index]
+            index += 1
             self._assert_public(rel, content)
             label = "GitHub " + str(index) + "/" + str(len(queries)) + ": " + entry["query"]
             self._progress(rel, "arama", label, done=index - 1, total=len(queries))
@@ -1363,6 +1352,12 @@ class ResearchRunner:
             if not outcome.get("ok"):
                 continue
             merge(candidates, entry["style"], rows)
+            if entry["style"] == "topic" and 0 < len(rows) < THIN_TOPIC and swaps < MAX_TOPIC_SWAPS:
+                asked = {q["query"] for q in queries} | {str(q.get("query")) for q in query_log}
+                better = next((topic for topic in spare if topic not in asked), None)
+                if better:
+                    queries.insert(index, {"style": "topic", "query": better})
+                    swaps += 1
             words = plain_topic(entry["query"]) if not rows and entry["style"] == "topic" else ""
             if words and not any(q.get("query") == words for q in query_log):
                 # the model named a topic GitHub has never heard of; its words
@@ -1377,7 +1372,7 @@ class ResearchRunner:
                 again_rows = items_of(again) if again.get("ok") else []
                 log_result(retry, again, again_rows)
                 merge(candidates, "topic-duz", again_rows)
-            self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"))],
+            self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"), terms=terms)],
                        queries=query_log)
         self._progress(rel, "arama", str(len(candidates)) + " aday bulundu.",
                        done=len(queries), total=len(queries))
@@ -1427,7 +1422,7 @@ class ResearchRunner:
             if detail.get("ok"):
                 merge(candidates, "web", [payload_of(detail)])
         self._progress(rel, "web", "Web " + str(len(repos)) + " depo onerdi.")
-        self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"))],
+        self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"), terms=terms)],
                    sources=sources, queries=query_log)
         return sources
 
@@ -1435,7 +1430,7 @@ class ResearchRunner:
         helpers = {}
         if "git_search" in getattr(self.tool_hub, "registry", {}):
             queries = build_support_queries(terms.get("keywords"), terms.get("topics"),
-                                            terms.get("components"), terms.get("summary"))
+                                            terms.get("components"), terms.get("summary"), _profile(terms))
             for index, entry in enumerate(queries, start=1):
                 self._assert_public(rel, content)
                 self._progress(rel, "araclar", f"GitHub {index}/{len(queries)}: {entry['query']}",
@@ -1453,7 +1448,8 @@ class ResearchRunner:
                     merge(helpers, entry["style"], rows)
         if self._web_ok(rel):
             for query in support_web_queries(terms.get("keywords"), terms.get("topics"),
-                                             terms.get("components"), terms.get("summary")):
+                                             terms.get("components"), terms.get("summary"),
+                                             _profile(terms)):
                 self._assert_public(rel, content)
                 self._progress(rel, "kaynaklar", "Yardimci araclar ve uygulama ornekleri araniyor")
                 record = {"purpose": "support", "style": "web", "query": query, "ok": False}
@@ -1503,7 +1499,7 @@ class ResearchRunner:
         if not self._web_ok(rel):
             return
         query = adjacent_web_query(terms.get("keywords"), terms.get("components"),
-                                   terms.get("topics"), terms.get("summary"))
+                                   terms.get("topics"), terms.get("summary"), _profile(terms))
         if not query:
             return
         self._assert_public(rel, content)
@@ -1562,7 +1558,7 @@ class ResearchRunner:
             # one bounded GitHub query so it can be proposed as a tool.
             for source in chosen:
                 if (not source.get("verified") or int(source.get("relevance") or 0) < 2 or
-                        "network graph nodes edges" not in str(source.get("query") or "").lower()):
+                        str(source.get("query") or "") not in _library_queries(terms)):
                     continue
                 brand = str(source.get("title") or "").split(" | ", 1)[0].strip()
                 if not re.fullmatch(r"[A-Za-z][A-Za-z0-9.+-]{2,40}", brand):
@@ -1585,8 +1581,9 @@ class ResearchRunner:
                             continue
                         repo = str(item.get("repo") or "")
                         repo_name = re.sub(r"[^a-z0-9]", "", repo.rsplit("/", 1)[-1].lower())
-                        if repo_name != canonical or not _component_match(
-                                "graph visualization", str(item.get("description") or "").lower()):
+                        if repo_name != canonical or not any(_component_match(
+                                part, str(item.get("description") or "").lower(), terms)
+                                for part in _components(terms.get("components"))):
                             continue
                         merge(helpers, "verified-library", [item])
                         key = next((name for name in helpers if name.casefold() == repo.casefold()), None)
@@ -1606,7 +1603,7 @@ class ResearchRunner:
             return
         components = terms.get("components") or []
         keywords = terms.get("keywords") or []
-        prior_rows = rank(prior or {}, limit=4, keywords=keywords)
+        prior_rows = rank(prior or {}, limit=4, keywords=keywords, terms=terms)
         helper_rows = diverse_helpers(helpers, components, keywords, limit=6, terms=terms)
         desired = [(candidate, "support") for candidate in helper_rows[:3]] + [
             (candidate, "prior") for candidate in prior_rows] + [
@@ -1761,6 +1758,22 @@ class ResearchRunner:
                 "quotes": comparison["quotes"], "labels": comparison["labels"], "neighbours": neighbours,
                 "differentiators": ids(comparison["differentiators"], "ayrisma"),
                 "arguments": ids(comparison["arguments"], "arguman")}
+
+    async def _research_profile(self, rel, content, terms) -> dict:
+        """This idea's own search rules from the model; {} when there is no
+        model or no answer — then no field-specific rule applies at all."""
+        try:
+            provider = self.provider_for("compare", rel)
+        except ApiError:
+            return {}
+        if provider is None:
+            return {}
+        self._progress(rel, "terimler", "Bu fikre özel arama kuralları çıkarılıyor")
+        try:
+            return await asyncio.to_thread(llm_client.research_profile, content, terms, provider,
+                                           self.record_usage)
+        except Exception:
+            return {}
 
     async def _competitor_kinds(self, rel, content, candidates) -> dict:
         """repo -> (ayni | komsu | alakasiz, why); {} when there is no model or

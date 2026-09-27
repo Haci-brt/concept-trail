@@ -191,6 +191,71 @@ def test_the_site_comes_from_the_readme():
     assert R.readme_homepage("npm run dev, then open `http://localhost:5173` or http://127.0.0.1:8080", "a/b") is None
 
 
+def test_the_research_profile_keeps_only_what_is_safe_to_apply():
+    raw = ('{"alan": "aile tarif defteri", "urun_turu": "Recipe Manager", "cekirdek": ["recipe", "app", "tracking"], '
+           '"etiketler": ["Recipe Management", "meal-planning"], '
+           '"karisan": [{"alan": "aile yemek planı", "isaretler": ["meal planning", "blog", "calorie tracking"]}], '
+           '"esanlamlilar": {"Recipe Import": ["recipe scraper"], "uydurma": ["x y z"]}, '
+           '"belirsiz": ["recipe import", "uydurma"], '
+           '"kutuphane_aramasi": {"recipe import": "recipe scraper library"}, "rakip_turu": "uygulama"}')
+    profile = llm_client.parse_research_profile(raw, ["recipe import"], "tarif defteri",
+                                                ["family recipe book", "meal planning"])
+    assert profile["anchors"] == ["recipe"]                       # no function or generic words
+    assert profile["topics"] == ["recipe-management", "meal-planning"]
+    # "meal planning" is the idea itself; "blog" is too short a word to be a signal
+    assert profile["confusions"] == [{"area": "aile yemek planı", "signals": ["calorie tracking"]}]
+    assert profile["synonyms"] == {"recipe import": ["recipe scraper"]}
+    assert profile["ambiguous"] == ["recipe import"] and profile["rival_kind"] == "app"
+    assert llm_client.parse_research_profile("anlamadım", ["x"]) == {}
+
+
+def test_a_neighbour_field_only_goes_back_when_the_idea_is_not_named():
+    terms = {"profile": {"anchors": ["recipe"], "confusions": [{"area": "beslenme", "signals": ["nutrition"]}]}}
+    assert R.off_topic("Calorie and nutrition tracker", terms)
+    # Mealie mentions nutrition too, but it is a recipe manager
+    assert not R.off_topic("Self-hosted recipe manager with meal planning and nutrition", terms)
+    ranked = R.rank({"a/diet": R.Candidate(repo="a/diet", url="u", stars=900, description="Nutrition tracker",
+                                          found_by=["topic", "kisa"]),
+                     "b/recipes": R.Candidate(repo="b/recipes", url="u", stars=5, description="Recipe manager",
+                                             found_by=["kisa"])}, keywords=["family recipe book"], terms=terms)
+    assert [c.repo for c in ranked] == ["b/recipes", "a/diet"]       # last, but still there
+
+
+@pytest.mark.anyio
+async def test_the_profile_is_asked_after_the_terms_and_kept_with_them(runner, monkeypatch):
+    monkeypatch.setattr(llm_client, "extract_search_terms",
+                        lambda note, *a: {"keywords": ["recipe manager"], "components": ["recipe import"]})
+    monkeypatch.setattr(llm_client, "research_profile", lambda note, terms, *a: {"anchors": ["recipe"]})
+    runner.provider_for = lambda role, rel: object()
+    rel = runner.vault.create_note("", "fikir", "tarif")
+    terms = await runner._terms(rel, "tarif")
+    assert terms["profile"] == {"anchors": ["recipe"]} and runner.state(rel)["terms"]["profile"]
+    monkeypatch.setattr(llm_client, "research_profile", lambda *a: (_ for _ in ()).throw(RuntimeError("429")))
+    assert "profile" not in await runner._terms(rel, "tarif")    # no rules rather than old ones
+
+
+@pytest.mark.anyio
+async def test_a_thin_topic_gives_its_place_to_the_next(runner, monkeypatch):
+    """family-recipes found 3 projects where grocery-list would have found 50."""
+    asked = []
+
+    class TopicHub:
+        registry = {"git_search": {}}
+
+        async def call(self, name, arguments):
+            asked.append(arguments["query"])
+            size = 3 if arguments["query"] == "topic:family-recipes" else 20
+            return envelope({"items": [{"repo": f"{arguments['query']}/r{i}", "stars": i} for i in range(size)]})
+
+    monkeypatch.setattr(R, "MAX_GITHUB_QUERIES", 2)
+    runner.tool_hub = TopicHub()
+    rel = runner.vault.create_note("", "fikir", "tarif")
+    terms = {"keywords": ["recipe manager"], "topics": ["grocery-list"],
+             "profile": {"anchors": ["recipe"], "topics": ["family-recipes", "recipe-management"]}}
+    await runner._search(rel, terms, "tarif", [])
+    assert asked == ["topic:family-recipes", "topic:grocery-list", "topic:recipe-management"]
+
+
 def test_the_kind_of_each_candidate_is_read_from_its_line():
     raw = ("getlago/lago: komşu — şirketler için kullanım bazlı faturalama\n"
            "- **ellite/Wallos**: aynı — aileler için abonelik takibi\n"

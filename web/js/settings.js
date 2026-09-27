@@ -11,7 +11,7 @@ const ROLE_INFO = [
   ["analysis", "Not izleme ve araştırma", "15 saniye durduğunda ya da bir şey yapıştırdığında notu sessizce inceler; araştırmayı da yürütür."],
   ["chat", "Sohbet", "Cevabını değerlendirir, anlamadıysa tekrar sorar."],
   ["summary", "Nota yazma", "Sonucu notuna eklenecek cümleye dönüştürür."],
-  ["compare", "Rakip analizi", "Araştırmada en yakın projelerin issue'larından fikrine öneri çıkarır; araştırma başına bir çağrı. Daha güçlü bir model burada fark eder (boş bırakılırsa not izleme modeli)."],
+  ["compare", "Araştırma yargıları", "Fikre özel arama kurallarını çıkarır, rakipleri ayıklar ve karşılaştırır; araştırma başına üç çağrı. Daha güçlü bir model burada fark eder (boş bırakılırsa not izleme modeli)."],
 ];
 
 const PRESETS = [
