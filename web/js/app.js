@@ -158,7 +158,7 @@ const palette = new Palette({
 
 // ---------------------------------------------------------------- chrome
 function buildChrome() {
-  $("#brand").innerHTML = `${logo(22)}<span class="brand-name">fikir<span class="brand-dot">.</span></span>`;
+  $("#brand").innerHTML = `${logo(22)}<span class="brand-name">concept trail<span class="brand-dot">.</span></span>`;
   $("#toggleSidebar").innerHTML = icon("panelLeft", 17);
   $("#togglePanel").innerHTML = icon("panelRight", 17);
   $("#globalSearch").innerHTML = `${icon("search", 15)}<span>Notlarda ara...</span><kbd>Ctrl P</kbd>`;
@@ -321,7 +321,7 @@ function renderCrumbs() {
       <button class="note-pin${state.pinned.includes(tab.path) ? " on" : ""}" id="pinNote" title="${state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle"}" aria-label="${state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle"}" aria-pressed="${state.pinned.includes(tab.path)}">${icon("star", 17)}</button>
       <div class="note-trust" title="Asistan nota yazmadan önce onayını ister">${icon("checkCircle", 14)}<span>Nota yazmak için onayın gerekir</span></div>
     </div>` : "";
-  document.title = tab ? `${tab.name} — Fikir Not Defteri` : "Fikir Not Defteri";
+  document.title = tab ? `${tab.name} — Concept Trail` : "Concept Trail";
 }
 
 function renderStatus() {
@@ -394,7 +394,7 @@ function renderWelcome() {
   const recent = flatNotes().sort((a, b) => b.mtime - a.mtime).slice(0, 6);
   $("#welcome").innerHTML = `<div class="welcome-inner">
     ${logo(56)}
-    <h1>Fikir Not Defteri</h1>
+    <h1>Concept Trail</h1>
     <p class="quote">“Düşüncelerini kaydet. Fikirlerin büyüsün.”</p>
     <div class="actions">
       <button class="btn btn-accent" data-act="new">${icon("filePlus", 15)}Yeni not</button>

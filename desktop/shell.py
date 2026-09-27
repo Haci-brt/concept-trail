@@ -18,7 +18,9 @@ from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSe
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
-APP_NAME = "Fikir Not Defteri"
+APP_NAME = "Concept Trail"
+# where Qt kept window and HUD positions while the app was "Fikir Not Defteri"
+OLD_SETTINGS = ("FikirNotDefteri", "Fikir Not Defteri")
 HUD_WIDTH = 380
 HUD_MARGIN = 18
 HUD_TOP_OFFSET = 58  # clear a maximized main window's title bar
@@ -393,12 +395,18 @@ class DesktopShell:
 def run_desktop(url: str, hud: bool = True) -> int:
     if sys.platform == "win32":
         try:  # own taskbar entry and icon instead of python.exe's
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FikirNotDefteri.App")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ConceptTrail.App")
         except (AttributeError, OSError):
             pass
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setOrganizationName("FikirNotDefteri")
+    app.setOrganizationName("ConceptTrail")
+    settings = QSettings()
+    if not settings.allKeys():
+        # a new name is a new settings key: bring the remembered positions along
+        old = QSettings(*OLD_SETTINGS)
+        for key in old.allKeys():
+            settings.setValue(key, old.value(key))
     app.setWindowIcon(_app_icon())
     app.setQuitOnLastWindowClosed(False)
     shell = DesktopShell(url, hud)

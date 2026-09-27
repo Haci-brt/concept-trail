@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 DEFAULT_VAULT = ROOT / "notes"
 
-APP_ID = "fikir-not-defteri"
+APP_ID = "concept-trail"
 VERSION = "0.2.0"
 DEFAULT_PORT = 8765
 

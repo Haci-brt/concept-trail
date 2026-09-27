@@ -14,6 +14,7 @@ sync or put in git), and are masked on their way to the UI.
 """
 import json
 import os
+import shutil
 import threading
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
@@ -26,10 +27,25 @@ HEALTH_STYLES = ("llama", "models", "none")
 KINDS = ("local", "remote")
 
 
+CONFIG_DIR_NAME = "ConceptTrail"
+OLD_CONFIG_DIR_NAMES = ("FikirNotDefteri",)  # the app was "Fikir Not Defteri" until 2026-09-27
+
+
 def config_dir() -> Path:
-    base = (os.environ.get("FIKIR_CONFIG_DIR") or os.environ.get("APPDATA")
-            or os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
-    return Path(base) / "FikirNotDefteri"
+    base = Path(os.environ.get("FIKIR_CONFIG_DIR") or os.environ.get("APPDATA")
+                or os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
+    target = base / CONFIG_DIR_NAME
+    if not target.exists():
+        # the providers, keys and the research tools' token come along with
+        # the new name — copied, not moved, so an older build still finds its own
+        for old in OLD_CONFIG_DIR_NAMES:
+            if (base / old).is_dir():
+                try:
+                    shutil.copytree(base / old, target)
+                except OSError:
+                    pass
+                break
+    return target
 
 
 @dataclass

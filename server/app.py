@@ -263,7 +263,7 @@ def create_app(settings: Settings) -> FastAPI:
         await assistant.stop()
         await tool_hub.stop()
 
-    app = FastAPI(title="Fikir Not Defteri", version=VERSION, lifespan=lifespan,
+    app = FastAPI(title="Concept Trail", version=VERSION, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(ApiError)

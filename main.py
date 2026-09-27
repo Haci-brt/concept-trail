@@ -1,4 +1,4 @@
-"""Fikir Not Defteri — entry point.
+"""Concept Trail — entry point.
 
 Starts the local web server (127.0.0.1 only) and opens the app:
     python main.py              desktop window + always-on-top HUD (PyQt6 WebEngine)
@@ -75,7 +75,7 @@ def free_port() -> int:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Fikir Not Defteri")
+    parser = argparse.ArgumentParser(description="Concept Trail")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--browser", action="store_true", help="open in the default web browser")
     mode.add_argument("--server", action="store_true", help="only run the local server")
@@ -91,7 +91,7 @@ def main():
     port = args.port
 
     if existing_instance(port):
-        print(f"Fikir Not Defteri zaten çalışıyor: http://127.0.0.1:{port}/")
+        print(f"Concept Trail zaten çalışıyor: http://127.0.0.1:{port}/")
     else:
         if not port_free(port):
             port = free_port()
@@ -105,7 +105,7 @@ def main():
     if args.browser or args.server:
         if args.browser:
             webbrowser.open(url)
-        print(f"Fikir Not Defteri: {url}  (durdurmak için Ctrl+C)")
+        print(f"Concept Trail: {url}  (durdurmak için Ctrl+C)")
         if server is None:
             return
         try:

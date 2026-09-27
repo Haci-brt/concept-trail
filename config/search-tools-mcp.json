@@ -3,7 +3,7 @@
     "Araştırma araçlarının (web_search / git_search) MCP sunucuları.",
     "Yol, FIKIR_TOOLS_ROOT ortam değişkeninden gelir; ayarlı değilse aşağıdaki",
     "varsayılan kullanılır. Bu dosyayı düzenlemek yerine kendi kopyanı",
-    "%APPDATA%/FikirNotDefteri/search-tools-mcp.json içine koyabilirsin; varsa o okunur.",
+    "%APPDATA%/ConceptTrail/search-tools-mcp.json içine koyabilirsin; varsa o okunur.",
     "GitHub token'ı BURAYA YAZILMAZ — uygulamanın ayarlar penceresinden girilir."
   ],
   "mcpServers": {

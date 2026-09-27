@@ -29,10 +29,10 @@ import httpx
 
 from server.errors import ApiError
 
-USER_AGENT = ("FikirNotDefteri/0.2 (kisisel arastirma araci; "
+USER_AGENT = ("ConceptTrail/0.2 (kisisel arastirma araci; "
               "https://github.com/modelcontextprotocol)")
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 FikirNotDefteri/0.2")
+              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 ConceptTrail/0.2")
 HTTP_TIMEOUT = 20.0
 BROWSER_TIMEOUT_MS = 30000
 MAX_CHARS = 8000            # what a model can actually use; pages run to 75k
