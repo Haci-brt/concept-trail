@@ -74,6 +74,28 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+LOG_LIMIT = 1_000_000
+
+
+def attach_log_when_windowless(path: Path) -> None:
+    """pythonw.exe starts with sys.stdout and sys.stderr set to None, and
+    uvicorn's log formatter asks sys.stdout.isatty() while it is configured —
+    so a launch without a console died before the server came up, silently.
+    The streams go to a log file instead: nothing breaks, and an error is kept."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file() and path.stat().st_size > LOG_LIMIT:
+            path.unlink()
+        stream = open(path, "a", encoding="utf-8", buffering=1)
+    except OSError:
+        import os
+        stream = open(os.devnull, "w", encoding="utf-8")
+    sys.stdout = sys.stdout or stream
+    sys.stderr = sys.stderr or stream
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Concept Trail")
     mode = parser.add_mutually_exclusive_group()
@@ -86,6 +108,9 @@ def parse_args():
 
 
 def main():
+    from server.providers import config_dir
+
+    attach_log_when_windowless(config_dir() / "concept-trail.log")
     args = parse_args()
     server = None
     port = args.port
