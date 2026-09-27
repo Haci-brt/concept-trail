@@ -43,6 +43,8 @@ PRIOR_WEB_SOURCES = 5       # pages kept from each prior-art web search
 WEB_REPOS = 8               # GitHub links lifted from each web search
 RANK_LIMIT = 20             # similar projects shown and judged
 READ_CONCURRENCY = 3
+DEEP_PROJECTS = 5           # the closest similar projects looked at closely
+DEEP_CALL_TIMEOUT = 30      # seconds per tool call there; a slow one is skipped, not waited on
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -820,6 +822,40 @@ def items_of(outcome):
     return payload_of(outcome).get("items") or []
 
 
+def repo_facts(payload: dict) -> dict:
+    """What a repository's metadata says about how alive the project is."""
+    if not isinstance(payload, dict):
+        return {}
+    first = lambda *keys: next((payload[k] for k in keys if payload.get(k) not in (None, "")), None)
+    license_ = first("license_spdx", "license")
+    if isinstance(license_, dict):
+        license_ = license_.get("spdx_id") or license_.get("name")
+    facts = {"stars": first("stars", "stargazers_count", "stargazers"),
+             "forks": first("forks", "forks_count"),
+             "license": license_,
+             "updated": str(first("pushed_at", "updated_at", "last_push", "pushed") or "")[:10] or None,
+             "open_issues": first("open_issues", "open_issues_count"),
+             "homepage": first("homepage", "homepage_url"),
+             "archived": bool(payload.get("archived"))}
+    return {key: value for key, value in facts.items() if value not in (None, "")}
+
+
+def issue_titles(payload: dict, limit: int = 8) -> list[str]:
+    rows = []
+    if isinstance(payload, dict):
+        rows = payload.get("items") or payload.get("issues") or []
+    elif isinstance(payload, list):
+        rows = payload
+    titles = []
+    for row in rows:
+        title = " ".join(str((row or {}).get("title") or "").split())[:140] if isinstance(row, dict) else ""
+        if title and title not in titles:
+            titles.append(title)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
 def log_result(record: dict, outcome: dict, rows: list) -> None:
     """A search that answered is not a search that found something. `ok` is
     the transport; `count` is what came back. Counting both as success made
@@ -1037,11 +1073,16 @@ class ResearchRunner:
                                                         helpers=helpers, query_log=queries))
             await timed("readmes", self._fetch_helper_docs(rel, content, helpers, sources,
                                                            terms, candidates))
+            ranked = rank(candidates, keywords=terms.get("keywords"))
             results = await timed("judge", self._judge(
-                rel, research_text, rank(candidates, keywords=terms.get("keywords")),
+                rel, research_text, ranked,
                 diverse_helpers(helpers, terms.get("components") or [],
                                 terms.get("keywords") or [], terms=terms),
                 sources, terms, queries, timings))
+            deep = await timed("rakipler", self._deep(rel, research_text, ranked,
+                                                      results["verdict"], sources, terms))
+            if deep:
+                results["deep"] = deep
             timings["total"] = round(time.perf_counter() - started, 2)
             saved = self._save(rel, status="done", finished=now_iso(), timings=dict(timings),
                                **results)
@@ -1375,6 +1416,81 @@ class ResearchRunner:
         await asyncio.gather(*(read(candidate, kind) for candidate, kind in chosen))
         sources[:] = prioritized_sources(sources)
         self._save(rel, sources=sources)
+
+    async def _deep(self, rel, content, ranked, verdict, sources, terms):
+        """The closest projects, looked at closely: their activity, their recent
+        issues (what their users complain about), their README and their site —
+        read through web_fetch, whose browser tier renders script-built pages —
+        then one model call compares them with the idea (compare_projects)."""
+        # the closest by the verdict, then the best known on the list: a live
+        # run looked only at 0-1 star repos the verdict named, and never at
+        # Logseq, Joplin or Foam, the ones a writer is actually up against
+        by_repo = {c.repo: c for c in ranked}
+        closest = [repo for repo in dict.fromkeys([*(verdict.get("same") or []), *(verdict.get("adjacent") or [])])
+                   if repo in by_repo][:3]
+        known = [c.repo for c in sorted(ranked, key=lambda c: -(c.stars or 0)) if c.repo not in closest]
+        chosen = [by_repo[repo] for repo in [*closest, *known]][:DEEP_PROJECTS]
+        if not chosen:
+            return None
+        self._progress(rel, "rakipler", f"{len(chosen)} benzer proje yakından inceleniyor")
+        registry = getattr(self.tool_hub, "registry", {})
+        query = " ".join(_keywords([*(terms.get("components") or []), *(terms.get("keywords") or [])], 6))[:200]
+        gate = asyncio.Semaphore(READ_CONCURRENCY)
+
+        async def call(name, arguments):
+            if name not in registry:
+                return None
+            try:
+                outcome = await asyncio.wait_for(self.tool_hub.call(name, arguments), DEEP_CALL_TIMEOUT)
+            except Exception:
+                return None
+            return payload_of(outcome) if isinstance(outcome, dict) and outcome.get("ok") else None
+
+        async def look(candidate):
+            async with gate:
+                self._assert_public(rel, content)
+                self._progress(rel, "rakipler", "İnceleniyor: " + candidate.repo)
+                facts = {"repo": candidate.repo, "url": candidate.url, "description": candidate.description,
+                         "stars": candidate.stars, "license": candidate.license}
+                facts.update(repo_facts(await call("git_repo", {"repo": candidate.repo}) or {}))
+                facts["issues"] = issue_titles(await call("git_issues", {"repo": candidate.repo}) or {})
+                read = next((s for s in sources if s.get("url") == candidate.url and s.get("verified")), None)
+                facts["readme"] = str((read or {}).get("excerpt") or (read or {}).get("content") or "")[:1500]
+                if not facts["readme"]:
+                    page = await call("web_fetch", {"url": candidate.url, "query": query})
+                    facts["readme"] = str((page or {}).get("text") or "")[:1500]
+                homepage = str(facts.get("homepage") or "")
+                if homepage.startswith("http") and "github.com" not in homepage:
+                    site = await call("web_fetch", {"url": homepage, "query": query})
+                    facts["site"] = str((site or {}).get("text") or "")[:900]
+                return facts
+
+        gathered = await asyncio.gather(*(look(candidate) for candidate in chosen))
+        components = _components(terms.get("components")) or _keywords(terms.get("keywords"), 4)
+        self._progress(rel, "rakipler", "Benzer projeler fikirle karşılaştırılıyor")
+        try:
+            comparison = await asyncio.to_thread(
+                llm_client.compare_projects, content, components, gathered,
+                self.provider_for("analysis", rel), self.record_usage)
+        except Exception:
+            comparison = {"projects": [], "matrix": {}, "differentiators": [], "arguments": []}
+        analysed = {item["repo"]: item for item in comparison["projects"]}
+        projects = []
+        for facts in gathered:
+            keep = {key: facts.get(key) for key in ("repo", "url", "description", "stars", "forks", "license",
+                                                    "updated", "open_issues", "homepage", "archived")}
+            keep["issues"] = facts.get("issues") or []
+            keep["read"] = {"readme": bool(facts.get("readme")), "site": bool(facts.get("site")),
+                            "issues": bool(facts.get("issues"))}
+            projects.append({**keep, **analysed.get(facts["repo"], {})})
+
+        def ids(texts, kind):
+            return [{"id": kind[:3] + "-" + hashlib.sha256(text.encode()).hexdigest()[:10], "kind": kind,
+                     "text": text} for text in texts]
+
+        return {"components": components, "projects": projects, "matrix": comparison["matrix"],
+                "differentiators": ids(comparison["differentiators"], "ayrisma"),
+                "arguments": ids(comparison["arguments"], "arguman")}
 
     async def _judge(self, rel, content, ranked, helpers, sources, terms, queries,
                      timings=None):

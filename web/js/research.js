@@ -12,6 +12,7 @@ const STEP_LABELS = {
   web: "Web kaynakları karşılaştırılıyor",
   oneriler: "Geliştirme fikirleri hazırlanıyor",
   degerlendirme: "Bulgular değerlendiriliyor",
+  rakipler: "Benzer projeler yakından inceleniyor",
   bitti: "Araştırma tamamlandı",
   hata: "Araştırma durdu",
 };
@@ -290,6 +291,7 @@ export class ResearchPanel {
     const successful = (s.queries || []).filter((query) => query.ok && query.count !== 0).length;
     const empty = (s.queries || []).filter((query) => query.empty).length;
     let out = `<div class="r-overview"><div class="r-overview-title"><div><span class="r-eyebrow">ARAŞTIRMA RAPORU</span><h2>Fikrin etrafındaki ekosistem</h2></div><div class="r-metrics"><span><b>${candidates.length}</b> proje</span><span><b>${tools.length}</b> araç</span><span><b>${read}</b> okunan sayfa</span>${(s.queries || []).length ? `<span><b>${successful}</b> sonuç veren sorgu</span>` : ""}${empty ? `<span><b>${empty}</b> boş sorgu</span>` : ""}${typeof s.timings?.total === "number" ? `<span><b>${Math.round(s.timings.total)} sn</b> süre</span>` : ""}</div></div>${verdict.verdict ? `<p>${esc(verdict.verdict)}</p>` : ""}</div>`;
+    out += this._deep(s.deep);
     let projects = "";
 
     const projectGroups = [["Aynı alandaki projeler", same], ["Yakın projeler", adjacent]];
@@ -314,6 +316,45 @@ export class ResearchPanel {
     if (sources.length) out += `<div class="r-evidence-head"><div><span class="r-eyebrow">KAYNAK OKUMASI</span><h3>Kaynakların içinde ne var?</h3></div><div class="r-filter" role="group" aria-label="Kaynak filtresi"><button data-act="filter" data-filter="read" class="${this.sourceFilter === "read" ? "on" : ""}">Okunan ${read}</button><button data-act="filter" data-filter="all" class="${this.sourceFilter === "all" ? "on" : ""}">Tümü ${sources.length}</button><button data-act="filter" data-filter="unread" class="${this.sourceFilter === "unread" ? "on" : ""}">Okunmayan ${sources.length - read}</button></div></div><div class="r-source-grid">${sourceCards.length ? sourceCards.join("") : '<p class="hint">Bu filtrede kaynak yok.</p>'}</div>`;
     if (Array.isArray(s.queries) && s.queries.length) out += this._group(`Arama yolları (${s.queries.length})`, s.queries.map((q) => `<div class="r-query${q.empty ? " empty" : ""}"><b>${esc(q.purpose || q.style || "Arama")}${!q.ok ? " · yanıt alınamadı" : q.empty ? " · boş döndü" : typeof q.count === "number" ? ` ✓ ${q.count} sonuç` : " ✓"}</b><span>${esc(q.query || "")}</span></div>`), false);
     return out + `<p class="r-caveat">Bulunamaması fikrin özgün olduğu anlamına gelmez. Notuna alma işlemi ayrıca onay ister.</p>`;
+  }
+
+  /** The closest projects looked at closely: a table of the idea's parts
+   *  against them, what each does and lacks, and what would set the idea apart. */
+  _deep(deep) {
+    if (!deep || !Array.isArray(deep.projects) || !deep.projects.length) return "";
+    const projects = deep.projects;
+    const short = (repo) => String(repo).split("/").pop();
+    const mark = { var: ["✓", "var"], kismen: ["◐", "kısmen"], yok: ["—", "yok"] };
+    const components = (deep.components || []).filter((c) => deep.matrix?.[c]);
+    const table = components.length ? `<div class="r-matrix-wrap"><table class="r-matrix">
+        <thead><tr><th>Fikrin parçası</th>${projects.map((p) => `<th title="${esc(p.repo)}">${esc(short(p.repo))}</th>`).join("")}</tr></thead>
+        <tbody>${components.map((c) => `<tr><th>${esc(c)}</th>${projects.map((p) => {
+          const cell = mark[deep.matrix[c]?.[p.repo]];
+          return cell ? `<td class="m-${deep.matrix[c][p.repo]}" title="${esc(cell[1])}">${cell[0]}</td>` : '<td class="m-unknown" title="kanıt yok">?</td>';
+        }).join("")}</tr>`).join("")}</tbody></table>
+        <p class="r-matrix-key">✓ var · ◐ kısmen · — yok · ? kanıt yok</p></div>` : "";
+    const list = (title, items) => items?.length ? `<div class="r-deep-list"><b>${title}</b><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>` : "";
+    const cards = projects.map((p) => {
+      const href = safeUrl(p.url || `https://github.com/${p.repo}`);
+      const facts = [p.stars != null ? `${Number(p.stars).toLocaleString("tr-TR")} yıldız` : "",
+        p.updated ? `son güncelleme ${esc(p.updated)}` : "", p.license ? esc(p.license) : "",
+        p.archived ? "arşivlenmiş" : ""].filter(Boolean);
+      return `<article class="r-result r-deep-card"><div class="r-deep-top"><strong>${esc(p.repo)}</strong>${href ? `<a class="r-source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">Kaynak ↗</a>` : ""}</div>
+        ${facts.length ? `<div class="r-meta">${facts.map((f) => `<span>${f}</span>`).join("")}</div>` : ""}
+        ${p.summary ? `<p>${esc(p.summary)}</p>` : p.description ? `<p>${esc(p.description)}</p>` : ""}
+        ${list("Fikrinle ortak", p.shared)}${list("Fikrinde olup onda olmayan", p.missing)}
+        ${list("Zayıf noktası", p.weak)}${p.lesson ? `<p class="r-why"><b>Alınacak ders:</b> ${esc(p.lesson)}</p>` : ""}
+        ${p.issues?.length ? `<details class="r-page"><summary>Son issue başlıkları <span>${p.issues.length}</span></summary><ul class="r-issues">${p.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></details>` : ""}
+      </article>`;
+    });
+    const insights = (title, rows) => rows?.length ? this._group(title,
+      rows.map((row) => `<article class="r-result r-insight">${this._select("insight", row.id, row.text)}</article>`), true) : "";
+    return `<section class="r-deep"><div class="r-evidence-head"><div><span class="r-eyebrow">RAKİP ANALİZİ</span>
+        <h3>En yakın ${projects.length} proje, fikrinle karşılaştırıldı</h3></div></div>
+      ${table}
+      ${insights("Fikrini ayıracak noktalar", deep.differentiators)}
+      ${insights("Geliştirme argümanları", deep.arguments)}
+      ${this._group(`Projeler yakından (${projects.length})`, cards, false)}</section>`;
   }
 
   _group(title, contents, open) {

@@ -9,6 +9,9 @@ PyQt6-WebEngine>=6.7
 mcp>=2,<3
 
 # sayfa okuma (web_fetch): makale metnini markdown olarak cikarir
+httpx>=0.27
+# JavaScript'le cizilen sayfalar icin tarayici katmani (sonra: playwright install chromium)
+playwright>=1.45
 trafilatura>=1.12
 beautifulsoup4>=4.12
 lxml>=5.0

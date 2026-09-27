@@ -203,6 +203,9 @@ def _research_proposal_text(result: dict, choices: list[ResearchChoice]) -> str:
         "opportunity": {str(row.get("id")): row for row in result.get("opportunities", [])},
         "source": {str(row.get("url")): row for row in result.get("sources", [])
                    if row.get("verified")},
+        "insight": {str(row.get("id")): row for row in
+                    [*((result.get("deep") or {}).get("differentiators") or []),
+                     *((result.get("deep") or {}).get("arguments") or [])]},
     }
 
     def line(value, limit):
@@ -230,6 +233,10 @@ def _research_proposal_text(result: dict, choices: list[ResearchChoice]) -> str:
             name = line(row.get("title") or "Kaynak", 120)
             detail = line(row.get("excerpt") or row.get("snippet"), 350)
             lines.append(f"- **Okunan kaynak: {name}** — {detail}" if detail else f"- **Okunan kaynak: {name}**")
+        elif choice.type == "insight":
+            label = "Ayrışma" if row.get("kind") == "ayrisma" else "Argüman"
+            lines.append(f"- **{label}:** {line(row.get('text'), 400)}")
+            continue
         elif choice.type == "tool":
             name = line(row.get("name") or row.get("repo") or choice.id, 120)
             detail = line(row.get("why") or row.get("description"), 350)

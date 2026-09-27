@@ -118,3 +118,20 @@
 /* a search that answered with nothing is not a result */
 .r-query.empty b { color: var(--text-faint); }
 .r-query.empty span { opacity: 0.6; }
+
+/* competitor analysis: the idea's parts against the closest projects */
+.r-deep { margin: 14px 0 6px; }
+.r-matrix-wrap { overflow-x: auto; margin: 8px 0 12px; }
+.r-matrix { border-collapse: collapse; width: 100%; font-size: 12px; }
+.r-matrix th, .r-matrix td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); text-align: center; white-space: nowrap; }
+.r-matrix thead th { color: var(--text-muted); font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.r-matrix tbody th { text-align: left; color: var(--text); font-weight: 500; white-space: normal; }
+.r-matrix .m-var { color: var(--green, #2e8b57); font-weight: 700; }
+.r-matrix .m-kismen { color: var(--accent); }
+.r-matrix .m-yok, .r-matrix .m-unknown { color: var(--text-faint); }
+.r-matrix-key { margin: 6px 0 0; color: var(--text-faint); font-size: 11px; }
+.r-deep-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.r-deep-list { margin-top: 6px; font-size: 12px; }
+.r-deep-list b { color: var(--text-2); font-size: 11.5px; }
+.r-deep-list ul, .r-issues { margin: 4px 0 0; padding-left: 18px; color: var(--text-2); }
+.r-insight .r-pick span { white-space: normal; line-height: 1.45; }
