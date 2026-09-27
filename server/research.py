@@ -995,6 +995,9 @@ class ResearchRunner:
         # rule that keeps a private note off remote models applies here too
         self.is_private = is_private or (lambda _rel: False)
         self.running = {}
+        # notes whose current run skips web_search: every web search opens a
+        # visible browser window, and the writer may not want that
+        self.web_off = set()
 
     def state(self, rel):
         return dict(self.notes.load(rel).get("research") or {})
@@ -1024,15 +1027,18 @@ class ResearchRunner:
             raise ApiError(403, "Bu not gizli: fikri aratmak onu disari gonderir. "
                                 "Arastirmak icin notun basindaki 'gizli' satirini kaldir.")
 
-    async def start(self, rel, content, focus=None):
+    async def start(self, rel, content, focus=None, web=True):
         if self.busy(rel):
             return {"status": "busy"}
         self._assert_public(rel, content)
         registry = getattr(self.tool_hub, "registry", {}) if self.tool_hub else {}
         if not registry or not ({"git_search", "web_search"} & set(registry)):
             raise ApiError(503, "Arastirma sunuculari calismiyor.")
+        if not web and "git_search" not in registry:
+            raise ApiError(503, "GitHub araması çalışmıyor; web araması kapalıyken aranacak yer kalmadı.")
+        (self.web_off.discard if web else self.web_off.add)(rel)
         focus = " ".join(str(focus or "").split())[:MAX_FOCUS_CHARS]
-        started = self._save(rel, status="running", started=now_iso(), focus=focus,
+        started = self._save(rel, status="running", started=now_iso(), focus=focus, web=bool(web),
                              candidates=[],
                              tools=[], opportunities=[], sources=[], queries=[],
                              verdict=None, error=None, timings={})
@@ -1154,10 +1160,13 @@ class ResearchRunner:
                        done=len(queries), total=len(queries))
         return candidates
 
+    def _web_ok(self, rel):
+        return "web_search" in getattr(self.tool_hub, "registry", {}) and rel not in self.web_off
+
     async def _web(self, rel, terms, candidates, content, query_log):
         """Asks the web the same question three ways (see prior_web_queries).
         Each search opens a browser window and costs about twelve seconds."""
-        if "web_search" not in getattr(self.tool_hub, "registry", {}):
+        if not self._web_ok(rel):
             return []
         queries = prior_web_queries(terms.get("summary") or " ".join(terms.get("keywords") or []),
                                     terms.get("keywords"))
@@ -1219,7 +1228,7 @@ class ResearchRunner:
                 log_result(record, outcome, rows)
                 if outcome.get("ok"):
                     merge(helpers, entry["style"], rows)
-        if "web_search" in getattr(self.tool_hub, "registry", {}):
+        if self._web_ok(rel):
             for query in support_web_queries(terms.get("keywords"), terms.get("topics"),
                                              terms.get("components"), terms.get("summary")):
                 self._assert_public(rel, content)
@@ -1268,7 +1277,7 @@ class ResearchRunner:
         return helpers
 
     async def _adjacent(self, rel, terms, content, query_log, sources):
-        if "web_search" not in getattr(self.tool_hub, "registry", {}):
+        if not self._web_ok(rel):
             return
         query = adjacent_web_query(terms.get("keywords"), terms.get("components"),
                                    terms.get("topics"), terms.get("summary"))

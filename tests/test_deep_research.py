@@ -138,3 +138,29 @@ def test_an_insight_can_be_proposed_into_the_note():
                                             ResearchChoice(type="insight", id="arg-1")])
     assert "- **Ayrışma:** Hiçbiri çevrimdışı değil." in text
     assert "- **Argüman:** Önce yerel çalış." in text
+
+
+# ---------------------------------------------------------------- web search switched off
+class WebHub(Hub):
+    registry = {"web_search": {}, "git_search": {}}
+
+
+@pytest.mark.anyio
+async def test_web_search_off_opens_no_browser_window(runner):
+    """Every web_search opens a visible Opera window; switched off, none is called."""
+    runner.tool_hub = WebHub()
+    rel = runner.vault.create_note("", "fikir", "Markdown not ağı")
+    runner.web_off.add(rel)
+    terms = {"summary": "markdown not ağı", "keywords": ["markdown", "notes"], "components": ["backlinks"]}
+    assert await runner._web(rel, terms, [], "Markdown not ağı", []) == []
+    await runner._adjacent(rel, terms, "Markdown not ağı", [], [])
+    assert [name for name, _ in runner.tool_hub.calls if name == "web_search"] == []
+
+
+@pytest.mark.anyio
+async def test_without_web_search_github_has_to_be_there(runner):
+    from server.errors import ApiError
+    runner.tool_hub = type("OnlyWeb", (Hub,), {"registry": {"web_search": {}}})()
+    rel = runner.vault.create_note("", "fikir", "x")
+    with pytest.raises(ApiError):
+        await runner.start(rel, "x", web=False)

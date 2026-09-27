@@ -53,6 +53,8 @@ export class ResearchPanel {
     this.private = false;
     this.expanded = false;
     this.focus = "";
+    // every web search opens a visible browser window; the writer decides
+    try { this.web = localStorage.getItem("ct.research.web") !== "0"; } catch { this.web = true; }
     this.sourceFilter = "read";
     this.el = html('<section class="research card" id="research" aria-label="Fikir araştırması" hidden></section>');
     this.backdrop = html('<div class="research-backdrop" hidden></div>');
@@ -87,6 +89,11 @@ export class ResearchPanel {
     });
     this.el.addEventListener("input", (e) => {
       if (e.target.id === "researchFocus") this.focus = e.target.value;
+    });
+    this.el.addEventListener("change", (e) => {
+      if (e.target.id !== "researchWeb") return;
+      this.web = e.target.checked;
+      try { localStorage.setItem("ct.research.web", this.web ? "1" : "0"); } catch { /* per-viewer only */ }
     });
   }
 
@@ -157,7 +164,7 @@ export class ResearchPanel {
       if (privateContent(content)) { this.render(); return; }
       this.progress = { step: "terimler", note: "Başlatılıyor…" };
       this.render();
-      await api.post("/api/research/start", { path, content, focus: this.focus });
+      await api.post("/api/research/start", { path, content, focus: this.focus, web: this.web });
     } catch (err) {
       if (path !== this.path) return;
       this.progress = null;
@@ -254,7 +261,7 @@ export class ResearchPanel {
       this.el.innerHTML = `${title}<div class="r-body r-compact"><p>${esc(status)}</p><button class="btn btn-sm btn-accent" data-act="open">${icon("search", 13)}${s.status === "done" ? "Bulguları aç" : "Araştırmayı aç"}</button></div>`;
       return;
     }
-    const focusField = `<div class="r-focus-row"><label for="researchFocus"><b>Araştırma odağı</b><span>Belirli bir teknoloji, benzer fikir veya yardımcı araç arayabilirsin.</span></label><div class="r-focus-control"><input id="researchFocus" type="text" maxlength="240" value="${esc(this.focus)}" placeholder="Örn. bu fikir için açık kaynak grafik ve arama araçları"><button class="btn btn-accent" data-act="start" ${running ? "disabled" : ""}>${icon("search", 15)}${this.state?.status === "done" ? "Yeniden araştır" : "Araştır"}</button></div></div>`;
+    const focusField = `<div class="r-focus-row"><label for="researchFocus"><b>Araştırma odağı</b><span>Belirli bir teknoloji, benzer fikir veya yardımcı araç arayabilirsin.</span></label><div class="r-focus-control"><input id="researchFocus" type="text" maxlength="240" value="${esc(this.focus)}" placeholder="Örn. bu fikir için açık kaynak grafik ve arama araçları"><button class="btn btn-accent" data-act="start" ${running ? "disabled" : ""}>${icon("search", 15)}${this.state?.status === "done" ? "Yeniden araştır" : "Araştır"}</button></div><label class="r-web-toggle" title="Web araması ayrı bir Opera penceresinde yapılır; kişisel profilin kullanılmaz. Kapalıyken yalnız GitHub aranır ve bulunan README'ler okunur."><input type="checkbox" id="researchWeb" ${this.web ? "checked" : ""} ${running ? "disabled" : ""}><span>Web'de de ara <em>(her arama ekranda bir Opera penceresi açar)</em></span></label></div>`;
     if (running) {
       const p = this.progress || {};
       const width = p.total ? Math.max(0, Math.min(100, Math.round(100 * (p.done || 0) / p.total))) : 0;

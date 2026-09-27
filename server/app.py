@@ -169,6 +169,7 @@ class ResearchBody(BaseModel):
     path: str
     content: str | None = None
     focus: str | None = None
+    web: bool = True
 
 
 class ResearchChoice(BaseModel):
@@ -573,7 +574,7 @@ def create_app(settings: Settings) -> FastAPI:
         content = body.content if body.content is not None else vault.read_note(body.path)["content"]
         if not content.strip():
             raise ApiError(400, "Bos not arastirilamaz.")
-        return await research.start(body.path, content, focus=body.focus)
+        return await research.start(body.path, content, focus=body.focus, web=body.web)
 
     @app.post("/api/research/propose")
     async def research_propose(body: ResearchProposalBody):
