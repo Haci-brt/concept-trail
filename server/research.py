@@ -45,6 +45,7 @@ RANK_LIMIT = 20             # similar projects shown and judged
 READ_CONCURRENCY = 3
 DEEP_PROJECTS = 5           # the closest similar projects looked at closely
 DEEP_CALL_TIMEOUT = 30      # seconds per tool call there; a slow one is skipped, not waited on
+KNOWN_STARS = 500           # "best known": a project people actually use
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -840,6 +841,43 @@ def repo_facts(payload: dict) -> dict:
     return {key: value for key, value in facts.items() if value not in (None, "")}
 
 
+# Links in a README that are not the project's own site: badges, chat,
+# stores, sponsors, the repository itself.
+NOT_A_SITE = ("github.com", "githubusercontent.com", "shields.io", "badgen.net", "codecov.io",
+              "travis-ci.org", "travis-ci.com", "discord.gg", "discord.com", "twitter.com", "x.com", "t.me",
+              "reddit.com", "youtube.com", "youtu.be", "npmjs.com", "pypi.org", "crates.io",
+              "opencollective.com", "patreon.com", "ko-fi.com", "buymeacoffee.com", "liberapay.com",
+              "gitter.im", "matrix.to", "apps.apple.com", "play.google.com", "flathub.org", "snapcraft.io",
+              "linkedin.com", "wikipedia.org", "creativecommons.org", "opensource.org", "gitpod.io",
+              "star-history.com", "trendshift.io", "producthunt.com", "vercel.com", "netlify.com")
+LINK_RE = re.compile(r"https?://[^\s)\]>\"'<`]+")
+
+
+def readme_homepage(text: str, repo: str) -> str | None:
+    """The project's own site as its README links it — git_repo carries no
+    homepage field, so without this no competitor's site was ever read.
+    A host that carries the project's or owner's name wins ("logseq.com")."""
+    owner, _, name = str(repo or "").lower().partition("/")
+    names = {"".join(ch for ch in part if ch.isalnum()) for part in (owner, name)} - {""}
+    sites = []
+    for link in LINK_RE.findall(str(text or "")):
+        link = link.rstrip(".,;:")
+        host = (urlsplit(link).hostname or "").lower()
+        if not host or any(host == skip or host.endswith("." + skip) for skip in NOT_A_SITE):
+            continue
+        # "run it and open http://localhost:5173": a README's setup step
+        if "." not in host or re.fullmatch(r"[\d.]+", host) or host.endswith((".localhost", ".local")):
+            continue
+        if re.search(r"\.(png|jpe?g|gif|svg|webp|ico|mp4)(\?|$)", link, re.IGNORECASE):
+            continue
+        sites.append((host, link))
+    for host, link in sites:
+        bare = "".join(ch for ch in host if ch.isalnum())
+        if any(len(n) >= 3 and n in bare for n in names):
+            return link
+    return sites[0][1] if sites else None
+
+
 def issue_titles(payload: dict, limit: int = 8) -> list[str]:
     rows = []
     if isinstance(payload, dict):
@@ -1437,7 +1475,17 @@ class ResearchRunner:
         by_repo = {c.repo: c for c in ranked}
         closest = [repo for repo in dict.fromkeys([*(verdict.get("same") or []), *(verdict.get("adjacent") or [])])
                    if repo in by_repo][:3]
-        known = [c.repo for c in sorted(ranked, key=lambda c: -(c.stars or 0)) if c.repo not in closest]
+        # ...the most relevant of the well-known ones, not the most starred:
+        # by stars alone a 246k-star "collection of lists" and a code-graph
+        # engine took two of the five places while Logseq waited (live run).
+        # A threshold relative to the best score did not hold either — the
+        # best was a 0-star repo, and Logseq fell under it on the next run.
+        def fit(c):
+            return relevance_score(" ".join((c.repo, c.description or "", " ".join(c.topics or []))).lower(),
+                                   terms)
+        famous = [c for c in ranked if c.repo not in closest and (c.stars or 0) >= KNOWN_STARS]
+        floor = max((fit(c) for c in famous), default=0) / 2
+        known = [c.repo for c in sorted(famous, key=lambda c: (-fit(c), -(c.stars or 0))) if fit(c) >= floor]
         chosen = [by_repo[repo] for repo in [*closest, *known]][:DEEP_PROJECTS]
         if not chosen:
             return None
@@ -1464,11 +1512,17 @@ class ResearchRunner:
                 facts.update(repo_facts(await call("git_repo", {"repo": candidate.repo}) or {}))
                 facts["issues"] = issue_titles(await call("git_issues", {"repo": candidate.repo}) or {})
                 read = next((s for s in sources if s.get("url") == candidate.url and s.get("verified")), None)
-                facts["readme"] = str((read or {}).get("excerpt") or (read or {}).get("content") or "")[:1500]
-                if not facts["readme"]:
-                    page = await call("web_fetch", {"url": candidate.url, "query": query})
-                    facts["readme"] = str((page or {}).get("text") or "")[:1500]
+                readme = str((read or {}).get("content") or (read or {}).get("excerpt") or "")
                 homepage = str(facts.get("homepage") or "")
+                if not readme or not (homepage or readme_homepage(readme, candidate.repo)):
+                    # an excerpt keeps no links; the page itself does
+                    page = await call("web_fetch", {"url": candidate.url, "query": query})
+                    readme = str((page or {}).get("text") or "") or readme
+                facts["readme"] = readme[:1500]
+                if not homepage.startswith("http"):
+                    homepage = readme_homepage(readme, candidate.repo) or ""
+                    if homepage:
+                        facts["homepage"] = homepage
                 if homepage.startswith("http") and "github.com" not in homepage:
                     site = await call("web_fetch", {"url": homepage, "query": query})
                     facts["site"] = str((site or {}).get("text") or "")[:900]
@@ -1498,6 +1552,7 @@ class ResearchRunner:
                      "text": text} for text in texts]
 
         return {"components": components, "projects": projects, "matrix": comparison["matrix"],
+                "labels": comparison.get("labels") or {},
                 "differentiators": ids(comparison["differentiators"], "ayrisma"),
                 "arguments": ids(comparison["arguments"], "arguman")}
 

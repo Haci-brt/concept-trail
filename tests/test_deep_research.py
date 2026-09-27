@@ -31,6 +31,14 @@ def test_the_comparison_keeps_only_given_projects_components_and_values():
     assert result["differentiators"] == ["Hiçbiri soru soran bir asistan içermiyor."]
 
 
+def test_components_get_turkish_names_for_the_reader():
+    raw = ('{"projeler": [], "tablo": {"full text search": {"a/b": "var"}}, '
+           '"adlar": {"Full text search": "tam metin arama", "uydurma": "x y", "backlinks": "backlinks"}}')
+    result = llm_client.parse_comparison(raw, ["a/b"], ["full text search", "backlinks"])
+    assert result["matrix"] == {"full text search": {"a/b": "var"}}
+    assert result["labels"] == {"full text search": "tam metin arama"}
+
+
 def test_no_evidence_is_not_a_weakness():
     raw = '{"projeler": [{"repo": "a/b", "zayif": ["Son issue başlıkları okunamadı.", "Büyük PR\'lerde yavaş"]}]}'
     assert llm_client.parse_comparison(raw, ["a/b"], [])["projects"][0]["weak"] == ["Büyük PR'lerde yavaş"]
@@ -48,7 +56,38 @@ async def test_the_best_known_projects_are_looked_at_too(runner, monkeypatch):
               for i in range(6)] + [R.Candidate(repo="logseq/logseq", url="u", stars=45000, description="d",
                                                 topics=[], found_by=["topic"])]
     await runner._deep(rel, "x", ranked, {"same": ["small/r0"], "adjacent": ["small/r1"]}, [], {})
-    assert looked[:2] == ["small/r0", "small/r1"] and "logseq/logseq" in looked and len(looked) == 5
+    assert looked == ["small/r0", "small/r1", "logseq/logseq"]
+
+
+@pytest.mark.anyio
+async def test_a_famous_list_is_not_a_competitor(runner, monkeypatch):
+    looked = []
+    monkeypatch.setattr(llm_client, "compare_projects",
+                        lambda note, comps, projects, *a: looked.extend(p["repo"] for p in projects)
+                        or {"projects": [], "matrix": {}, "differentiators": [], "arguments": []})
+    rel = runner.vault.create_note("", "fikir", "x")
+    ranked = [
+        R.Candidate(repo="trimstray/the-book-of-secret-knowledge", url="u", stars=246000,
+                    description="A collection of inspiring lists, manuals, cheatsheets", topics=["knowledge"],
+                    found_by=["readme"]),
+        R.Candidate(repo="logseq/logseq", url="u", stars=45000, topics=["markdown", "knowledge-graph"],
+                    description="Privacy-first knowledge management with Markdown notes, backlinks and graph",
+                    found_by=["topic"]),
+        R.Candidate(repo="small/notes", url="u", stars=3, topics=[], found_by=["topic"],
+                    description="Local-first Markdown notes with backlinks and a knowledge graph")]
+    terms = {"keywords": ["Markdown", "knowledge graph", "backlinks"], "components": ["backlinks"]}
+    await runner._deep(rel, "x", ranked, {"same": [], "adjacent": []}, [], terms)
+    assert "logseq/logseq" in looked and "trimstray/the-book-of-secret-knowledge" not in looked
+
+
+def test_the_site_comes_from_the_readme():
+    """git_repo has no homepage field: no competitor's site had ever been read."""
+    text = ("[![Download](https://img.shields.io/badge/x.svg)](https://github.com/logseq/logseq/releases) "
+            "Chat: https://discord.gg/KpN4eHY Docs https://docs.example.org and https://logseq.com")
+    assert R.readme_homepage(text, "logseq/logseq") == "https://logseq.com"
+    assert R.readme_homepage("see https://docs.example.org.", "a/b") == "https://docs.example.org"
+    assert R.readme_homepage("![s](https://example.org/shot.png) https://github.com/a/b", "a/b") is None
+    assert R.readme_homepage("npm run dev, then open `http://localhost:5173` or http://127.0.0.1:8080", "a/b") is None
 
 
 def test_a_reply_that_is_no_comparison_leaves_it_empty():
@@ -107,7 +146,7 @@ async def test_the_closest_projects_are_looked_at_and_compared(runner, monkeypat
     rel = runner.vault.create_note("", "fikir", "Markdown not ağı")
     candidate = R.Candidate(repo="org/notes", url="https://github.com/org/notes", stars=10,
                             description="notes", topics=[], found_by=["topic"])
-    deep = await runner._deep(rel, "Markdown not ağı", [candidate], {"same": [], "adjacent": []}, [],
+    deep = await runner._deep(rel, "Markdown not ağı", [candidate], {"same": ["org/notes"], "adjacent": []}, [],
                               {"components": ["backlinks"], "keywords": ["markdown"]})
     gathered = seen["projects"][0]
     assert gathered["issues"] == ["Sync loses notes offline"] and gathered["site"].startswith("Page text")
@@ -125,7 +164,7 @@ async def test_a_slow_tool_is_skipped_not_waited_on(runner, monkeypatch):
     rel = runner.vault.create_note("", "fikir", "x")
     candidate = R.Candidate(repo="org/notes", url="https://github.com/org/notes", stars=1,
                             description="d", topics=[], found_by=["topic"])
-    deep = await runner._deep(rel, "x", [candidate], {}, [], {"components": ["a b"]})
+    deep = await runner._deep(rel, "x", [candidate], {"same": ["org/notes"]}, [], {"components": ["a b"]})
     assert deep["projects"][0]["issues"] == [] and deep["projects"][0]["stars"] == 900
 
 

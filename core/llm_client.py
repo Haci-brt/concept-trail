@@ -1279,10 +1279,13 @@ COMPARE_PROMPT = (
     '"zayif": ["issue başlıklarından ya da README\'den görülen zayıf nokta"], '
     '"ders": "fikrin bu projeden alabileceği somut ders"}], '
     '"tablo": {"<bileşen>": {"owner/name": "var | kismen | yok"}}, '
+    '"adlar": {"<bileşen>": "bileşenin kısa Türkçe adı"}, '
     '"ayrisma": ["fikri bu projelerden ayıracak somut nokta"], '
     '"argumanlar": ["bulgulara dayanan, fikri geliştirmek için argüman"]}\n\n'
     "Kurallar:\n"
-    "- Yalnız verilen projeleri ve verilen bileşen adlarını kullan; ad uydurma.\n"
+    "- Yalnız verilen projeleri ve verilen bileşen adlarını kullan; ad uydurma. 'tablo' "
+    "anahtarları verilen bileşen adlarının aynısı olsun; okura gösterilecek Türkçe adları "
+    "'adlar' içinde ver (ör. 'full text search' → 'tam metin arama').\n"
     "- Her iddia verilen kanıta dayansın. Kanıtta görünmeyen bir özellik için 'yok' deme, "
     "tabloda o hücreyi boş bırak. 'zayif' yalnız issue başlıklarından ya da README'den gelsin.\n"
     "- 'ayrisma' ve 'argumanlar' genel tavsiye olmasın: hangi projede neyin eksik olduğunu "
@@ -1350,7 +1353,15 @@ def parse_comparison(raw: str, repos: list[str], components: list[str]) -> dict:
                 cells[repo] = value
         if cells:
             matrix[name] = cells
-    return {"projects": projects, "matrix": matrix,
+    # the components come from English search terms; the writer reads Turkish
+    labels = {}
+    names = body.get("adlar") if isinstance(body.get("adlar"), dict) else {}
+    for component, label in names.items():
+        name = by_component.get(str(component).strip().casefold())
+        label = " ".join(str(label or "").split())
+        if name and 2 <= len(label) <= 60 and label.casefold() != name.casefold():
+            labels[name] = label
+    return {"projects": projects, "matrix": matrix, "labels": labels,
             "differentiators": _short_list(body.get("ayrisma"), 4, 260),
             "arguments": _short_list(body.get("argumanlar"), 4, 260)}
 

@@ -335,7 +335,7 @@ export class ResearchPanel {
     const components = (deep.components || []).filter((c) => deep.matrix?.[c]);
     const table = components.length ? `<div class="r-matrix-wrap"><table class="r-matrix">
         <thead><tr><th>Fikrin parçası</th>${projects.map((p) => `<th title="${esc(p.repo)}">${esc(short(p.repo))}</th>`).join("")}</tr></thead>
-        <tbody>${components.map((c) => `<tr><th>${esc(c)}</th>${projects.map((p) => {
+        <tbody>${components.map((c) => `<tr><th title="${esc(c)}">${esc(deep.labels?.[c] || c)}</th>${projects.map((p) => {
           const cell = mark[deep.matrix[c]?.[p.repo]];
           return cell ? `<td class="m-${deep.matrix[c][p.repo]}" title="${esc(cell[1])}">${cell[0]}</td>` : '<td class="m-unknown" title="kanıt yok">?</td>';
         }).join("")}</tr>`).join("")}</tbody></table>
