@@ -191,6 +191,68 @@ def test_the_site_comes_from_the_readme():
     assert R.readme_homepage("npm run dev, then open `http://localhost:5173` or http://127.0.0.1:8080", "a/b") is None
 
 
+def test_the_kind_of_each_candidate_is_read_from_its_line():
+    raw = ("getlago/lago: komşu — şirketler için kullanım bazlı faturalama\n"
+           "- **ellite/Wallos**: aynı — aileler için abonelik takibi\n"
+           "uydurma/proje: ayni — x\nimgbot/Imgbot: belki")
+    assert llm_client.parse_competitor_kinds(raw, ["getlago/lago", "ellite/Wallos", "imgbot/Imgbot"]) == {
+        "getlago/lago": ("komsu", "şirketler için kullanım bazlı faturalama"),
+        "ellite/Wallos": ("ayni", "aileler için abonelik takibi")}
+
+
+def subscription_candidates():
+    return [R.Candidate(repo="ellite/Wallos", url="u", stars=8587, description="Personal subscription tracker",
+                        topics=["subscription-tracker"], found_by=["topic"]),
+            R.Candidate(repo="small/subs", url="u", stars=3, description="Track your subscriptions",
+                        topics=[], found_by=["kisa"]),
+            R.Candidate(repo="getlago/lago", url="u", stars=8000, found_by=["topic"],
+                        description="Usage based billing, subscription management for SaaS",
+                        topics=["subscription-management", "billing"])]
+
+
+@pytest.mark.anyio
+async def test_a_neighbour_is_named_but_not_compared(runner, monkeypatch):
+    """Lago — billing for SaaS companies — was compared with a family subscription tracker."""
+    looked = []
+    monkeypatch.setattr(llm_client, "compare_projects",
+                        lambda note, comps, projects, *a, **k: looked.extend(p["repo"] for p in projects) or {})
+    monkeypatch.setattr(llm_client, "classify_competitors", lambda note, rows, *a: {
+        "ellite/Wallos": ("ayni", "aileler için abonelik takibi"), "small/subs": ("ayni", ""),
+        "getlago/lago": ("komsu", "şirketler için faturalama")})
+    runner.provider_for = lambda role, rel: object()
+    rel = runner.vault.create_note("", "fikir", "Ailece abonelik takibi")
+    deep = await runner._deep(rel, "Ailece abonelik takibi", subscription_candidates(),
+                              {"same": [], "adjacent": ["small/subs"]}, [],
+                              {"keywords": ["subscription tracking"], "components": ["renewal reminders"]})
+    assert looked == ["small/subs", "ellite/Wallos"]
+    assert deep["neighbours"] == [{"repo": "getlago/lago", "stars": 8000, "why": "şirketler için faturalama"}]
+
+
+@pytest.mark.anyio
+async def test_when_every_candidate_is_a_neighbour_none_is_compared(runner, monkeypatch):
+    monkeypatch.setattr(llm_client, "compare_projects", lambda *a, **k: pytest.fail("nothing to compare"))
+    monkeypatch.setattr(llm_client, "classify_competitors",
+                        lambda note, rows, *a: {row["repo"]: ("komsu", "başka iş") for row in rows})
+    runner.provider_for = lambda role, rel: object()
+    rel = runner.vault.create_note("", "fikir", "x")
+    deep = await runner._deep(rel, "x", subscription_candidates(), {}, [], {"keywords": ["subscription tracking"]})
+    assert deep["projects"] == [] and [n["repo"] for n in deep["neighbours"]] == [
+        "ellite/Wallos", "getlago/lago", "small/subs"]
+
+
+@pytest.mark.anyio
+async def test_without_an_answer_the_choice_stays_as_it_was(runner, monkeypatch):
+    looked = []
+    monkeypatch.setattr(llm_client, "compare_projects",
+                        lambda note, comps, projects, *a, **k: looked.extend(p["repo"] for p in projects) or {})
+    monkeypatch.setattr(llm_client, "classify_competitors", lambda *a: (_ for _ in ()).throw(RuntimeError("429")))
+    runner.provider_for = lambda role, rel: object()
+    rel = runner.vault.create_note("", "fikir", "x")
+    await runner._deep(rel, "x", subscription_candidates(), {"adjacent": ["small/subs"]}, [],
+                       {"keywords": ["subscription tracking"]})
+    assert "getlago/lago" in looked
+
+
 def test_a_reply_that_is_no_comparison_leaves_it_empty():
     assert llm_client.parse_comparison("anlaşılmadı", ["a/b"], ["x"])["projects"] == []
 

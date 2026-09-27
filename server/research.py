@@ -47,6 +47,7 @@ READ_CONCURRENCY = 3
 DEEP_PROJECTS = 5           # the closest similar projects looked at closely
 DEEP_CALL_TIMEOUT = 30      # seconds per tool call there; a slow one is skipped, not waited on
 KNOWN_STARS = 500           # "best known": a project people actually use
+COMPETITOR_POOL = 10        # candidates the model sorts into competitor / neighbour / unrelated
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -1654,8 +1655,9 @@ class ResearchRunner:
         # run looked only at 0-1 star repos the verdict named, and never at
         # Logseq, Joplin or Foam, the ones a writer is actually up against
         by_repo = {c.repo: c for c in ranked}
-        closest = [repo for repo in dict.fromkeys([*(verdict.get("same") or []), *(verdict.get("adjacent") or [])])
-                   if repo in by_repo][:3]
+        picked = [repo for repo in dict.fromkeys([*(verdict.get("same") or []), *(verdict.get("adjacent") or [])])
+                  if repo in by_repo]
+        closest = picked[:3]
         # ...the most relevant of the well-known ones, not the most starred:
         # by stars alone a 246k-star "collection of lists" and a code-graph
         # engine took two of the five places while Logseq waited (live run).
@@ -1667,9 +1669,24 @@ class ResearchRunner:
         famous = [c for c in ranked if c.repo not in closest and (c.stars or 0) >= KNOWN_STARS]
         floor = max((fit(c) for c in famous), default=0) / 2
         known = [c.repo for c in sorted(famous, key=lambda c: (-fit(c), -(c.stars or 0))) if fit(c) >= floor]
-        chosen = [by_repo[repo] for repo in [*closest, *known]][:DEEP_PROJECTS]
+        # ...and only those doing the idea's job for the idea's users: Lago,
+        # billing for SaaS companies, came in as "best known" for a family
+        # subscription tracker. The model sorts the pool; without an answer
+        # the choice stays as it was.
+        pool = list(dict.fromkeys([*picked, *known, *(c.repo for c in ranked)]))[:COMPETITOR_POOL]
+        kinds = await self._competitor_kinds(rel, content, [by_repo[repo] for repo in pool])
+        neighbours = []
+        if kinds:
+            rival = [repo for repo in pool if kinds.get(repo, ("",))[0] == "ayni"]
+            order = [*[repo for repo in picked if repo in rival][:3], *[repo for repo in known if repo in rival], *rival]
+            neighbours = [{"repo": repo, "stars": by_repo[repo].stars, "why": kinds[repo][1]}
+                          for repo in pool if kinds.get(repo, ("",))[0] == "komsu"][:6]
+        else:
+            order = [*closest, *known]
+        chosen = [by_repo[repo] for repo in dict.fromkeys(order)][:DEEP_PROJECTS]
         if not chosen:
-            return None
+            return {"components": [], "projects": [], "matrix": {}, "quotes": {}, "labels": {},
+                    "differentiators": [], "arguments": [], "neighbours": neighbours} if neighbours else None
         self._progress(rel, "rakipler", f"{len(chosen)} benzer proje yakından inceleniyor")
         registry = getattr(self.tool_hub, "registry", {})
         query = " ".join(_keywords([*(terms.get("components") or []), *(terms.get("keywords") or [])], 6))[:200]
@@ -1736,9 +1753,27 @@ class ResearchRunner:
                      "text": text} for text in texts]
 
         return {"components": components, "projects": projects, "matrix": comparison["matrix"],
-                "quotes": comparison["quotes"], "labels": comparison["labels"],
+                "quotes": comparison["quotes"], "labels": comparison["labels"], "neighbours": neighbours,
                 "differentiators": ids(comparison["differentiators"], "ayrisma"),
                 "arguments": ids(comparison["arguments"], "arguman")}
+
+    async def _competitor_kinds(self, rel, content, candidates) -> dict:
+        """repo -> (ayni | komsu | alakasiz, why); {} when there is no model or
+        it did not answer — the caller then keeps its old choice."""
+        try:                                # no model, or the day's budget spent
+            provider = self.provider_for("compare", rel)
+        except ApiError:
+            return {}
+        if provider is None or not candidates:
+            return {}
+        self._progress(rel, "rakipler", "Adaylar ayıklanıyor: aynı işi mi yapıyor, komşu alan mı")
+        rows = [{"repo": c.repo, "description": c.description, "topics": c.topics, "stars": c.stars}
+                for c in candidates]
+        try:
+            return await asyncio.to_thread(llm_client.classify_competitors, content, rows, provider,
+                                           self.record_usage)
+        except Exception:
+            return {}
 
     async def _judge(self, rel, content, ranked, helpers, sources, terms, queries,
                      timings=None):

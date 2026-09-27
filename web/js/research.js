@@ -328,7 +328,13 @@ export class ResearchPanel {
   /** The closest projects looked at closely: a table of the idea's parts
    *  against them, what each does and lacks, and what would set the idea apart. */
   _deep(deep) {
-    if (!deep || !Array.isArray(deep.projects) || !deep.projects.length) return "";
+    // projects that share the idea's words but do another job: named with
+    // the reason, so the writer sees what was left out and can disagree
+    const neighbours = deep?.neighbours?.length ? `<p class="r-neighbours"><b>Komşu alan olduğu için karşılaştırılmadı:</b> ${deep.neighbours.map((n) => `${esc(String(n.repo).split("/").pop())}${n.why ? ` <span>(${esc(n.why)})</span>` : ""}`).join(" · ")}</p>` : "";
+    if (!deep || !Array.isArray(deep.projects) || !deep.projects.length) {
+      return neighbours ? `<section class="r-deep"><div class="r-evidence-head"><div><span class="r-eyebrow">RAKİP ANALİZİ</span>
+        <h3>Fikrinle aynı işi yapan bir proje bulunamadı</h3></div></div>${neighbours}</section>` : "";
+    }
     const projects = deep.projects;
     const short = (repo) => String(repo).split("/").pop();
     // new results only say "var" (with the passage) or nothing; older ones
@@ -362,6 +368,7 @@ export class ResearchPanel {
     return `<section class="r-deep"><div class="r-evidence-head"><div><span class="r-eyebrow">RAKİP ANALİZİ</span>
         <h3>En yakın ${projects.length} proje, fikrinle karşılaştırıldı</h3></div></div>
       ${table}
+      ${neighbours}
       ${insights(deep.quotes ? "Fikrini ayırabilecek noktalar" : "Fikrini ayıracak noktalar", deep.differentiators)}
       ${insights(deep.quotes ? "Rakiplerden çıkan öneriler (alıntıyla)" : "Geliştirme argümanları", deep.arguments)}
       ${this._group(`Projeler yakından (${projects.length})`, cards, false)}</section>`;
