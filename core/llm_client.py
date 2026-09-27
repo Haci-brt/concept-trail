@@ -708,7 +708,8 @@ def parse_chat_reply(raw: str) -> dict:
 def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
                    on_chunk=None, provider=None, span: list[int] | None = None,
                    should_cancel=None, on_usage=None, coverage: str = "",
-                   roadmap: str = "", mode: str = "fikir", open_decisions=None) -> dict:
+                   roadmap: str = "", mode: str = "fikir", open_decisions=None,
+                   direction: str = "") -> dict:
     """Send the whole note (plus open questions) to the local model and get back
     a structured event: a net-effect no-op, a question, a resolved question, or
     an edit suggestion.
@@ -718,6 +719,8 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     block before the real answer, and this lets the UI show that thinking live
     instead of sitting on a dead spinner."""
     parts = [note_context(full_text, span)]
+    if direction:
+        parts.append(f"[KULLANICININ SON YÖNÜ — eski notla çelişirse bu geçerli]\n{direction}")
     if roadmap:
         parts.append(roadmap)
     if open_questions:
@@ -741,7 +744,8 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
         # treating it as the latter asked the rung's stock question about
         # things the note had already settled
         return {"type": "unfinished"}
-    return parse_ladder(reply, open_decisions, full_text) if mode == "yazilim" else parse_response(reply)
+    grounded_text = f"{full_text}\n{direction}" if direction else full_text
+    return parse_ladder(reply, open_decisions, grounded_text) if mode == "yazilim" else parse_response(reply)
 
 
 def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None) -> str:
@@ -787,14 +791,15 @@ def chat_answer_with_tools(history: list[dict], note_excerpt: str, provider, hub
     )
 
 
-def summarize_for_note(history: list[dict], provider=None, on_usage=None) -> str:
+def summarize_for_note(history: list[dict], provider=None, on_usage=None, direction: str = "") -> str:
     """Turn a resolved chat thread into note-ready text."""
     convo = "\n".join(
         f"{'Kullanıcı' if m['role'] == 'user' else 'Asistan'}: {m['content']}" for m in history
     )
     content = _complete(
         [
-            {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT},
+            {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT +
+             (f"\n\nKullanıcının son yönü (eski kararlardan öncelikli): {direction}" if direction else "")},
             {"role": "user", "content": convo},
         ],
         temperature=0.3, max_tokens=SUMMARY_MAX_TOKENS, provider=provider, on_usage=on_usage,

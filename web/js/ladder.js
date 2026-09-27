@@ -10,12 +10,14 @@ const BY = { not: "notta yazıyor", cevap: "soruya cevap verdin", sen: "sen işa
 
 export class LadderPanel {
   /** showWaiting(): bring the list of waiting questions into view. */
-  constructor(root, { showWaiting } = {}) {
+  constructor(root, { showWaiting, correctDirection } = {}) {
     this.root = root;
     this.showWaiting = showWaiting;
+    this.correctDirection = correctDirection;
     this.path = null;
     this.state = null;
     this.mode = null;
+    this.direction = null;
     this.shown = null;          // the rung being looked at; null = the current one
     // Show how many questions are still waiting for an answer in this note.
     this.waiting = new Set();
@@ -27,10 +29,11 @@ export class LadderPanel {
     this.path = path;
     this.shown = null;
     try {
-      const { ladder, mode, nodes } = await api.get("/api/assistant/nodes", { path });
+      const { ladder, mode, nodes, direction } = await api.get("/api/assistant/nodes", { path });
       if (path !== this.path) return;
       this.state = ladder;
       this.mode = mode;
+      this.direction = direction;
       this.waiting = new Set((nodes || []).filter((n) => n.type === "question" && n.status === "open").map((n) => n.id));
     } catch {
       this.state = null;
@@ -56,6 +59,7 @@ export class LadderPanel {
   clear() {
     this.path = null;
     this.state = null;
+    this.direction = null;
     this.render();
   }
 
@@ -82,17 +86,22 @@ export class LadderPanel {
       ? `<button class="lg-wait" data-act="waiting" title="Bekleyen sorular sağdaki listede — göstermek için tıkla">
           ${icon("questionSquare", 12)}${this.waiting.size} soru bekliyor</button>` : "";
     const head = product
-      ? `<div class="lg-head product">${icon("sprout", 15)}<span class="lg-title">Ürün evresi</span>${waiting}<span class="lg-count">${s.made}/${s.total}</span></div>
+      ? `<div class="lg-head product">${icon("sprout", 15)}<span class="lg-title">Ürün evresi</span>${waiting}<button class="lg-correct" data-act="direction">Rotayı düzelt</button><span class="lg-count">${s.made}/${s.total}</span></div>
          <p class="lg-note">Bütün kararlar verildi: kapsam, mimari, bileşenler ve detaylar belli. Bu not yapmaya başlamak için yeterli.</p>`
       : `<div class="lg-head">${icon("tree", 15)}<span class="lg-title">Yol haritası</span>
-         <span class="lg-phase">${esc(s.phase_label)}</span>${waiting}<span class="lg-count">${s.made}/${s.total}</span></div>`;
+         <span class="lg-phase">${esc(s.phase_label)}</span>${waiting}<button class="lg-correct" data-act="direction">Rotayı düzelt</button><span class="lg-count">${s.made}/${s.total}</span></div>`;
     const label = level.id === s.current ? `${esc(level.label)} · şimdi bunu netleştiriyoruz`
       : level.done ? `${esc(level.label)} · tamam` : `${esc(level.label)} · sırası gelmedi`;
-    this.root.innerHTML = `${head}<div class="lg-bar">${bar}</div>
+    const direction = this.direction ? `<div class="lg-direction" title="${esc(this.direction.text)}">Son yön: ${esc(this.direction.text)}</div>` : "";
+    this.root.innerHTML = `${head}${direction}<div class="lg-bar">${bar}</div>
       <div class="lg-level">${label}</div><div class="lg-chips">${chips}</div>`;
   }
 
   async _click(e) {
+    if (e.target.closest('[data-act="direction"]')) {
+      this.correctDirection?.(this.path);
+      return;
+    }
     if (e.target.closest('[data-act="waiting"]')) {
       this.showWaiting?.();
       return;

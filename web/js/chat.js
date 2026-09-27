@@ -147,9 +147,10 @@ export class ChatDrawer {
   _setQuestion(q) {
     this.el.querySelector(".q").textContent = q.text;
     const chip = this.el.querySelector(".status");
-    const done = q.status === "resolved";
+    const done = q.status !== "open";
+    const dismissed = q.status === "dismissed";
     chip.className = `chip status ${done ? "chip-done" : "chip-open"}`;
-    chip.textContent = done ? "Çözüldü" : "Açık";
+    chip.textContent = dismissed ? "Rotadan çıkarıldı" : done ? "Çözüldü" : "Açık";
     this.el.querySelector('[data-act="resolve"]').disabled = done;
   }
 

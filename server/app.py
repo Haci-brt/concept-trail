@@ -136,6 +136,12 @@ class DecisionBody(BaseModel):
     decided: bool = True
 
 
+class DirectionBody(BaseModel):
+    path: str
+    category: str
+    text: str
+
+
 class NodeBody(BaseModel):
     path: str
     node_id: str
@@ -491,7 +497,12 @@ def create_app(settings: Settings) -> FastAPI:
             mode = "yazilim"
         return {"nodes": state["nodes"], "busy": assistant.busy == path,
                 "written": list(state.get("assistant_text") or []),
-                "mode": mode, "ladder": assistant.ladder_for(path)}
+                "mode": mode, "ladder": assistant.ladder_for(path),
+                "direction": state.get("direction")}
+
+    @app.post("/api/assistant/direction")
+    def set_direction(body: DirectionBody):
+        return assistant.set_direction(body.path, body.category, body.text)
 
     @app.post("/api/assistant/decision")
     def set_decision(body: DecisionBody):

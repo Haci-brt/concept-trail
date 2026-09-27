@@ -20,6 +20,7 @@ export const KINDS = {
 const STATUS_CHIP = {
   open: ["chip-open", "Açık"],
   resolved: ["chip-done", "Çözüldü"],
+  dismissed: ["chip-rejected", "Rotadan çıkarıldı"],
   pending: ["chip-pending", "Bekliyor"],
   approved: ["chip-done", "Onaylandı"],
   rejected: ["chip-rejected", "Reddedildi"],

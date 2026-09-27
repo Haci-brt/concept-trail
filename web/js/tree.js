@@ -202,7 +202,7 @@ export class IdeaTree {
 
   // ---------- structure ----------
   _statusOf(n) {
-    if (n.type === "question") return n.status === "resolved" ? "done" : "open";
+    if (n.type === "question") return n.status === "open" ? "open" : "done";
     if (n.type === "edit") return n.status === "pending" ? "open" : "done";
     return null;
   }
@@ -235,7 +235,7 @@ export class IdeaTree {
 
     const makeItem = (n, ancestors = new Set()) => {
       if (ancestors.has(n.id)) return null; // survive a damaged imported tree
-      const item = { id: n.id, kind: n.type === "question" && n.status === "resolved" ? "resolved" : n.type, data: n, children: [] };
+      const item = { id: n.id, kind: n.type === "question" && n.status !== "open" ? "resolved" : n.type, data: n, children: [] };
       if (n.type === "question") {
         const kids = byParent.get(n.id) || [];
         const msgs = kids.filter((k) => k.type === "chat-user" || k.type === "chat-assistant");
@@ -271,7 +271,7 @@ export class IdeaTree {
   _stats() {
     let open = 0, done = 0, edits = 0, msgs = 0;
     for (const n of this.nodes) {
-      if (n.type === "question") n.status === "resolved" ? done++ : open++;
+      if (n.type === "question") n.status === "open" ? open++ : done++;
       else if (n.type === "edit") edits++;
       else if (n.type.startsWith("chat-")) msgs++;
     }
@@ -303,7 +303,7 @@ export class IdeaTree {
           <div class="tn-root-stats">
             <div><b>${s.open}</b><span>açık soru</span></div>
             <div><b>${s.edits}</b><span>düzenleme</span></div>
-            <div><b>${s.done}</b><span>çözüldü</span></div>
+            <div><b>${s.done}</b><span>sonuçlandı</span></div>
           </div><i class="port-out"></i>`;
       }
       case "section":
@@ -317,14 +317,15 @@ export class IdeaTree {
       case "question":
       case "resolved": {
         const done = item.kind === "resolved";
+        const doneLabel = n.status === "dismissed" ? "Rotadan çıkarıldı" : "Çözüldü";
         const [title, sub] = splitSentence(n.text);
         const hasThread = item.children.some((c) => c.kind === "thread");
         const kind = questionKind(n);
         return `<div class="tn-head"><span class="tile sm t-${done ? "resolved" : kind.tone}">${icon(done ? "check" : kind.icon, 13)}</span>
-            <span class="tn-kind">${done ? "Çözüldü" : kind.label}</span>${time}</div>
+            <span class="tn-kind">${done ? doneLabel : kind.label}</span>${time}</div>
           <div class="tn-body${expanded ? " full" : ""}"><span class="lead">${esc(title)}</span>${sub ? ` <span class="rest">${esc(sub)}</span>` : ""}</div>
           <div class="tn-foot">
-            <span class="chip ${done ? "chip-done" : "chip-open"}">${done ? "Çözüldü" : "Açık"}</span>
+            <span class="chip ${n.status === "dismissed" ? "chip-rejected" : done ? "chip-done" : "chip-open"}">${done ? doneLabel : "Açık"}</span>
             ${done && !hasThread ? "" : `<button class="btn btn-sm ${done ? "btn-ghost" : "btn-accent"}" data-act="chat">${icon("message", 13)}${hasThread ? "Sohbete dön" : "Sohbet Et"}</button>`}
           </div><i class="port-in"></i>${item.children.length ? '<i class="port-out"></i>' : ""}`;
       }

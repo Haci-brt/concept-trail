@@ -3,6 +3,7 @@
 import { api, clientId, connectEvents } from "./api.js";
 import { ChatDrawer } from "./chat.js";
 import { desktopCall, desktopHud, desktopReady, isDesktop, openExternal } from "./desktop.js";
+import { DirectionDialog } from "./direction.js";
 import { confirmDialog, openMenu, promptDialog, shortcutsDialog } from "./dialogs.js";
 import { MarkdownEditor } from "./editor.js";
 import { HistoryPanel } from "./history.js";
@@ -100,6 +101,23 @@ const ladderPanel = new LadderPanel($("#ladder"), {
   showWaiting: () => {
     if (!shown.panel) setPanel(true);
     $("#history .h-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  },
+  correctDirection: (path) => direction.open(path),
+});
+
+const direction = new DirectionDialog({
+  beforeOpen: async (path) => {
+    const tab = tabByPath(path);
+    if (tab) {
+      await saveTab(tab);
+      if (tab.dirty) throw new Error("Not kaydedilemedi; önce kaydetmeyi tekrar dene.");
+    }
+  },
+  onSaved: (path) => {
+    ladderPanel.load(path);
+    toast("Yeni yön kaydedildi. Sonraki sorular buna göre üretilecek.");
+    const tab = tabByPath(path);
+    if (tab && state.model.model_up) analyze(tab);
   },
 });
 
@@ -203,6 +221,7 @@ function buildChrome() {
   }).join("") +
     `<span class="grow"></span>
      <button class="icon-btn ask" id="askBtn" title="Asistana şimdi sor (Ctrl+Enter)">${icon("sparkles", 18)}</button>
+     <button class="btn direction-launch" id="directionBtn" title="Asistanın yönünü düzelt">Rotayı düzelt</button>
      <button class="icon-btn" id="researchEditorBtn" title="Bu notu araştır">${icon("search", 17)}</button>
      <button class="icon-btn" id="previewToggle" title="Önizlemeyi aç/kapat">${icon("columns", 17)}</button>`;
   bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
@@ -211,6 +230,7 @@ function buildChrome() {
     const tab = activeTab();
     if (!btn || !tab) return;
     if (btn.id === "askBtn") return analyze(tab, true);
+    if (btn.id === "directionBtn") return direction.open(tab.path);
     if (btn.id === "researchEditorBtn") return research.open();
     if (btn.id === "previewToggle") return setPreview(state.preview === "hidden" ? "preview" : "hidden");
     tools[Number(btn.dataset.tool)][2](tab.editor);

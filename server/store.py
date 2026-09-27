@@ -30,7 +30,8 @@ MAX_ASSISTANT_TEXTS = 60     # a long note's worth; the oldest drop off
 
 
 def empty_state() -> dict:
-    return {"version": 2, "counter": 0, "nodes": [], "analyzed_text": "", "last_question": ""}
+    return {"version": 2, "counter": 0, "nodes": [], "analyzed_text": "", "last_question": "",
+            "direction": None, "direction_history": []}
 
 
 def _migrate_legacy(data: dict) -> dict:

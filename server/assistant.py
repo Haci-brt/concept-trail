@@ -73,7 +73,7 @@ def focus_span(content: str, nodes: list[dict], span) -> list[int] | None:
         return span
     counts: dict[str, int] = {}
     for node in nodes:
-        if node["type"] == "question":
+        if node["type"] == "question" and node.get("status") != "dismissed":
             counts[node.get("section") or ""] = counts.get(node.get("section") or "", 0) + 1
     candidates = [(name, start, end) for name, body, start, end in sections_with_spans(content) if body.strip()]
     if not candidates:
@@ -119,7 +119,7 @@ def related_question_parent(text: str, section: str, nodes: list[dict]) -> str |
         return None
     best_id, best_score = None, 0.0
     for node in nodes:
-        if node.get("type") != "question":
+        if node.get("type") != "question" or node.get("status") == "dismissed":
             continue
         question_terms = _topic_stems(node.get("text", ""))
         messages = [m.get("text", "") for m in nodes
@@ -143,7 +143,7 @@ def section_coverage(content: str, nodes: list[dict]) -> str:
     stops circling the first paragraph."""
     counts: dict[str, int] = {}
     for node in nodes:
-        if node["type"] == "question":
+        if node["type"] == "question" and node.get("status") != "dismissed":
             counts[node.get("section") or ""] = counts.get(node.get("section") or "", 0) + 1
     lines = []
     for name, body in sections_of(content):
@@ -617,7 +617,9 @@ class Assistant:
 
     async def _run_analysis(self, rel: str, content: str, new_part: str, span, run_id: int):
         open_nodes = self.notes.open_questions(rel)
-        nodes = self.notes.load(rel)["nodes"]
+        note_state = self.notes.load(rel)
+        nodes = note_state["nodes"]
+        direction = (note_state.get("direction") or {}).get("text", "")
         mode = ladder.note_mode(content)
         roadmap = ladder.roadmap(self.ladder_for(rel)) if mode == "yazilim" else ""
         span = focus_span(content, nodes, span)
@@ -651,6 +653,7 @@ class Assistant:
                     on_chunk, provider, span, cancelled, self.budget.record,
                     "" if climbing else coverage,
                     roadmap, mode, self.ladder_for(rel)["open"],
+                    direction,
                 )
             except llm_client.Cancelled:
                 return
@@ -693,7 +696,8 @@ class Assistant:
     def _question_branches(self, rel: str, nodes: list[dict]) -> str:
         """Give the analysis model real ids and settled details from earlier turns."""
         lines = []
-        for question in (n for n in nodes if n.get("type") == "question"):
+        for question in (n for n in nodes if n.get("type") == "question"
+                         and n.get("status") != "dismissed"):
             parent = question.get("parentId")
             line = f"- {question['id']}"
             if parent:
@@ -776,7 +780,8 @@ class Assistant:
                 return  # already waiting on enough; the pass can still resolve or suggest edits
             asked = {fold(n["text"]) for n in open_now}
             asked.add(fold(state.get("last_question", "")))
-            previous_questions = [n for n in state["nodes"] if n["type"] == "question"]
+            previous_questions = [n for n in state["nodes"]
+                                  if n["type"] == "question" and n.get("status") != "dismissed"]
             if climbing:
                 asked_now = self._climb(rung, asked_now, pending)
             for item in asked_now[:room]:
@@ -842,6 +847,57 @@ class Assistant:
 
     def ladder_for(self, rel: str) -> dict:
         return ladder.state(self.notes.load(rel).get("decisions"))
+
+    def set_direction(self, rel: str, category: str, text: str) -> dict:
+        """The writer's latest correction supersedes stale assistant work."""
+        categories = {"amac", "kullanici", "kapsam", "cikti", "diger"}
+        category, text = category.strip(), text.strip()
+        if category not in categories:
+            raise ApiError(400, "Düzeltme alanı bilinmiyor.")
+        if not text or len(text) > 2000:
+            raise ApiError(400, "Yönlendirme 1–2000 karakter olmalı.")
+        content = self.vault.read_note(rel)["content"]
+        if self.busy == rel:
+            self.cancel_running("direction")
+            self._next_force = (rel, content)
+
+        entry = {"category": category, "text": text, "created": now_iso()}
+        closed, discarded = [], []
+        with self.notes.lock:
+            state = self.notes.load(rel)
+            previous = state.get("direction")
+            if previous:
+                state.setdefault("direction_history", []).append(previous)
+                del state["direction_history"][:-20]
+            state["direction"] = entry
+            state["last_question"] = ""
+            state["analyzed_text"] = ""
+            # A changed goal or audience can invalidate all downstream choices.
+            # Output-style feedback does not change the software decisions.
+            if category != "cikti":
+                state["decisions"] = {}
+                state["phase"] = ladder.state({})["phase"]
+            for node in state["nodes"]:
+                if node["type"] == "question" and node.get("status") == "open":
+                    node.update(status="dismissed", dismissed_at=now_iso(), dismissed_by="direction")
+                    closed.append(node.copy())
+                elif node["type"] in ("edit", "summary") and node.get("status") == "pending":
+                    node.update(status="rejected", rejected_at=now_iso(), rejected_by="direction")
+                    discarded.append(node.copy())
+            self.notes.save(rel)
+
+        for node in closed + discarded:
+            self._publish_node(rel, node)
+            event = self.history.find_by_node(rel, node["id"], node["type"])
+            if event:
+                self.history.update(event, status=node["status"])
+                self.broker.publish("history_update", event)
+        affected = {n["id"] for n in closed + discarded}
+        self._drop_from_queue(lambda e: e.get("path") == rel and e.get("node_id") in affected)
+        rung = self.ladder_for(rel)
+        self.broker.publish("ladder", {"path": rel, "ladder": rung, "transition": None})
+        return {"direction": entry, "closed_questions": len(closed),
+                "discarded_proposals": len(discarded), "ladder": rung}
 
     def set_decisions(self, rel: str, changes: dict, by: str, question: str | None = None,
                       values: dict | None = None, quiet: bool = False) -> dict:
@@ -921,7 +977,7 @@ class Assistant:
         node = self.notes.find_node(rel, node_id)
         if node is None or node["type"] != "question":
             raise ApiError(404, "Soru bulunamadı.")
-        if node.get("status") == "resolved":
+        if node.get("status") != "open":
             return node
         node = self.notes.update_node(rel, node_id, status="resolved", resolved_at=now_iso())
         self._publish_node(rel, node)
@@ -1045,6 +1101,9 @@ class Assistant:
             note_text = self.vault.read_note(rel)["content"]
         except ApiError:
             note_text = ""
+        direction = (self.notes.load(rel).get("direction") or {}).get("text", "")
+        if direction:
+            note_text += f"\n\n[KULLANICININ SON YÖNÜ — eski notla çelişirse bu geçerli]\n{direction}"
 
         loop = asyncio.get_running_loop()
         updates: asyncio.Queue = asyncio.Queue()
@@ -1134,7 +1193,7 @@ class Assistant:
                 try:
                     note_entry = (await asyncio.to_thread(llm_client.summarize_for_note, messages,
                                                           self.provider_for("summary", rel),
-                                                          self.budget.record)).strip()
+                                                          self.budget.record, direction)).strip()
                 except Exception:
                     note_entry = ""
 
@@ -1191,9 +1250,11 @@ class Assistant:
         if not any(n["type"] == "chat-user" for n in self.notes.thread(rel, node_id)):
             raise ApiError(400, "Önce biraz sohbet et — nota yazılacak bir sonuç yok.")
         try:
+            direction = (self.notes.load(rel).get("direction") or {}).get("text", "")
             with self._conversing():
                 text = (await asyncio.to_thread(llm_client.summarize_for_note, messages,
-                                                self.provider_for("summary", rel), self.budget.record)).strip()
+                                                self.provider_for("summary", rel), self.budget.record,
+                                                direction)).strip()
         except Exception:
             self.check_now()
             raise ApiError(502, "Model yanıt vermedi, model çalışıyor mu kontrol et.")
