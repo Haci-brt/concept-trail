@@ -1024,3 +1024,26 @@ def test_components_left_out_are_taken_from_the_keywords():
     terms = llm_client.parse_search_terms(
         "ANAHTAR: web scraping, content extraction, SSRF protection\nKONU: web-crawling\nOZET: x")
     assert terms["components"] == ["content extraction", "SSRF protection"]
+
+
+# ---------------------------------------------------------------- the idea's own noun
+def test_github_names_the_tool_by_what_it_is():
+    """Live: "subscription tracking" searched topic:subscription-management and
+    found billing platforms; the trackers carry topic:subscription-tracker."""
+    from server import research as R
+    queries = build_queries(["subscription tracking", "family", "reminders"],
+                            ["subscription-management", "personal-finance"])
+    assert queries[0] == {"style": "topic", "query": "topic:subscription-tracker"}
+    assert R._agent_topics(["family tracking", "expense tracking"]) == ["expense-tracker"]
+
+
+def test_projects_about_something_else_come_after():
+    """Medicine reminders found by three query styles outranked subscription trackers."""
+    candidates = {
+        "a/meds": Candidate(repo="a/meds", url="u", stars=5, description="Family medicine reminders tracking",
+                            topics=["reminder-app"], found_by=["topic", "kisa", "readme"]),
+        "b/subs": Candidate(repo="b/subs", url="u", stars=1, description="Track your subscriptions",
+                            topics=[], found_by=["kisa"]),
+    }
+    ranked = rank(candidates, keywords=["subscription tracking", "family", "reminders"])
+    assert [c.repo for c in ranked] == ["b/subs", "a/meds"]

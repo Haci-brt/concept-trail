@@ -116,6 +116,41 @@ def _is_component_topic(tag, components):
     return any(words in part or part in words for part in parts)
 
 
+# GitHub names these tools by what they are, not by what they do
+AGENT_NOUNS = {"tracking": "tracker", "management": "manager", "monitoring": "monitor",
+               "scheduling": "scheduler", "planning": "planner", "logging": "logger",
+               "reminders": "reminder", "budgeting": "budget", "reading": "reader"}
+# words that say nothing about which idea this is
+PLAIN_WORDS = {"simple", "family", "personal", "open", "source", "self", "hosted", "local", "first",
+               "mobile", "desktop", "app", "application", "tool", "tools", "smart", "easy", "free",
+               "based", "online", "offline", "private", "small", "tiny"}
+
+
+def _agent_topics(keywords) -> list[str]:
+    """"subscription tracking" -> subscription-tracker: the topic GitHub's
+    projects actually carry (expense-tracker, password-manager). The model
+    chose subscription-management for it — the topic of billing platforms."""
+    topics = []
+    for phrase in keywords or []:
+        words = re.findall(r"[a-z0-9]+", str(phrase).lower())
+        if len(words) == 2 and words[1] in AGENT_NOUNS and words[0] not in PLAIN_WORDS:
+            topic = f"{words[0]}-{AGENT_NOUNS[words[1]]}"
+            if topic not in topics:
+                topics.append(topic)
+    return topics[:2]
+
+
+def _anchor_word(keywords) -> str:
+    """The idea's own noun: the first telling word of its first keyword
+    ("subscription" in "subscription tracking")."""
+    for phrase in keywords or []:
+        for word in re.findall(r"[a-z0-9]+", str(phrase).lower()):
+            if len(word) >= 4 and word not in PLAIN_WORDS:
+                return word
+        break
+    return ""
+
+
 def build_queries(keywords, topics, summary="", components=()) -> list[dict]:
     """One query per proven style, built from what the model extracted.
 
@@ -138,6 +173,8 @@ def build_queries(keywords, topics, summary="", components=()) -> list[dict]:
     # most starred Markdown tools (rich, pandoc), not note apps. It still
     # narrows a pair, so it only stands alone when nothing specific is left.
     specific = [tag for tag in tags if "-" in tag] + [tag for tag in tags if "-" not in tag]
+    agent = _agent_topics(keywords)
+    specific = [*agent[:1], *[tag for tag in specific if tag not in agent[:1]]]
     for tag in specific[:2]:
         add("topic", f"topic:{tag.replace(' ', '-')}")
     if len(tags) >= 2:
@@ -387,6 +424,13 @@ def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=()) -> list[Candida
     found. Within a tier relevance, then popularity. Stars alone would bury a
     small project that every single query style agreed on."""
     words = set(_keywords(keywords, 12))
+    anchor = _anchor_word(keywords)[:5]
+
+    def about_it(candidate):
+        """Mentions the idea's own noun: medicine reminders that three queries
+        agreed on outranked every subscription tracker without this."""
+        haystack = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
+        return not anchor or bool(re.search(r"(?<![a-z0-9])" + re.escape(anchor), haystack))
 
     def relevance(candidate):
         haystack = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
@@ -395,7 +439,7 @@ def rank(candidates: dict, limit: int = RANK_LIMIT, keywords=()) -> list[Candida
     def key(c):
         prior = prior_families(c)
         support = any(style not in STYLE_FAMILY for style in c.found_by)
-        return (-len(prior), -support, -relevance(c), -c.stars, c.repo.casefold())
+        return (not about_it(c), -len(prior), -support, -relevance(c), -c.stars, c.repo.casefold())
 
     ordered = sorted(candidates.values(), key=key)
     # A fifth of the list goes to the best known prior art the corroboration
