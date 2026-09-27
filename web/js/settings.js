@@ -11,6 +11,7 @@ const ROLE_INFO = [
   ["analysis", "Not izleme ve araştırma", "15 saniye durduğunda ya da bir şey yapıştırdığında notu sessizce inceler; araştırmayı da yürütür."],
   ["chat", "Sohbet", "Cevabını değerlendirir, anlamadıysa tekrar sorar."],
   ["summary", "Nota yazma", "Sonucu notuna eklenecek cümleye dönüştürür."],
+  ["compare", "Rakip analizi", "Araştırmada en yakın projelerin issue'larından fikrine öneri çıkarır; araştırma başına bir çağrı. Daha güçlü bir model burada fark eder (boş bırakılırsa not izleme modeli)."],
 ];
 
 const PRESETS = [
@@ -18,6 +19,11 @@ const PRESETS = [
     kind: "remote", health: "models", token_field: "max_completion_tokens" },
   { key: "openrouter", label: "OpenRouter", base_url: "https://openrouter.ai/api", model: "openai/gpt-4o-mini",
     kind: "remote", health: "models", token_field: "max_tokens" },
+  // for the competitor analysis: its answer comes back empty unless its
+  // thinking is switched off (it spends the whole token budget thinking)
+  { key: "openrouter-deepseek", label: "OpenRouter · DeepSeek V4 Flash", base_url: "https://openrouter.ai/api",
+    model: "deepseek/deepseek-v4-flash", kind: "remote", health: "models", token_field: "max_tokens",
+    extras: { reasoning: { enabled: false } } },
   { key: "groq", label: "Groq", base_url: "https://api.groq.com/openai", model: "llama-3.3-70b-versatile",
     kind: "remote", health: "models", token_field: "max_tokens" },
   { key: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-chat",

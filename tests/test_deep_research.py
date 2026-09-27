@@ -22,8 +22,9 @@ def test_the_comparison_keeps_only_given_projects_and_components():
            '"zayif": ["büyük kasada yavaş"], "ders": "Graf görünümü eklenti olarak başlayabilir."}, '
            '{"repo": "uydurma/proje", "ozet": "x"}], '
            '"anahtarlar": {"Graph visualization": ["graph view", "x"], "Uydurma bileşen": ["y y y"]}, '
-           '"argumanlar": [{"repo": "foambubble/foam", "kanit": "graph visualization of your notes", '
-           '"oneri": "Graf ilk sürümde salt okunur olabilir."}, {"repo": "uydurma/proje", "kanit": "a b c", '
+           '"oneriler": [{"repo": "foambubble/foam", "kanit": "graph visualization of your notes", '
+           '"karar": "graph visualization", "oneri": "Graf ilk sürümde salt okunur olmalı, düzenleme sonra; '
+           'rakip de böyle başlamış."}, {"repo": "uydurma/proje", "kanit": "a b c", "karar": "veri", '
            '"oneri": "Bir şey yap."}]}')
     result = llm_client.parse_comparison(raw, ["foambubble/foam"], ["graph visualization", "backlinks"])
     assert [p["repo"] for p in result["projects"]] == ["foambubble/foam"]
@@ -36,10 +37,10 @@ def test_a_flat_absence_claim_is_dropped():
     """Measured: "Logseq has no graph view", "none of them offer full-text search"."""
     raw = ('{"projeler": [{"repo": "a/b", "ozet": "Not uygulaması; tam metin arama sunmuyor.", '
            '"ders": "Hiçbiri çevrimdışı çalışmıyor, bu fırsat."}], '
-           '"argumanlar": [{"repo": "a/b", "kanit": "local first notes", '
-           '"oneri": "Projelerin hiçbiri yerel arama desteklemiyor, sen ekle."}]}')
+           '"oneriler": [{"repo": "a/b", "kanit": "local first notes", "karar": "veri", '
+           '"oneri": "Projelerin hiçbiri yerel arama desteklemiyor, sen de yerel aramayı ekle çünkü fark olur."}]}')
     result = llm_client.parse_comparison(raw, ["a/b"], [])
-    assert result["projects"][0]["summary"] == "" and result["projects"][0]["lesson"] == ""
+    assert result["projects"][0]["summary"] == ""
     assert result["arguments"] == []
     # said about what was read, it may stand
     assert not llm_client.overclaims("Okunan README'lerde tam metin aramadan söz edilmiyor.")
@@ -104,13 +105,39 @@ def test_silence_is_claimed_only_where_nothing_hints_at_it():
 
 def test_an_argument_needs_its_quote_in_that_projects_evidence():
     parsed = {"arguments": [
-        {"repo": "reviewdog/reviewdog", "quote": "from the output of any lint tool",
+        {"repo": "reviewdog/reviewdog", "quote": "from the output of any lint tool", "decision": "parcalar",
          "idea": "Bot kendi analizini yazmak yerine mevcut linter çıktısını okuyabilir."},
-        {"repo": "reviewdog/reviewdog", "quote": "supports forty languages out of the box",
+        {"repo": "reviewdog/reviewdog", "quote": "supports forty languages out of the box", "decision": "dis",
          "idea": "Kırk dili desteklemeli."}]}
     result = R.ground_comparison(parsed, [REVIEWDOG], [])
-    assert result["arguments"] == ["Bot kendi analizini yazmak yerine mevcut linter çıktısını okuyabilir. "
-                                   "(reviewdog/reviewdog: “from the output of any lint tool”)"]
+    assert result["arguments"] == ["Ana parçalar: Bot kendi analizini yazmak yerine mevcut linter çıktısını "
+                                   "okuyabilir. (reviewdog/reviewdog: “from the output of any lint tool”)"]
+
+
+def test_a_competitors_issue_becomes_the_first_suggestion():
+    reviewdog = {**REVIEWDOG, "issues": ["Reviewdog fails on GitHub PRs with more than 300 files"]}
+    parsed = {"arguments": [
+        {"repo": "reviewdog/reviewdog", "quote": "from the output of any lint tool", "decision": "parcalar",
+         "idea": "Bot kendi analizini yazmak yerine mevcut linter çıktısını okuyabilir."},
+        {"repo": "reviewdog/reviewdog", "quote": "Reviewdog fails on GitHub PRs with more than 300 files",
+         "decision": "kenar", "idea": "Büyük PR'lerde bot yalnız değişen satırlara bakmalı; rakip 300 dosyada çöküyor."}]}
+    result = R.ground_comparison(parsed, [reviewdog], [])
+    assert result["arguments"][0].startswith("Uç durumlar: Büyük PR'lerde")
+    assert "issue'su: “Reviewdog fails on GitHub PRs with more than 300 files”" in result["arguments"][0]
+
+
+def test_a_suggestion_that_only_names_a_feature_is_too_shallow():
+    assert not llm_client.deep_enough("Python kod stil denetimi otomatikleştirilmeli.")
+    assert not llm_client.deep_enough("Satır yorumları inceleme sürecini daha etkili hale getirebilir, bu önemli.")
+    assert llm_client.deep_enough("Bot kendi analizini yazmak yerine ekibin zaten kullandığı linter çıktısını okumalı.")
+
+
+def test_a_suggestion_must_name_the_decision_it_changes():
+    raw = ('{"oneriler": [{"repo": "a/b", "kanit": "x y z", "karar": "platform", '
+           '"oneri": "Web yerine masaüstü olmalı, çünkü rakibin kullanıcıları çevrimdışı çalışıyor."}, '
+           '{"repo": "a/b", "kanit": "x y z", "karar": "uydurma", '
+           '"oneri": "Web yerine masaüstü olmalı, çünkü rakibin kullanıcıları çevrimdışı çalışıyor."}]}')
+    assert [a["decision"] for a in llm_client.parse_comparison(raw, ["a/b"], [])["arguments"]] == ["platform"]
 
 
 def test_no_evidence_is_not_a_weakness():
@@ -123,7 +150,7 @@ async def test_the_best_known_projects_are_looked_at_too(runner, monkeypatch):
     """Live: only 0-1 star repos the verdict named were analysed, never Logseq or Joplin."""
     looked = []
     monkeypatch.setattr(llm_client, "compare_projects",
-                        lambda note, comps, projects, *a: looked.extend(p["repo"] for p in projects)
+                        lambda note, comps, projects, *a, **k: looked.extend(p["repo"] for p in projects)
                         or {"projects": [], "matrix": {}, "differentiators": [], "arguments": []})
     rel = runner.vault.create_note("", "fikir", "x")
     ranked = [R.Candidate(repo=f"small/r{i}", url="u", stars=i, description="d", topics=[], found_by=["topic"])
@@ -137,7 +164,7 @@ async def test_the_best_known_projects_are_looked_at_too(runner, monkeypatch):
 async def test_a_famous_list_is_not_a_competitor(runner, monkeypatch):
     looked = []
     monkeypatch.setattr(llm_client, "compare_projects",
-                        lambda note, comps, projects, *a: looked.extend(p["repo"] for p in projects)
+                        lambda note, comps, projects, *a, **k: looked.extend(p["repo"] for p in projects)
                         or {"projects": [], "matrix": {}, "differentiators": [], "arguments": []})
     rel = runner.vault.create_note("", "fikir", "x")
     ranked = [
@@ -209,12 +236,13 @@ def runner(tmp_path):
 async def test_the_closest_projects_are_looked_at_and_compared(runner, monkeypatch):
     seen = {}
 
-    def compare(note, components, projects, provider, on_usage):
+    def compare(note, components, projects, provider, on_usage, decisions=""):
         seen["projects"] = projects
+        seen["decisions"] = decisions
         return {"projects": [{"repo": "org/notes", "summary": "Not ağı", "weak": ["çevrimdışı eşitleme"],
                               "lesson": ""}],
                 "keywords": {"backlinks": ["backlink"]}, "labels": {"backlinks": "geri bağlantılar"},
-                "arguments": [{"repo": "org/notes", "quote": "Page text about graphs",
+                "arguments": [{"repo": "org/notes", "quote": "Page text about graphs", "decision": "veri",
                                "idea": "Graf görünümü sayfa metninden üretilebilir."}]}
 
     monkeypatch.setattr(llm_client, "compare_projects", compare)
@@ -227,7 +255,8 @@ async def test_the_closest_projects_are_looked_at_and_compared(runner, monkeypat
     assert gathered["issues"] == ["Sync loses notes offline"] and gathered["site"].startswith("Page text")
     assert deep["projects"][0]["stars"] == 900 and deep["projects"][0]["weak"] == ["çevrimdışı eşitleme"]
     assert deep["matrix"] == {"backlinks": {"org/notes": "var"}} and "evidence" not in deep["projects"][0]
-    assert deep["arguments"][0]["text"].startswith("Graf görünümü sayfa metninden üretilebilir.")
+    assert deep["arguments"][0]["text"].startswith("Veri: Graf görünümü sayfa metninden üretilebilir.")
+    assert "Açık: amac (Amaç" in seen["decisions"]
     assert deep["arguments"][0]["id"].startswith("arg-")
 
 

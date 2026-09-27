@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 
 from core import llm_client
 from server.errors import ApiError
+from server import ladder
 from server.store import now_iso
 from server.vault import split_frontmatter
 
@@ -939,6 +940,18 @@ def _quoted(quote: str, text: str) -> bool:
     return sum(_mentions(text, word) >= 0 for word in words) >= 0.8 * len(words)
 
 
+def _an_issue(quote: str, titles: list[str]) -> str | None:
+    """The issue title a quote stands for: the same, or nearly (four in five
+    of its words)."""
+    words = re.findall(r"[a-z0-9]{3,}", quote.lower())
+    for title in titles:
+        if " ".join(quote.lower().split()) == " ".join(title.lower().split()):
+            return title
+        if len(words) >= 3 and sum(_mentions(title, w) >= 0 for w in words) >= 0.8 * len(words):
+            return title
+    return None
+
+
 def ground_comparison(parsed: dict, gathered: list[dict], components: list[str]) -> dict:
     """The comparison as the evidence supports it.
 
@@ -983,11 +996,23 @@ def ground_comparison(parsed: dict, gathered: list[dict], components: list[str])
                     f"“{labels.get(component, component)}”, incelenen {len(evidence)} projenin okunan README "
                     "ve sitelerinde geçmiyor; fikrini ayırabilecek bir nokta olabilir (yokluk kanıtı değil, "
                     "doğrulamak gerekir).")
-    arguments = [f"{item['idea']} ({item['repo']}: “{item['quote']}”)"
-                 for item in parsed.get("arguments") or []
-                 if item.get("repo") in evidence and _quoted(item.get("quote", ""), evidence[item["repo"]])]
+    issues = {facts["repo"]: facts.get("issues") or [] for facts in gathered}
+    arguments, from_issues = [], []
+    for item in parsed.get("arguments") or []:
+        repo = item.get("repo")
+        if repo not in evidence:
+            continue
+        decision = item.get("decision") or ""
+        target = (ladder.DECISIONS[decision][1] if decision in ladder.DECISIONS
+                  else labels.get(decision, decision))
+        title = _an_issue(item.get("quote", ""), issues.get(repo, []))
+        if title:                           # what its users run into: the most telling
+            from_issues.append(f"{target}: {item['idea']} ({repo} issue'su: “{title}”)")
+        elif _quoted(item.get("quote", ""), evidence[repo]):
+            arguments.append(f"{target}: {item['idea']} ({repo}: “{item['quote']}”)")
+    arguments = from_issues + arguments
     return {"projects": projects, "matrix": matrix, "quotes": quotes, "labels": labels,
-            "differentiators": differentiators[:4], "arguments": arguments[:4]}
+            "differentiators": differentiators[:4], "arguments": arguments[:5]}
 
 
 def issue_titles(payload: dict, limit: int = 8) -> list[str]:
@@ -1645,9 +1670,10 @@ class ResearchRunner:
         components = _components(terms.get("components")) or _keywords(terms.get("keywords"), 4)
         self._progress(rel, "rakipler", "Benzer projeler fikirle karşılaştırılıyor")
         try:
+            decisions = ladder.brief(ladder.state(self.notes.load(rel).get("decisions")))
             parsed = await asyncio.to_thread(
                 llm_client.compare_projects, content, components, gathered,
-                self.provider_for("analysis", rel), self.record_usage)
+                self.provider_for("compare", rel), self.record_usage, decisions=decisions)
         except Exception:
             parsed = {}                         # the matrix still comes from the evidence
         comparison = ground_comparison(parsed, gathered, components)

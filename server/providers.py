@@ -21,7 +21,13 @@ from pathlib import Path
 
 from server.errors import ApiError
 
-ROLES = ("analysis", "chat", "summary")
+ROLES = ("analysis", "chat", "summary", "compare")
+# A role nobody bound follows another: the competitor analysis ("compare")
+# is one call per research, where a stronger model than the watch's pays off
+# (measured: GPT-4o-mini paraphrased competitors, DeepSeek V4 Flash turned
+# their users' issues into decisions) — but until someone says so, it runs
+# on whatever does the analysis.
+ROLE_FALLBACK = {"compare": "analysis"}
 KEY_MASK = "••••"
 HEALTH_STYLES = ("llama", "models", "none")
 KINDS = ("local", "remote")
@@ -193,7 +199,7 @@ class ProviderRegistry:
             chain = data.get("roles", {}).get(role) or []
             roles[role] = [pid for pid in chain if pid in providers]
             if not roles[role]:
-                roles[role] = list(providers)[:1]
+                roles[role] = list(roles.get(ROLE_FALLBACK.get(role), [])) or list(providers)[:1]
         with self.lock:
             self.providers = providers
             self.roles = roles
@@ -300,7 +306,7 @@ class ProviderRegistry:
             unknown = [pid for pid in chain if pid not in seen]
             if unknown:
                 raise ApiError(400, f"“{role}” için bilinmeyen sağlayıcı: {', '.join(unknown)}")
-            roles[role] = chain or [cleaned[0]["id"]]
+            roles[role] = chain or list(roles.get(ROLE_FALLBACK.get(role), [])) or [cleaned[0]["id"]]
 
         self._apply({"providers": cleaned, "roles": roles})
         self.save()

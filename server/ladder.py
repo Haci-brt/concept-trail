@@ -194,6 +194,21 @@ def roadmap(ladder: dict) -> str:
     return "\n".join(lines)
 
 
+def brief(ladder: dict) -> str:
+    """Every decision in one block, for prompts other than the ladder's own:
+    what is decided (with its value) and what is still open, on every rung —
+    a competitor can teach something about the deployment as well as the scope."""
+    decided, open_ = [], []
+    for level in ladder["levels"]:
+        for row in level["decisions"]:
+            if row["decided"]:
+                decided.append(f"{row['id']} ({row['label']}): {row.get('value') or 'notta yazıyor'}")
+            else:
+                open_.append(f"{row['id']} ({row['label']}: {row['hint']})")
+    return ("[KARARLAR]\nVerilmiş: " + ("; ".join(decided) or "henüz yok")
+            + "\nAçık: " + ("; ".join(open_) or "yok"))
+
+
 def transition(before: dict, after: dict) -> dict | None:
     """What changed in a way the writer should hear about: a rung finished, or
     the note reached the product phase. Going back (a decision taken away)
