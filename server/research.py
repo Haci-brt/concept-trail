@@ -56,6 +56,11 @@ COMPETITOR_POOL = RANK_LIMIT  # every ranked candidate is put to the model, not 
 # the place of grocery-list (50), and Tandoor and KitchenOwl were not found.
 THIN_TOPIC = 10
 MAX_TOPIC_SWAPS = 2
+# Topics learned from the projects found: GitHub's own words for the idea.
+# The model said recipe-management and meal-planning; Mealie carries
+# recipe-manager, Tandoor meal-planner — and topic:recipe-manager, already
+# sorted by stars, puts Mealie and KitchenOwl first.
+LEARNED_TOPICS = 2
 MAX_FOCUS_CHARS = 400
 MAX_SOURCE_CONTENT = 8000
 PER_PAGE = 50
@@ -128,7 +133,11 @@ AGENT_NOUNS = {"tracking": "tracker", "management": "manager", "monitoring": "mo
 # words that say nothing about which idea this is
 PLAIN_WORDS = {"simple", "family", "personal", "open", "source", "self", "hosted", "local", "first",
                "mobile", "desktop", "app", "application", "tool", "tools", "smart", "easy", "free",
-               "based", "online", "offline", "private", "small", "tiny"}
+               "based", "online", "offline", "private", "small", "tiny",
+               # on GitHub nearly every repository is "code": as the telling
+               # word of "code review" it learned the topics codex and
+               # claude-code, and AI-agent tooling filled the list (measured)
+               "code", "automated", "automatic", "automation"}
 
 
 def _agent_topics(keywords) -> list[str]:
@@ -1072,6 +1081,45 @@ def log_result(record: dict, outcome: dict, rows: list) -> None:
     record["empty"] = record["ok"] and record["count"] == 0
 
 
+def wider_queries(query: str) -> list[str]:
+    """The earlier queries whose results contain everything this one could
+    return: each topic of a topic pair, the lower star gate of a star gate."""
+    query = " ".join(query.split())
+    topics = re.findall(r"topic:([A-Za-z0-9][A-Za-z0-9-]*)", query)
+    if len(topics) >= 2 and len(topics) == len(query.split()):
+        return [f"topic:{topic}" for topic in topics]
+    gate = re.fullmatch(r"(.+) stars:>(\d+)", query)
+    if gate:
+        return [f"{gate.group(1)} stars:>{lower}" for lower in STAR_GATES if lower < int(gate.group(2))]
+    return []
+
+
+def learned_topics(candidates: dict, terms, asked, limit: int = LEARNED_TOPICS) -> list[str]:
+    """The topics the projects found actually carry, where they contain one of
+    the idea's own words: "recipe-manager" and "meal-planner" from Mealie and
+    Tandoor, which the model's "recipe-management" missed. A topic counts when
+    two projects carry it, or one well-known project does."""
+    profile = _profile(terms)
+    phrases = profile.get("anchors") or terms.get("keywords") or []
+    # five letters: "auto" of "automated" learned autonomous-agent
+    stems = {w[:5] for phrase in phrases for w in re.findall(r"[a-z0-9]+", str(phrase).lower())
+             if len(w) >= 4 and w not in PLAIN_WORDS}
+    score = {}
+    for candidate in candidates.values():
+        text = " ".join((candidate.repo, candidate.description, " ".join(candidate.topics))).lower()
+        if off_topic(text, terms):
+            continue
+        weight = 1 + ((candidate.stars or 0) >= KNOWN_STARS) + ((candidate.stars or 0) >= 5000)
+        for topic in set(candidate.topics or []):
+            topic = str(topic).lower()
+            if f"topic:{topic}" in asked or not any(part.startswith(stem) for part in topic.split("-")
+                                                    for stem in stems):
+                continue
+            score[topic] = score.get(topic, 0) + weight
+    ranked = sorted(score.items(), key=lambda item: (-item[1], item[0]))
+    return [topic for topic, points in ranked if points >= 2][:limit]
+
+
 def plain_topic(query: str) -> str:
     """`topic:markdown-notebook` -> `markdown notebook`: the words the model
     meant, for when the topic itself does not exist on GitHub."""
@@ -1333,31 +1381,29 @@ class ResearchRunner:
                                 _profile(terms))[:MAX_GITHUB_QUERIES]
         candidates = {}
         spare = [f"topic:{tag}" for tag in _tags(terms.get("topics"), _profile(terms))]
-        swaps, index = 0, 0
-        while index < len(queries):
-            entry = queries[index]
-            index += 1
+        complete = set()        # queries whose every result came back
+        swaps, skipped, index = 0, 0, 0
+
+        def asked():
+            return {q["query"] for q in queries} | {str(q.get("query")) for q in query_log}
+
+        async def run(entry, number, total):
             self._assert_public(rel, content)
-            label = "GitHub " + str(index) + "/" + str(len(queries)) + ": " + entry["query"]
-            self._progress(rel, "arama", label, done=index - 1, total=len(queries))
+            self._progress(rel, "arama", f"GitHub {number}/{total}: {entry['query']}", done=number - 1, total=total)
             record = {"purpose": "prior", **entry, "ok": False}
             query_log.append(record)
             try:
                 outcome = await self.tool_hub.call(
                     "git_search", {"query": entry["query"], "per_page": PER_PAGE, "sort": "stars"})
             except ApiError:
-                continue
+                return None
             rows = items_of(outcome) if outcome.get("ok") else []
             log_result(record, outcome, rows)
             if not outcome.get("ok"):
-                continue
+                return None
+            if isinstance(record.get("total"), int) and record["total"] <= record["count"]:
+                complete.add(entry["query"])
             merge(candidates, entry["style"], rows)
-            if entry["style"] == "topic" and 0 < len(rows) < THIN_TOPIC and swaps < MAX_TOPIC_SWAPS:
-                asked = {q["query"] for q in queries} | {str(q.get("query")) for q in query_log}
-                better = next((topic for topic in spare if topic not in asked), None)
-                if better:
-                    queries.insert(index, {"style": "topic", "query": better})
-                    swaps += 1
             words = plain_topic(entry["query"]) if not rows and entry["style"] == "topic" else ""
             if words and not any(q.get("query") == words for q in query_log):
                 # the model named a topic GitHub has never heard of; its words
@@ -1372,10 +1418,34 @@ class ResearchRunner:
                 again_rows = items_of(again) if again.get("ok") else []
                 log_result(retry, again, again_rows)
                 merge(candidates, "topic-duz", again_rows)
-            self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"), terms=terms)],
+            self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"),
+                                                                  terms=terms)],
                        queries=query_log)
+            return rows
+
+        while index < len(queries):
+            entry = queries[index]
+            index += 1
+            if any(wider in complete for wider in wider_queries(entry["query"])):
+                # a topic pair inside a topic that came back whole, a higher
+                # star gate inside a lower one: nothing new can come of it
+                query_log.append({"purpose": "prior", **entry, "ok": True, "skipped": True, "count": 0})
+                skipped += 1
+                continue
+            rows = await run(entry, index, len(queries))
+            if (rows is not None and entry["style"] == "topic" and 0 < len(rows) < THIN_TOPIC
+                    and swaps < MAX_TOPIC_SWAPS):
+                better = next((topic for topic in spare if topic not in asked()), None)
+                if better:
+                    queries.insert(index, {"style": "topic", "query": better})
+                    swaps += 1
+        # the calls saved above go to the topics the found projects carry
+        learned = learned_topics(candidates, terms, asked(), LEARNED_TOPICS + skipped)
+        for number, topic in enumerate(learned, start=1):
+            await run({"style": "topic", "query": f"topic:{topic}", "learned": True},
+                      len(queries) + number, len(queries) + len(learned))
         self._progress(rel, "arama", str(len(candidates)) + " aday bulundu.",
-                       done=len(queries), total=len(queries))
+                       done=len(queries) + len(learned), total=len(queries) + len(learned))
         return candidates
 
     def _web_ok(self, rel):

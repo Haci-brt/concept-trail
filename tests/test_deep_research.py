@@ -256,6 +256,55 @@ async def test_a_thin_topic_gives_its_place_to_the_next(runner, monkeypatch):
     assert asked == ["topic:family-recipes", "topic:grocery-list", "topic:recipe-management"]
 
 
+def test_a_query_inside_a_whole_earlier_result_is_known_to_add_nothing():
+    assert R.wider_queries("topic:recipe-management topic:meal-planning") == [
+        "topic:recipe-management", "topic:meal-planning"]
+    assert R.wider_queries("family recipe stars:>20000") == ["family recipe stars:>5000"]
+    assert R.wider_queries("family recipe stars:>5000") == [] and R.wider_queries("topic:recipes") == []
+
+
+def test_topics_are_learned_from_what_was_found():
+    """Mealie carries recipe-manager, Tandoor meal-planner; the model guessed recipe-management."""
+    found = {
+        "mealie-recipes/mealie": R.Candidate(repo="mealie-recipes/mealie", url="u", stars=13000, description="",
+                                             topics=["recipe-manager", "meal-plans", "self-hosted"]),
+        "TandoorRecipes/recipes": R.Candidate(repo="TandoorRecipes/recipes", url="u", stars=8600, description="",
+                                              topics=["meal-planner", "recipes", "docker", "self-hosted"]),
+        "small/one": R.Candidate(repo="small/one", url="u", stars=3, description="", topics=["recipe-manager"]),
+    }
+    terms = {"keywords": ["family recipe book"], "profile": {"anchors": ["recipe", "meal plan"]}}
+    learned = R.learned_topics(found, terms, {"topic:recipes"}, 3)
+    assert learned[:2] == ["recipe-manager", "meal-planner"] and "self-hosted" not in learned
+
+
+@pytest.mark.anyio
+async def test_skipped_searches_pay_for_learned_topics(runner, monkeypatch):
+    asked = []
+
+    class Hub2:
+        registry = {"git_search": {}}
+
+        async def call(self, name, arguments):
+            asked.append(arguments["query"])
+            if arguments["query"] == "topic:recipe-management":      # the whole result: 3 of 3
+                return envelope({"total_count": 3, "items": [
+                    {"repo": "mealie-recipes/mealie", "stars": 13000, "topics": ["recipe-manager", "meal-plans"]},
+                    {"repo": "TomBursch/kitchenowl", "stars": 3700, "topics": ["recipe-manager"]},
+                    {"repo": "a/b", "stars": 1, "topics": []}]})
+            return envelope({"total_count": 500, "items": [{"repo": f"x/{len(asked)}", "stars": 1}]})
+
+    monkeypatch.setattr(R, "build_queries", lambda *a, **k: [
+        {"style": "topic", "query": "topic:recipe-management"},
+        {"style": "topic-pair", "query": "topic:recipe-management topic:meal-planning"}])
+    runner.tool_hub = Hub2()
+    rel = runner.vault.create_note("", "fikir", "tarif")
+    log = []
+    await runner._search(rel, {"keywords": ["recipe manager"], "profile": {"anchors": ["recipe"]}}, "tarif", log)
+    assert "topic:recipe-management topic:meal-planning" not in asked        # inside a whole result
+    assert [q for q in log if q.get("skipped")][0]["query"] == "topic:recipe-management topic:meal-planning"
+    assert "topic:recipe-manager" in asked                                      # learned from what was found
+
+
 def test_the_kind_of_each_candidate_is_read_from_its_line():
     raw = ("getlago/lago: komşu — şirketler için kullanım bazlı faturalama\n"
            "- **ellite/Wallos**: aynı — aileler için abonelik takibi\n"

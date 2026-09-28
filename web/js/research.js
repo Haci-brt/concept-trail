@@ -334,7 +334,7 @@ export class ResearchPanel {
         row("Parçaların diğer adları", Object.entries(profile.synonyms || {}).map(([k, v]) => `${k}: ${v.join(", ")}`).join(" · ")),
       ].filter(Boolean), false);
     }
-    if (Array.isArray(s.queries) && s.queries.length) out += this._group(`Arama yolları (${s.queries.length})`, s.queries.map((q) => `<div class="r-query${q.empty ? " empty" : ""}"><b>${esc(q.purpose || q.style || "Arama")}${!q.ok ? " · yanıt alınamadı" : q.empty ? " · boş döndü" : typeof q.count === "number" ? ` ✓ ${q.count} sonuç` : " ✓"}</b><span>${esc(q.query || "")}</span></div>`), false);
+    if (Array.isArray(s.queries) && s.queries.length) out += this._group(`Arama yolları (${s.queries.length})`, s.queries.map((q) => `<div class="r-query${q.empty ? " empty" : ""}"><b>${esc(q.purpose || q.style || "Arama")}${q.learned ? " · bulunan projelerin etiketi" : ""}${q.skipped ? " · atlandı: önceki aramanın içinde kalıyor" : !q.ok ? " · yanıt alınamadı" : q.empty ? " · boş döndü" : typeof q.count === "number" ? ` ✓ ${q.count} sonuç` : " ✓"}</b><span>${esc(q.query || "")}</span></div>`), false);
     return out + `<p class="r-caveat">Bulunamaması fikrin özgün olduğu anlamına gelmez. Notuna alma işlemi ayrıca onay ister.</p>`;
   }
 
