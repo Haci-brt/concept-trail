@@ -1,37 +1,11 @@
 {
   "_comment": [
-    "Araştırma araçlarının (web_search / git_search) MCP sunucuları.",
-    "Yol, FIKIR_TOOLS_ROOT ortam değişkeninden gelir; ayarlı değilse aşağıdaki",
-    "varsayılan kullanılır. Bu dosyayı düzenlemek yerine kendi kopyanı",
-    "%APPDATA%/ConceptTrail/search-tools-mcp.json içine koyabilirsin; varsa o okunur.",
-    "GitHub token'ı BURAYA YAZILMAZ — uygulamanın ayarlar penceresinden girilir."
+    "Araştırmanın araçları (web_search, git_search, git_repo, git_issues, git_readme,",
+    "git_topics, web_fetch) artık uygulamanın içinde: server/websearch.py, server/github.py,",
+    "server/fetch.py. Eskiden llm-stack projesinin iki MCP sunucusuydu.",
+    "Buraya ek bir MCP sunucusu yazılabilir (ör. 'git_search' adıyla); aynı adlı araçlarda",
+    "uygulamanın kendi araçları önce gelir. Kendi kopyanı %APPDATA%/ConceptTrail/search-tools-mcp.json",
+    "içine koyabilirsin; varsa o okunur. GitHub anahtarı BURAYA YAZILMAZ — ayarlar penceresinden girilir."
   ],
-  "mcpServers": {
-    "web_search": {
-      "command": "${FIKIR_TOOLS_ROOT:-D:/src/llm-stack/Llm-stack 2.0}/.venv/Scripts/python.exe",
-      "args": [
-        "-m",
-        "harness.web_search.mcp_server",
-        "--root",
-        "${FIKIR_TOOLS_ROOT:-D:/src/llm-stack/Llm-stack 2.0}/runtime/web-search"
-      ],
-      "env": {
-        "PYTHONIOENCODING": "utf-8",
-        "PYTHONPATH": "${FIKIR_TOOLS_ROOT:-D:/src/llm-stack/Llm-stack 2.0}"
-      }
-    },
-    "git_search": {
-      "command": "${FIKIR_TOOLS_ROOT:-D:/src/llm-stack/Llm-stack 2.0}/.venv/Scripts/python.exe",
-      "args": [
-        "-m",
-        "harness.git_search.mcp_server",
-        "--root",
-        "${FIKIR_TOOLS_ROOT:-D:/src/llm-stack/Llm-stack 2.0}/runtime/github-research"
-      ],
-      "env": {
-        "PYTHONIOENCODING": "utf-8",
-        "PYTHONPATH": "${FIKIR_TOOLS_ROOT:-D:/src/llm-stack/Llm-stack 2.0}"
-      }
-    }
-  }
+  "mcpServers": {}
 }

@@ -69,7 +69,10 @@ python main.py --server     # yalnız sunucu
 
 İlk açılışta **Ayarlar → Modeller**'den bir sağlayıcı ekle (OpenRouter için adres `https://openrouter.ai/api`, model adı ve API anahtarı) ve rolleri ona bağla. Notlar varsayılan olarak `./notes` klasöründe durur (`--vault` ile değiştirilir).
 
-Araştırmanın web ve GitHub aramaları iki MCP sunucusu üzerinden yapılır (`config/search-tools-mcp.json`, kök dizin `FIKIR_TOOLS_ROOT`); GitHub anahtarı ayarlar penceresinden girilir. Sayfa okumanın tarayıcı katmanı için `playwright install chromium` gerekir.
+Araştırmanın araçları uygulamanın içindedir, başka bir kurulum istemez:
+- **GitHub** (`server/github.py`): yalnız herkese açık depolar, GitHub'ın hız sınırına uyar, sonuçları bir saat önbellekte tutar. Anahtar isteğe bağlıdır (ayarlar penceresinden girilir); anahtarla aramalar 2 sn, anahtarsız 6 sn aralıklarla yapılır.
+- **Web araması** (`server/websearch.py`): bilgisayardaki Opera ile yapılır, ama penceresi ekranda görünmez; kişisel profilin kullanılmaz. Opera başka bir yerdeyse `OPERA_EXECUTABLE` ile gösterilir. Araştır panelinden kapatılabilir.
+- **Sayfa okuma** (`server/fetch.py`): JavaScript'le çizilen sayfalar için `playwright install chromium` gerekir.
 
 ## Yapı
 ```

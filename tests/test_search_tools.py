@@ -241,84 +241,79 @@ def test_tools_reach_the_request_body_only_when_declared():
     assert "tools" not in plain.build_payload([], 0.4, 10, False)
 
 
-# ---------------------------------------------------------------- the real servers
-@needs_servers
+# ---------------------------------------------------------------- the built-in tools
+# The two llm-stack MCP servers are now part of this app (server/github.py,
+# server/websearch.py). Starting the hub starts nothing: no process, no Opera.
+BUILTIN_TOOLS = ["git_issues", "git_readme", "git_repo", "git_search", "git_topics", "web_fetch", "web_search"]
+
+
 @pytest.mark.anyio
-async def test_both_toolsets_are_discovered_with_their_own_names():
-    hub = ToolHub()
+async def test_the_research_tools_are_the_apps_own():
+    hub = ToolHub(servers={}, settings=isolated_settings())
     await hub.start()
     try:
         info = hub.public()
-        assert info["errors"] == {}
-        assert len(info["servers"]["web_search"]) == 4
-        assert len(info["servers"]["git_search"]) == 16
-        assert info["servers"]["builtin"] == ["web_fetch"]   # this app's own
-        assert info["count"] == 21
-        assert all(n.startswith("web_") for n in info["servers"]["web_search"])
-        assert all(n.startswith("git_") for n in info["servers"]["git_search"])
-        # the schemas handed to a model are the discovered ones, not a copy
+        assert info["errors"] == {} and info["servers"] == {"builtin": BUILTIN_TOOLS}
         search = next(d for d in hub.function_tools() if d["function"]["name"] == "git_search")
         assert "query" in search["function"]["parameters"]["properties"]
+        assert hub.web.status()["running"] is False             # no browser was started
     finally:
         await hub.stop()
     assert hub.registry == {}
 
 
-@needs_servers
 @pytest.mark.anyio
-async def test_web_status_answers_without_opening_opera():
-    hub = ToolHub()
+async def test_a_failing_tool_arrives_as_a_failure(monkeypatch):
+    hub = ToolHub(servers={}, settings=isolated_settings())
     await hub.start()
     try:
-        outcome = await hub.call("web_status", {})
-        body = json.loads(outcome["result"]["content"][0]["text"])
-        assert outcome["ok"] is True
-        assert body["model_invoked"] is False
-        assert body["process_ready"] is False        # no browser was started
+        def gone(repo):
+            raise ApiError(404, "GitHub'da bulunamadı.")
+        hub.registry["git_repo"]["handler"] = gone
+        outcome = await hub.call("git_repo", {"repo": "yok/boyle"})
+        assert outcome["ok"] is False and outcome["result"]["isError"] is True
     finally:
         await hub.stop()
 
 
-@needs_servers
-@pytest.mark.anyio
-async def test_a_custom_research_plan_is_accepted_and_gets_an_id():
-    hub = ToolHub()
-    await hub.start()
-    try:
-        outcome = await hub.call("git_prepare", {"plan": {
-            "question": "MCP araştırma bileşenlerini karşılaştır",
-            "topics": [{"name": "tools", "queries": ["topic:mcp-server"]}],
-            "pages_per_query": 1, "repos_per_topic": 3, "max_repos": 3, "concurrency": 2}})
-        body = json.loads(outcome["result"]["content"][0]["text"])
-        assert outcome["ok"] is True
-        assert len(body["id"]) == 32                       # the run_id other git tools take
-        assert body["plan"]["question"].startswith("MCP")
-    finally:
-        await hub.stop()
-
-
-@needs_servers
-@pytest.mark.anyio
-async def test_a_server_side_failure_arrives_as_a_failure():
-    hub = ToolHub()
-    await hub.start()
-    try:
-        outcome = await hub.call("git_status", {"run_id": "yok-boyle-bir-kosu"})
-        assert outcome["ok"] is False
-        assert outcome["result"]["isError"] is True
-    finally:
-        await hub.stop()
-
-
-@needs_servers
 @pytest.mark.anyio
 async def test_a_bad_argument_never_leaves_the_client():
-    hub = ToolHub()
+    hub = ToolHub(servers={}, settings=isolated_settings())
     await hub.start()
     try:
         with pytest.raises(ApiError) as err:
             await hub.call("git_search", {"per_page": 10})     # query is required
         assert err.value.status == 400
+        with pytest.raises(ApiError):
+            await hub.call("git_repo", {"repo": "../etc"})       # not owner/name
+    finally:
+        await hub.stop()
+
+
+@pytest.mark.anyio
+async def test_the_built_in_tools_publish_their_limits():
+    hub = ToolHub(servers={}, settings=isolated_settings())
+    await hub.start()
+    try:
+        search = hub.registry["git_search"]["schema"]["properties"]
+        assert search["per_page"]["maximum"] == 100      # GitHub's own ceiling
+        assert search["page"]["maximum"] == 10           # the 1000-result window
+        assert search["query"]["maxLength"] == 256
+        assert set(search["sort"]["enum"]) == {"stars", "updated", "best-match"}
+        assert hub.registry["web_search"]["schema"]["properties"]["query"]["maxLength"] == 500
+        assert len(hub.function_tools()) == len(BUILTIN_TOOLS)
+    finally:
+        await hub.stop()
+
+
+@pytest.mark.anyio
+async def test_a_configured_server_does_not_replace_the_apps_tools():
+    hub = ToolHub(servers={}, settings=isolated_settings())
+    hub.registry["git_search"] = {"session": object(), "server": "git_search", "description": "eski",
+                                  "schema": {}, "handler": None}
+    await hub.start()
+    try:
+        assert hub.registry["git_search"]["server"] == "builtin"
     finally:
         await hub.stop()
 
@@ -461,25 +456,6 @@ def test_the_adapter_schema_tools_are_not_offered_to_the_model():
     assert [d["function"]["name"] for d in hub.function_tools(["git_tool_schemas"])] == ["git_tool_schemas"]
 
 
-@needs_servers
-@pytest.mark.anyio
-async def test_the_real_servers_publish_the_limits_they_enforce():
-    hub = ToolHub()
-    await hub.start()
-    try:
-        search = hub.registry["git_search"]["schema"]["properties"]
-        assert search["per_page"]["maximum"] == 100      # GitHub's own ceiling
-        assert search["page"]["maximum"] == 10           # the 1000-result window
-        assert search["query"]["maxLength"] == 256
-        assert set(search["sort"]["enum"]) == {"stars", "updated", "best-match"}
-        assert hub.registry["web_search"]["schema"]["properties"]["query"]["maxLength"] == 500
-        # 20 discovered plus the built-in web_fetch, minus the two adapter-schema
-        # dumps, which are not the model's business
-        assert len(hub.function_tools()) == 19
-    finally:
-        await hub.stop()
-
-
 # ------------------------------------------------------- portable configuration
 def test_a_variable_is_expanded_so_one_config_fits_more_than_one_machine(monkeypatch):
     monkeypatch.setenv("FIKIR_TOOLS_ROOT", "E:/araclar")
@@ -517,9 +493,8 @@ async def test_a_command_that_is_not_there_says_how_to_point_at_it():
     await hub.start()
     try:
         assert "FIKIR_TOOLS_ROOT" in hub.errors["git_search"]
-        # the app still runs; only the discovered tools are gone, and reading a
-        # page is this app's own code so it survives a dead server
-        assert list(hub.registry) == ["web_fetch"]
+        # the app still runs: its own research tools do not depend on a server
+        assert sorted(hub.registry) == BUILTIN_TOOLS
     finally:
         await hub.stop()
 

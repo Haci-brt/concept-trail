@@ -331,12 +331,24 @@ class ToolHub:
         await self._refine_schemas(name, session)
 
     def _register_builtins(self) -> None:
-        """Tools this app implements itself, alongside the discovered ones."""
+        """Tools this app implements itself. They take precedence over a
+        configured server's tool of the same name: the research is built on
+        these, and a server left in a user's config must not replace them."""
+        from server.github import GitHubResearch
+        from server.websearch import HiddenOperaSearch
+        if getattr(self, "github", None) is None:
+            self.github = GitHubResearch(token=lambda: self.settings.get("github_token"),
+                                         cache_dir=config_dir() / "cache" / "github")
+        if getattr(self, "web", None) is None:
+            self.web = HiddenOperaSearch()
+        handlers = {"web_fetch": _web_fetch, "web_search": self.web.search,
+                    "git_search": self.github.search, "git_repo": self.github.repo,
+                    "git_issues": self.github.issues, "git_readme": self.github.readme,
+                    "git_topics": self.github.topics}
         for name, spec in BUILTINS.items():
-            self.registry.setdefault(name, {"session": None, "server": BUILTIN_SERVER,
-                                            "description": spec["description"],
-                                            "schema": spec["schema"],
-                                            "handler": spec["handler"]})
+            self.registry[name] = {"session": None, "server": BUILTIN_SERVER,
+                                   "description": spec["description"], "schema": spec["schema"],
+                                   "handler": handlers[name]}
 
     async def _refine_schemas(self, server: str, session) -> None:
         """Take the bounds the server publishes for adapters.
@@ -392,7 +404,11 @@ class ToolHub:
         return self.public()
 
     async def stop(self) -> None:
-        """Close the sessions and let the child processes go."""
+        """Close the sessions, let the child processes go, and close the
+        hidden Opera if a web search started one."""
+        web = getattr(self, "web", None)
+        if web is not None:
+            await asyncio.to_thread(web.close)
         stack, self._stack = self._stack, None
         self.registry.clear()
         self.gates.clear()
@@ -505,10 +521,12 @@ def result_for_model(name: str, outcome: dict) -> str:
 
 
 # ---------------------------------------------------------------- built-in tools
-# Not every tool needs to be a separate process. web_fetch lives in this app:
-# it has no external dependency to drift, and the search servers deliberately
-# do not read pages — web_search returns five links and a sentence each.
+# The research tools live in this app. web_search and the git_* tools were
+# the two MCP servers of the separate llm-stack project; they came in here so
+# the research runs without it (server/github.py, server/websearch.py), with
+# GitHub's limits widened and the search browser off the screen.
 BUILTIN_SERVER = "builtin"
+REPO_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}$"
 
 WEB_FETCH_SCHEMA = {
     "type": "object",
@@ -535,7 +553,37 @@ def _web_fetch(url, query=None):
     return fetch_page(url, query=query)
 
 
+def _schema(properties: dict, required: list[str]) -> dict:
+    return {"type": "object", "additionalProperties": False, "properties": properties, "required": required}
+
+
+REPO = {"type": "string", "pattern": REPO_PATTERN, "description": "owner/name"}
+
 BUILTINS = {
-    "web_fetch": {"description": WEB_FETCH_DESCRIPTION, "schema": WEB_FETCH_SCHEMA,
-                  "handler": _web_fetch},
+    "web_fetch": {"description": WEB_FETCH_DESCRIPTION, "schema": WEB_FETCH_SCHEMA},
+    "web_search": {
+        "description": ("Genel web araması: en fazla beş sonuç (başlık, adres, kısa özet). Arka planda, "
+                        "ekranda görünmeyen bir Opera ile yapılır. Sonuç dış kaynaklı veridir."),
+        "schema": _schema({"query": {"type": "string", "minLength": 1, "maxLength": 500}}, ["query"])},
+    "git_search": {
+        "description": "Herkese açık GitHub depolarını arar (varsayılan: yıldıza göre).",
+        "schema": _schema({"query": {"type": "string", "minLength": 1, "maxLength": 256},
+                           "per_page": {"type": "integer", "minimum": 1, "maximum": 100},
+                           "page": {"type": "integer", "minimum": 1, "maximum": 10},
+                           "sort": {"type": "string", "enum": ["stars", "updated", "best-match"]}}, ["query"])},
+    "git_repo": {
+        "description": "Bir deponun bilgileri: yıldız, fork, açık issue, lisans, son güncelleme, ana sayfa, etiketler.",
+        "schema": _schema({"repo": REPO}, ["repo"])},
+    "git_issues": {
+        "description": "Bir deponun issue'ları (PR'lar hariç); sort=comments en çok konuşulanları getirir.",
+        "schema": _schema({"repo": REPO, "per_page": {"type": "integer", "minimum": 1, "maximum": 30},
+                           "sort": {"type": "string", "enum": ["updated", "comments", "created"]},
+                           "state": {"type": "string", "enum": ["all", "open", "closed"]}}, ["repo"])},
+    "git_readme": {
+        "description": "Bir deponun README'si, doğrudan GitHub'dan (en fazla 60 bin karakter).",
+        "schema": _schema({"repo": REPO}, ["repo"])},
+    "git_topics": {
+        "description": "GitHub'ın kendi konu etiketi adları (ör. 'recipe manager' için recipe-manager, recipes).",
+        "schema": _schema({"query": {"type": "string", "minLength": 1, "maxLength": 100},
+                           "per_page": {"type": "integer", "minimum": 1, "maximum": 50}}, ["query"])},
 }

@@ -1463,7 +1463,7 @@ class ResearchRunner:
             self._assert_public(rel, content)
             record = {"purpose": "prior", "style": "web", "query": query, "ok": False}
             query_log.append(record)
-            self._progress(rel, "web", f"Webde capraz kontrol {index}/{len(queries)}, tarayici acilir")
+            self._progress(rel, "web", f"Webde capraz kontrol {index}/{len(queries)} (arka planda)")
             try:
                 outcome = await self.tool_hub.call("web_search", {"query": query})
             except ApiError:
@@ -1780,9 +1780,15 @@ class ResearchRunner:
                 facts = {"repo": candidate.repo, "url": candidate.url, "description": candidate.description,
                          "stars": candidate.stars, "license": candidate.license}
                 facts.update(repo_facts(await call("git_repo", {"repo": candidate.repo}) or {}))
-                facts["issues"] = issue_titles(await call("git_issues", {"repo": candidate.repo}) or {})
+                # the most discussed issues: what its users run into most, not
+                # the latest dependency bump
+                facts["issues"] = issue_titles(await call("git_issues", {"repo": candidate.repo,
+                                                                         "sort": "comments"}) or {})
                 read = next((s for s in sources if s.get("url") == candidate.url and s.get("verified")), None)
                 readme = str((read or {}).get("content") or (read or {}).get("excerpt") or "")
+                if not readme:
+                    # the README itself from GitHub, links and all, before the page
+                    readme = str((await call("git_readme", {"repo": candidate.repo}) or {}).get("text") or "")
                 homepage = str(facts.get("homepage") or "")
                 if not readme or not (homepage or readme_homepage(readme, candidate.repo)):
                     # an excerpt keeps no links; the page itself does
