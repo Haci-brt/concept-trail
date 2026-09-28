@@ -9,6 +9,7 @@ import { MarkdownEditor } from "./editor.js";
 import { HistoryPanel } from "./history.js";
 import { LadderPanel } from "./ladder.js";
 import { MasterPromptDialog } from "./masterprompt.js";
+import { SetupWizard } from "./setup.js";
 import { HudCard } from "./hudcard.js";
 import { icon, logo } from "./icons.js";
 import { Palette } from "./palette.js";
@@ -125,6 +126,11 @@ function openMaster() {
   const tab = activeTab();
   master.open(tab?.path, tab?.name);
 }
+
+const setupWizard = new SetupWizard({
+  onConnected: () => { state.setupNeeded = false; renderModel(); },
+});
+document.addEventListener("open-setup", () => setupWizard.open());
 
 const direction = new DirectionDialog({
   beforeOpen: async (path) => {
@@ -289,7 +295,10 @@ function buildChrome() {
   $("#stKeys").onclick = shortcutsDialog;
 
   $("#settingsBtn").onclick = () => settings.open();
-  $("#llmPill").onclick = () => { if (!state.model.chat_up) launchModel(null, 0); };
+  $("#llmPill").onclick = () => {
+    if (state.setupNeeded) setupWizard.open();
+    else if (!state.model.chat_up) launchModel(null, 0);
+  };
   $("#fastPill").onclick = () => { if (!state.model.fast_up) launchModel(null, 1); };
   $("#toggleSidebar").onclick = () => setSidebar(!shown.sidebar);
   $("#togglePanel").onclick = () => setPanel(!shown.panel);
@@ -411,9 +420,14 @@ function renderModel() {
   pill.classList.toggle("busy", Boolean(busy) && (shared || !fastUp));
   pill.classList.toggle("remote", Boolean(chatRemote));
   const role = shared ? "Model" : "Sohbet";
+  // nothing connected yet: the pill is the way to the wizard
+  const setup = state.connected && !chatUp && state.setupNeeded;
+  pill.classList.toggle("setup", setup);
   pill.querySelector(".lbl").innerHTML = !state.connected ? "Sunucu bağlantısı yok"
+    : setup ? `${icon("sparkles", 12)}Modeli bağla`
     : chatUp ? `${chatRemote ? icon("cloud", 12) : ""}${role}: ${esc(chatName || short(endpoint))}` : `${role} kapalı`;
-  pill.title = chatRemote
+  pill.title = setup ? "Asistanın düşünmesi için bir modele bağlanması gerekiyor — kurulum sihirbazını açmak için tıkla"
+    : chatRemote
     ? `${role} bulutta: ${chatName} (${short(endpoint)}) — notların bu sağlayıcıya gönderiliyor`
     : chatUp ? `${shared ? "Sohbet, not izleme ve araştırma bu modelde" : "Sohbet modeli çalışıyor"} (${short(endpoint)})`
              : `${role} kapalı — başlatmak için tıkla`;
@@ -1221,6 +1235,7 @@ function commands() {
     { label: "Kenar çubuğunu aç/kapat", icon: "panelLeft", hint: "Ctrl \\", action: () => setSidebar(!shown.sidebar) },
     { label: "Öneri panelini aç/kapat", icon: "panelRight", hint: "Ctrl Shift \\", action: () => setPanel(!shown.panel) },
     { label: "Modeller ve anahtarlar", icon: "settings", hint: "Ctrl ,", action: () => settings.open() },
+    { label: "Modeli bağla (kurulum sihirbazı)", icon: "sparkles", action: () => setupWizard.open() },
     { label: "Klavye kısayolları", icon: "keyboard", action: shortcutsDialog },
   ];
   if (tab) {
@@ -1296,7 +1311,7 @@ function connect() {
       renderStatus();
     },
     hud: (h) => hudCard?.setHud(h),
-    providers: () => { renderModel(); },
+    providers: () => { renderModel(); checkSetup(false); },
     flash: (f) => hudCard?.showFlash(f),
     history: (event) => {
       historyPanel.add(event);
@@ -1404,6 +1419,18 @@ async function boot() {
 
   connect();
   setInterval(renderStatus, 20000);
+  checkSetup(true);
+}
+
+/** Can the assistant think yet? On first start, while no model answers, the
+ *  wizard opens by itself — once: put aside, it waits behind the model pill. */
+async function checkSetup(openIfNeeded) {
+  try {
+    const setup = await api.get("/api/setup");
+    state.setupNeeded = Boolean(setup.needed);
+    renderModel();
+    if (openIfNeeded && setup.needed && !setup.dismissed && !setupWizard.isOpen) setupWizard.open(setup);
+  } catch { /* the connection light says what is wrong */ }
 }
 
 boot().catch((err) => {

@@ -12,29 +12,40 @@ from server.providers import config_dir
 
 LANGUAGES = ("tr", "en", "de", "es", "fr")
 DEFAULTS = {"ui_language": "tr", "assistant_language": "tr"}
+# yes/no choices: setup_dismissed — the writer closed the first-start wizard,
+# so it does not open by itself again (it stays one click away)
+FLAGS = {"setup_dismissed": False}
 
 
 class Preferences:
     def __init__(self, path: Path | None = None):
         self.path = path or config_dir() / "preferences.json"
-        self.data = dict(DEFAULTS)
+        self.data = {**DEFAULTS, **FLAGS}
         try:
             stored = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
         for key in DEFAULTS:
             if stored.get(key) in LANGUAGES:
+                self.data[key] = stored[key]
+        for key in FLAGS:
+            if isinstance(stored.get(key), bool):
                 self.data[key] = stored[key]
 
     def public(self) -> dict:
         return {**self.data, "languages": list(LANGUAGES)}
 
     def update(self, changes: dict) -> dict:
-        unknown = set(changes) - set(DEFAULTS)
+        unknown = set(changes) - set(DEFAULTS) - set(FLAGS)
         if unknown:
             raise ApiError(400, f"Bilinmeyen ayar: {', '.join(sorted(unknown))}")
         for key, value in changes.items():
-            if value not in LANGUAGES:
+            if key in FLAGS:
+                if not isinstance(value, bool):
+                    raise ApiError(400, "Bu ayar evet ya da hayır olmalı.")
+            elif value not in LANGUAGES:
                 raise ApiError(400, "Bilinmeyen dil.")
             self.data[key] = value
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -119,11 +119,11 @@ python main.py --server     # server only
 python scripts/make_shortcut.py   # desktop and Start menu shortcut with the app icon
 ```
 
-On first start, add a provider under **Settings → Models** (for OpenRouter: address `https://openrouter.ai/api`, a model name and an API key) and bind the roles to it. Notes live in `./notes` by default (change it with `--vault`).
+On first start a short wizard connects the assistant to a model: **OpenRouter** with a key (recommended; a link takes you to the key page), a model **already running on this computer** (Ollama, LM Studio and llama.cpp are found on their usual ports), or **any other OpenAI-compatible service**. It makes one real call before saving anything, so a wrong key or model name is said in plain words right there. Put aside, it waits behind the model button in the title bar; Settings → Models has it too, next to the full provider editor. Notes live in `./notes` by default (change it with `--vault`).
 
 The research tools are built into the app and need nothing else installed:
 - **GitHub** (`server/github.py`): public repositories only, respects GitHub's rate limits, caches results for an hour. A token is optional (entered in the settings); with one, searches run 2 s apart, without one 6 s apart.
-- **Web search** (`server/websearch.py`): runs through the Opera on your computer, but its window never shows on screen and your personal profile is not used. If Opera lives somewhere else, point `OPERA_EXECUTABLE` at it. It can be switched off in the research panel.
+- **Web search** (`server/websearch.py`): drives a Chromium-family browser already on your computer — Opera, Edge (which every Windows has), Chrome, Brave or Chromium, the first one found — with a fresh empty profile, never yours; on Windows its window is hidden, elsewhere it runs headless. With no browser at all it searches without one, through DuckDuckGo's page for browsers without JavaScript. To pick a browser, point `CT_BROWSER` at its executable. It can be switched off in the research panel.
 - **Page reading** (`server/fetch.py`): pages drawn with JavaScript need `playwright install chromium`.
 
 ## Layout

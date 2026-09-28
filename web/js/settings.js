@@ -73,6 +73,7 @@ export class SettingsDialog {
         <section>
           <div class="set-section-head">
             <h3>${icon("cpu", 15)}Sağlayıcılar</h3>
+            <button class="btn btn-sm" data-act="wizard" title="Adım adım: OpenRouter, bu bilgisayardaki bir model ya da başka bir servis">${icon("sparkles", 14)}Sihirbazla bağla</button>
             <button class="btn btn-sm" data-act="add">${icon("plus", 14)}Ekle</button>
           </div>
           <div class="provider-list"></div>
@@ -353,6 +354,11 @@ export class SettingsDialog {
     if (act === "close") return this.close();
     if (act === "save") return this._save();
     if (act === "add") return this._addMenu(e.target.closest("[data-act]"));
+    if (act === "wizard") {
+      this.close();
+      document.dispatchEvent(new CustomEvent("open-setup"));
+      return;
+    }
     if (act === "restart-tools") return this._restartTools(e.target.closest("[data-act]"));
     if (!card) return;
     if (act === "remove") {

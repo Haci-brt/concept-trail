@@ -2,12 +2,20 @@
 
 It used to be the web_search MCP server of the separate llm-stack project,
 which drove a visible Opera: a window opened on the writer's screen for every
-search. This is the same search — a real, headed Opera, because search
+search. This is the same search — a real, headed browser, because search
 engines answer a real browser, and nothing here disguises it — but its
 window is placed off the screen and hidden (Windows ShowWindow SW_HIDE) as
-soon as it exists. Only the windows of the Opera process this app started
+soon as it exists. Only the windows of the browser process this app started
 are touched: its id comes from the browser itself over CDP, never from a
-name, so the writer's own Opera windows are left alone.
+name, so the writer's own browser windows are left alone.
+
+Any Chromium-family browser will do: Opera, Edge, Chrome, Brave or Chromium,
+the first one installed (Edge comes with every Windows). Elsewhere a window
+cannot be hidden like that, so there the browser runs headless. And with no
+browser at all — or one that will not start — the search still runs, without
+one: DuckDuckGo keeps a page for browsers without JavaScript, and a plain
+HTTP request reads it (measured: ten relevant results where Bing, asked the
+same way, answered with unrelated pages).
 
 The browser runs one fresh, empty context — no profile, no history, deleted
 when the browser closes — with a few tabs opened once at launch and reused;
@@ -20,10 +28,14 @@ IDLE_CLOSE_S without one.
 """
 import asyncio
 import os
+import re
+import shutil
+import sys
 import threading
 import time
+from html import unescape
 from pathlib import Path
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from server.errors import ApiError
 
@@ -33,7 +45,7 @@ SEARCH_PROVIDERS = (
     ("google", "https://www.google.com/search?q={query}"),
     ("bing", "https://www.bing.com/search?q={query}"),
 )
-SEARCH_HOSTS = {"search.yahoo.com", "search.brave.com", "www.google.com", "www.bing.com"}
+SEARCH_HOSTS = {"search.yahoo.com", "search.brave.com", "www.google.com", "www.bing.com", "duckduckgo.com"}
 SELECTORS = {"yahoo": "#web a[href], main a[href]", "brave": "#results a[href], main a[href]",
              "google": "a:has(h3)", "bing": "li.b_algo h2 a"}
 MAX_RESULTS = 5
@@ -51,20 +63,63 @@ LAUNCH_ARGS = [
 ]
 
 
-def find_opera(configured: str | None = None) -> Path:
-    local = Path(os.environ.get("LOCALAPPDATA", ""))
-    program_files = Path(os.environ.get("PROGRAMFILES", ""))
-    program_files_x86 = Path(os.environ.get("PROGRAMFILES(X86)", ""))
-    env_path = os.environ.get("OPERA_EXECUTABLE", "").strip()
-    for candidate in (Path(configured).expanduser() if configured else None,
-                      Path(env_path).expanduser() if env_path else None,
-                      local / "Programs" / "Opera" / "opera.exe",
-                      local / "Programs" / "Opera GX" / "opera.exe",
-                      program_files / "Opera" / "opera.exe",
-                      program_files_x86 / "Opera" / "opera.exe"):
-        if candidate is not None and candidate.is_file():
+# without a browser: DuckDuckGo's page for browsers without JavaScript, then its lighter one
+HTTP_ENGINES = (("duckduckgo", "https://html.duckduckgo.com/html/?q={query}"),
+                ("duckduckgo-lite", "https://lite.duckduckgo.com/lite/?q={query}"))
+HTTP_GAP_S = 1.5             # between two searches without a browser, to stay a polite visitor
+NO_BROWSER_RETRY_S = 600     # a browser that is missing or would not start is tried again after this
+HTTP_TIMEOUT_S = 15
+
+
+def browser_candidates(platform: str | None = None) -> list[Path]:
+    """Where Opera, Edge, Chrome, Brave and Chromium live, in that order."""
+    platform = platform or sys.platform
+    if platform == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        pf, pf86 = Path(os.environ.get("PROGRAMFILES", "")), Path(os.environ.get("PROGRAMFILES(X86)", ""))
+        return [local / "Programs" / "Opera" / "opera.exe", local / "Programs" / "Opera GX" / "opera.exe",
+                pf / "Opera" / "opera.exe", pf86 / "Opera" / "opera.exe",
+                pf86 / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                pf / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                pf / "Google" / "Chrome" / "Application" / "chrome.exe",
+                pf86 / "Google" / "Chrome" / "Application" / "chrome.exe",
+                local / "Google" / "Chrome" / "Application" / "chrome.exe",
+                pf / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+                local / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+                local / "Chromium" / "Application" / "chrome.exe"]
+    if platform == "darwin":
+        apps = ("Opera", "Microsoft Edge", "Google Chrome", "Brave Browser", "Chromium")
+        return [root / f"{app}.app" / "Contents" / "MacOS" / app
+                for app in apps for root in (Path("/Applications"), Path.home() / "Applications")]
+    found = []
+    for name in ("opera", "microsoft-edge", "microsoft-edge-stable", "google-chrome", "google-chrome-stable",
+                 "brave-browser", "chromium", "chromium-browser"):
+        path = shutil.which(name)
+        if path:
+            found.append(Path(path))
+    return found
+
+
+def find_browser(configured: str | None = None) -> Path | None:
+    """The browser the search drives: one named in the settings or by
+    CT_BROWSER (OPERA_EXECUTABLE, its old name, still works), else the first
+    one installed. None when there is none — the search then goes without."""
+    named = [configured, os.environ.get("CT_BROWSER", ""), os.environ.get("OPERA_EXECUTABLE", "")]
+    for candidate in [Path(n.strip()).expanduser() for n in named if n and n.strip()] + browser_candidates():
+        if candidate.is_file():
             return candidate.resolve()
-    raise ApiError(503, "Opera bulunamadı; OPERA_EXECUTABLE ile opera.exe yolunu ayarla.")
+    return None
+
+
+def browser_name(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    text = str(path).lower()
+    for key, name in (("opera", "Opera"), ("edge", "Edge"), ("brave", "Brave"), ("chromium", "Chromium"),
+                      ("chrome", "Chrome")):
+        if key in text:
+            return name
+    return path.stem
 
 
 # ---------------------------------------------------------------- the window
@@ -120,14 +175,15 @@ class _Win32:
         return table
 
 
-def our_operas(root: int, table: dict[int, tuple[int, str]]) -> set[int]:
-    """The opera.exe processes that descend from this app's own process (by
-    way of Playwright's driver) — never the writer's own Opera, which does not."""
+def our_browsers(root: int, table: dict[int, tuple[int, str]], exe: str = "opera.exe") -> set[int]:
+    """The browser processes (opera.exe, msedge.exe, …) that descend from this
+    app's own process (by way of Playwright's driver) — never the writer's own
+    browser of the same name, which does not."""
     ours, frontier = set(), {root}
     while frontier:
         frontier = {pid for pid, (parent, _) in table.items() if parent in frontier and pid not in ours}
         ours |= frontier
-    return {pid for pid in ours if table[pid][1] == "opera.exe"}
+    return {pid for pid in ours if table[pid][1] == exe.lower()}
 
 
 def hide_windows(pids, api=None) -> int:
@@ -145,16 +201,17 @@ def hide_windows(pids, api=None) -> int:
 
 
 class WindowHider:
-    """While our Opera lives, hides each of its windows the moment Windows
+    """While our browser lives, hides each of its windows the moment Windows
     shows it. It listens for the system's "window shown" event instead of
     looking: looking every 15 ms took 70 ms a turn (the process list is long)
     and a launching Opera's window stayed up for half a second (measured).
-    Whose window it is — one of our opera.exe processes or not — is worked
+    Whose window it is — one of our browser's processes or not — is worked
     out once per process and remembered."""
 
-    def __init__(self, api=None, root: int | None = None):
+    def __init__(self, api=None, root: int | None = None, exe: str = "opera.exe"):
         self.api = api
         self.root = root or os.getpid()
+        self.exe = exe
         self.hidden = 0
         self.thread = None
         self._thread_id = None
@@ -166,31 +223,34 @@ class WindowHider:
         # process is ours is worked out once and remembered, either way
         if pid not in self._known:
             api = self.api or _Win32()
-            mine = our_operas(self.root, api.children())
+            mine = our_browsers(self.root, api.children(), self.exe)
             for child in mine:
                 self._known[child] = True
             self._known.setdefault(pid, pid in mine)
         return self._known[pid]
 
-    def start(self):
+    def start(self, exe: str | None = None):
+        if exe and exe.lower() != self.exe.lower():
+            self.exe = exe
+            self._known.clear()
         if os.name != "nt" or self.api is not None:
             return
         if self.thread is None or not self.thread.is_alive():
             self._known.clear()
             self._ready.clear()
-            self.thread = threading.Thread(target=self._run, name="gizli-opera-pencere", daemon=True)
+            self.thread = threading.Thread(target=self._run, name="gizli-tarayici-pencere", daemon=True)
             self.thread.start()
             self._ready.wait(2)
-        # our Opera's processes start seconds before its first window: know
+        # our browser's processes start seconds before its first window: know
         # them by then, so the window is hidden without first reading the
         # whole process list (70 ms, during which it stayed on — measured)
-        threading.Thread(target=self._learn, args=(30.0,), name="gizli-opera-surec", daemon=True).start()
+        threading.Thread(target=self._learn, args=(30.0,), name="gizli-tarayici-surec", daemon=True).start()
 
     def _learn(self, seconds: float):
         api = self.api or _Win32()
         until = time.monotonic() + seconds
         while time.monotonic() < until and self.thread is not None and self.thread.is_alive():
-            for pid in our_operas(self.root, api.children()):
+            for pid in our_browsers(self.root, api.children(), self.exe):
                 self._known[pid] = True
             time.sleep(0.1)
 
@@ -224,7 +284,7 @@ class WindowHider:
         hook = user32.SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, 0, callback, 0, 0,
                                       0x0000 | 0x0002)                  # out of context, skip own process
         # a window shown before the hook was in place
-        self.hidden += hide_windows(our_operas(self.root, api.children()), api)
+        self.hidden += hide_windows(our_browsers(self.root, api.children(), self.exe), api)
         self._ready.set()
         msg = wintypes.MSG()
         try:
@@ -264,13 +324,95 @@ def pick_results(raw: list[dict], limit: int = MAX_RESULTS) -> list[dict]:
     return rows
 
 
+# ---------------------------------------------------------------- without a browser
+_ANCHOR = re.compile(r"""<a\b[^>]*href=["']([^"']*uddg=[^"']*)["'][^>]*>(.*?)</a>""", re.S | re.I)
+_SNIPPET = re.compile(r"""class=["']result[_-]+snippet["'][^>]*>(.*?)</(?:a|td)>""", re.S | re.I)
+_http_lock = threading.Lock()
+_http_last = [0.0]
+
+
+def _text(fragment: str) -> str:
+    return " ".join(unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
+
+
+def parse_duckduckgo(page: str) -> list[dict]:
+    """The results on DuckDuckGo's pages for browsers without JavaScript. Every
+    link of a result — its title, its address, its snippet — goes through
+    duckduckgo.com/l/?uddg=<the real address>; ads go through y.js and are
+    not links of this kind. The first link of a result gives the title, the
+    snippet is the one marked so, or else the text up to the next result."""
+    found, order = {}, []
+    matches = list(_ANCHOR.finditer(page))
+    for m in matches:
+        href = unescape(m.group(1))
+        query = urlsplit(href if "://" in href else "https:" + href).query
+        target = (parse_qs(query).get("uddg") or [""])[0]
+        if not target:
+            continue
+        if target not in found:
+            found[target] = {"href": target, "title": _text(m.group(2)), "start": m.end()}
+            order.append(target)
+    rows = []
+    for i, target in enumerate(order):
+        item = found[target]
+        end = found[order[i + 1]]["start"] if i + 1 < len(order) else min(len(page), item["start"] + 4000)
+        segment = page[item["start"]:end]
+        marked = _SNIPPET.search(segment)
+        rows.append({"href": target, "title": item["title"],
+                     "snippet": _text(marked.group(1) if marked else segment)[:800]})
+    return rows
+
+
+def http_search(query: str, get=None) -> dict:
+    """A search with no browser at all: one plain request to DuckDuckGo."""
+    from server.fetch import USER_AGENT
+    started = time.monotonic()
+    if get is None:
+        import httpx
+
+        def get(url):
+            reply = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_S,
+                              follow_redirects=True)
+            return reply.status_code, reply.text
+    errors = []
+    for provider, template in HTTP_ENGINES:
+        url = template.format(query=quote_plus(query))
+        with _http_lock:
+            wait = HTTP_GAP_S - (time.monotonic() - _http_last[0])
+            if wait > 0:
+                time.sleep(wait)
+            _http_last[0] = time.monotonic()
+        try:
+            status, page = get(url)
+        except Exception as exc:
+            errors.append(f"{provider}: {type(exc).__name__}: {str(exc)[:120]}")
+            continue
+        if status >= 400:
+            errors.append(f"{provider}: HTTP {status}")
+            continue
+        rows = pick_results(parse_duckduckgo(page))
+        if rows:
+            return {"query": query, "provider": provider, "search_url": url,
+                    "duration_ms": round((time.monotonic() - started) * 1000),
+                    "browser": None, "results": rows}
+        errors.append(f"{provider}: sonuç yok")
+    raise ApiError(502, "Arama sayfalarından sonuç okunamadı. " + " | ".join(errors))
+
+
 # ---------------------------------------------------------------- the browser
-class HiddenOperaSearch:
-    """One Opera for the whole app, on its own thread and event loop; search()
-    is a plain blocking call for the tool hub's worker threads."""
+class NoBrowser(Exception):
+    """No Chromium-family browser here, or none that would start."""
+
+
+class HiddenBrowserSearch:
+    """One browser for the whole app, on its own thread and event loop;
+    search() is a plain blocking call for the tool hub's worker threads.
+    Without a browser it searches without one."""
 
     def __init__(self, executable: str | None = None):
         self.executable = executable
+        self._name = None
+        self._skip_browser_until = 0.0
         self._lock = threading.Lock()
         self._loop = None
         self._browser = None
@@ -312,7 +454,8 @@ class HiddenOperaSearch:
                 pass
 
     def status(self) -> dict:
-        return {"running": self._browser is not None, "pid": self._pid, "hidden": True}
+        return {"running": self._browser is not None, "pid": self._pid, "hidden": True,
+                "browser": self._name or browser_name(find_browser(self.executable))}
 
     # ---- on the loop ----
     async def _idle_watch(self):
@@ -331,20 +474,29 @@ class HiddenOperaSearch:
             try:
                 from playwright.async_api import async_playwright
             except ImportError:
-                raise ApiError(503, "Web araması için Playwright kurulu değil.")
-            executable = find_opera(self.executable)
-            self.hider.start()                       # before the first window exists
+                raise NoBrowser("Playwright kurulu değil")
+            executable = find_browser(self.executable)
+            if executable is None:
+                raise NoBrowser("tarayıcı yok")
+            # Windows can hide a real window; elsewhere it would be on the
+            # screen, so there the browser has none
+            headless = os.name != "nt"
+            if not headless:
+                self.hider.start(executable.name)    # before the first window exists
             playwright = await async_playwright().start()
             try:
-                browser = await playwright.chromium.launch(executable_path=str(executable), headless=False,
+                browser = await playwright.chromium.launch(executable_path=str(executable), headless=headless,
                                                            args=LAUNCH_ARGS)
             except Exception as exc:
                 await playwright.stop()
-                raise ApiError(503, f"Opera başlatılamadı: {type(exc).__name__}: {str(exc)[:200]}")
+                self.hider.stop()
+                raise NoBrowser(f"{browser_name(executable)} başlatılamadı: {type(exc).__name__}: {str(exc)[:160]}")
             self._playwright, self._browser = playwright, browser
+            self._name = browser_name(executable)
             self._pid = await self._browser_pid(browser)
             self._context = await browser.new_context(viewport={"width": 1365, "height": 900},
-                                                      accept_downloads=False, service_workers="block")
+                                                      accept_downloads=False, service_workers="block",
+                                                      user_agent=self._true_agent(browser) if headless else None)
             await self._context.route("**/*", self._guard)
             self._tabs = asyncio.Queue()
             for _ in range(CONCURRENCY):
@@ -368,9 +520,18 @@ class HiddenOperaSearch:
         await route.continue_()
 
     @staticmethod
+    def _true_agent(browser) -> str:
+        """A headless browser calls itself HeadlessChrome, which is what crude
+        filters key on. This says what it is — this browser, at this version,
+        on this system — and who is asking, as server/fetch.py does."""
+        system = "Macintosh; Intel Mac OS X 10_15_7" if sys.platform == "darwin" else "X11; Linux x86_64"
+        return (f"Mozilla/5.0 ({system}) AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{browser.version} Safari/537.36 ConceptTrail/0.3")
+
+    @staticmethod
     async def _browser_pid(browser) -> int | None:
         """The browser process id, from the browser itself — the only safe way
-        to tell our Opera from the writer's own."""
+        to tell our browser from the writer's own."""
         try:
             session = await browser.new_browser_cdp_session()
             info = await session.send("SystemInfo.getProcessInfo")
@@ -390,6 +551,22 @@ class HiddenOperaSearch:
         self.hider.stop()
 
     async def _search(self, query: str) -> dict:
+        """With the browser if there is one and it finds something; else
+        without one."""
+        if time.monotonic() >= self._skip_browser_until:
+            try:
+                return await self._browser_search(query)
+            except asyncio.CancelledError:
+                raise
+            except NoBrowser:
+                # a research runs a dozen searches: do not try to start a
+                # missing or broken browser before every one of them
+                self._skip_browser_until = time.monotonic() + NO_BROWSER_RETRY_S
+            except ApiError:
+                pass            # the browser ran but no engine answered it
+        return await asyncio.to_thread(http_search, query)
+
+    async def _browser_search(self, query: str) -> dict:
         await self._ensure_browser()
         self._last_used = time.monotonic()
         tabs = self._tabs
@@ -417,7 +594,7 @@ class HiddenOperaSearch:
                         if rows:
                             return {"query": query, "provider": provider, "search_url": page.url,
                                     "duration_ms": round((time.monotonic() - started) * 1000),
-                                    "browser": "opera (gizli pencere)", "results": rows}
+                                    "browser": self._name, "results": rows}
                         errors.append(f"{provider}: sonuç yok")
                     except asyncio.CancelledError:
                         raise

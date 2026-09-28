@@ -107,11 +107,11 @@ python main.py --server     # yalnız sunucu
 python scripts/make_shortcut.py   # masaüstüne ve Başlat menüsüne logolu kısayol
 ```
 
-İlk açılışta **Ayarlar → Modeller**'den bir sağlayıcı ekle (OpenRouter için adres `https://openrouter.ai/api`, model adı ve API anahtarı) ve rolleri ona bağla. Notlar varsayılan olarak `./notes` klasöründe durur (`--vault` ile değiştirilir).
+İlk açılışta kısa bir sihirbaz asistanı bir modele bağlar: anahtarla **OpenRouter** (önerilen; bir bağlantı seni anahtar sayfasına götürür), **bu bilgisayarda zaten çalışan** bir model (Ollama, LM Studio ve llama.cpp her zamanki portlarında bulunur) ya da **OpenAI uyumlu başka bir servis**. Kaydetmeden önce gerçek bir çağrı yapar; yanlış bir anahtar ya da model adı orada, anlaşılır sözlerle söylenir. Geçersen üst çubuktaki model düğmesinin arkasında bekler; Ayarlar → Modeller'de de, ayrıntılı sağlayıcı düzenleyicisinin yanında durur. Notlar varsayılan olarak `./notes` klasöründe durur (`--vault` ile değiştirilir).
 
 Araştırmanın araçları uygulamanın içindedir, başka bir kurulum istemez:
 - **GitHub** (`server/github.py`): yalnız herkese açık depolar, GitHub'ın hız sınırına uyar, sonuçları bir saat önbellekte tutar. Anahtar isteğe bağlıdır (ayarlar penceresinden girilir); anahtarla aramalar 2 sn, anahtarsız 6 sn aralıklarla yapılır.
-- **Web araması** (`server/websearch.py`): bilgisayardaki Opera ile yapılır, ama penceresi ekranda görünmez; kişisel profilin kullanılmaz. Opera başka bir yerdeyse `OPERA_EXECUTABLE` ile gösterilir. Araştır panelinden kapatılabilir.
+- **Web araması** (`server/websearch.py`): bilgisayarda zaten kurulu Chromium ailesinden bir tarayıcıyı kullanır — Opera, Edge (her Windows'ta var), Chrome, Brave ya da Chromium; ilk bulunanı — boş, yeni bir profille, asla seninkiyle; Windows'ta penceresi gizlenir, diğer sistemlerde görünmez (headless) çalışır. Hiç tarayıcı yoksa tarayıcısız arar: DuckDuckGo'nun JavaScript'siz tarayıcılar için sayfasıyla. Belirli bir tarayıcı için `CT_BROWSER` ile yolunu göster. Araştır panelinden kapatılabilir.
 - **Sayfa okuma** (`server/fetch.py`): JavaScript'le çizilen sayfalar için `playwright install chromium` gerekir.
 
 ## Yapı

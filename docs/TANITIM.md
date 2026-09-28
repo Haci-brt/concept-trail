@@ -176,7 +176,7 @@ flowchart LR
 
 **Notlarım buluta gidiyor mu?** Uygulama bilgisayarında çalışır. Asistanın düşünmesi için notun, ayarlarda seçtiğin modele gönderilir. OpenRouter gibi bir bulut modeli seçtiysen oraya, yerel bir model seçtiysen hiçbir yere. Başına `private: true` yazdığın notlar uzak modellere hiç gitmez.
 
-**Ücretli mi?** Uygulama ücretsiz ve açık kaynaklıdır. Bulut modeli kullanırsan sağlayıcının ücretini ödersin; GPT-4o-mini ile bir tur yaklaşık $0,0002'dir ve günlük harcama sınırı (varsayılan $0,50) ayarlardan değiştirilir. Yerel modelle ücret yoktur.
+**Ücretli mi?** Uygulama ücretsizdir; kaynak kodu GitHub'da. Bulut modeli kullanırsan sağlayıcının ücretini ödersin; GPT-4o-mini ile bir tur yaklaşık $0,0002'dir ve günlük harcama sınırı (varsayılan $0,50) ayarlardan değiştirilir. Yerel modelle ücret yoktur.
 
 **Hangi dilleri destekliyor?** Arayüz ve asistan Türkçe, English, Deutsch, Español ve Français konuşur; asistanın dili arayüzden ayrı seçilebilir. Master prompt da bu beş dilden birinde hazırlanır.
 
@@ -203,4 +203,4 @@ irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | 
 curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
 ```
 
-Komut uygulamayı indirir, kendi Python ortamını kurar, masaüstüne ve Başlat menüsüne uygulama simgesiyle bir kısayol koyar ve uygulamayı açar. Güncellemek için aynı komutu yeniden çalıştırırsın; notların ve ortam korunur. Ayrıntılar için [README](../README.tr.md).
+Komut uygulamayı indirir, kendi Python ortamını kurar, masaüstüne ve Başlat menüsüne uygulama simgesiyle bir kısayol koyar ve uygulamayı açar. İlk açılışta kısa bir sihirbaz asistanı bir modele bağlar: OpenRouter anahtarı, bilgisayarında çalışan bir model (Ollama, LM Studio, llama.cpp kendiliğinden bulunur) ya da başka bir servis. Güncellemek için aynı komutu yeniden çalıştırırsın; notların ve ortam korunur. Ayrıntılar için [README](../README.tr.md).

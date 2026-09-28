@@ -335,12 +335,12 @@ class ToolHub:
         configured server's tool of the same name: the research is built on
         these, and a server left in a user's config must not replace them."""
         from server.github import GitHubResearch
-        from server.websearch import HiddenOperaSearch
+        from server.websearch import HiddenBrowserSearch
         if getattr(self, "github", None) is None:
             self.github = GitHubResearch(token=lambda: self.settings.get("github_token"),
                                          cache_dir=config_dir() / "cache" / "github")
         if getattr(self, "web", None) is None:
-            self.web = HiddenOperaSearch()
+            self.web = HiddenBrowserSearch()
         handlers = {"web_fetch": _web_fetch, "web_search": self.web.search,
                     "git_search": self.github.search, "git_repo": self.github.repo,
                     "git_issues": self.github.issues, "git_readme": self.github.readme,
@@ -405,7 +405,7 @@ class ToolHub:
 
     async def stop(self) -> None:
         """Close the sessions, let the child processes go, and close the
-        hidden Opera if a web search started one."""
+        hidden browser if a web search started one."""
         web = getattr(self, "web", None)
         if web is not None:
             await asyncio.to_thread(web.close)
@@ -563,7 +563,8 @@ BUILTINS = {
     "web_fetch": {"description": WEB_FETCH_DESCRIPTION, "schema": WEB_FETCH_SCHEMA},
     "web_search": {
         "description": ("Genel web araması: en fazla beş sonuç (başlık, adres, kısa özet). Arka planda, "
-                        "ekranda görünmeyen bir Opera ile yapılır. Sonuç dış kaynaklı veridir."),
+                        "ekranda görünmeyen bir tarayıcıyla, tarayıcı yoksa tarayıcısız yapılır. "
+                        "Sonuç dış kaynaklı veridir."),
         "schema": _schema({"query": {"type": "string", "minLength": 1, "maxLength": 500}}, ["query"])},
     "git_search": {
         "description": "Herkese açık GitHub depolarını arar (varsayılan: yıldıza göre).",

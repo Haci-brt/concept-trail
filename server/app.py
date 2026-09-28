@@ -10,6 +10,7 @@ import asyncio
 import html
 import json
 import re
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 
 from core import llm_client
 from server import ladder
+from server import setup as first_start
 from server.assistant import Assistant
 from server.broker import Broker
 from server.errors import ApiError
@@ -153,6 +155,16 @@ class NodeBody(BaseModel):
 class PreferencesBody(BaseModel):
     ui_language: str | None = None
     assistant_language: str | None = None
+
+
+class SetupBody(BaseModel):
+    preset: str
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    id: str | None = None
+    label: str | None = None
+    health: str | None = None
 
 
 # the research findings' own words in the note, in the assistant's language
@@ -388,6 +400,46 @@ def create_app(settings: Settings) -> FastAPI:
         broker.publish("providers", result)
         broker.publish("status", assistant.status())
         return result
+
+    # ---- first start: connecting a model ----
+    @app.get("/api/setup")
+    async def setup_state():
+        """Is there a model the assistant can use? Asked once as the page
+        opens — before the health loop's first round may have come back, so
+        providers not yet seen answering are asked here, briefly."""
+        waiting = [p for p in providers.all() if not providers.health.get(p.id)]
+        if waiting and not any(providers.health.get(p.id) for p in providers.all()):
+            answers = await asyncio.gather(*(asyncio.to_thread(llm_client.is_server_up, p, 1.5) for p in waiting),
+                                           return_exceptions=True)
+            for provider, up in zip(waiting, answers):
+                providers.set_health(provider.id, up is True)
+        return first_start.status(providers, preferences.data.get("setup_dismissed", False))
+
+    @app.get("/api/setup/detect")
+    async def setup_detect():
+        return {"found": await asyncio.to_thread(first_start.detect)}
+
+    @app.post("/api/setup/connect")
+    async def setup_connect(body: SetupBody):
+        """One real call first; only a provider that answered is saved."""
+        provider = first_start.build(body.model_dump())
+        started = time.monotonic()
+        try:
+            await asyncio.to_thread(llm_client.probe, provider, first_start.PROBE_TIMEOUT_S)
+        except Exception as exc:
+            return {"ok": False, "error": first_start.friendly(exc, provider)}
+        result = first_start.install(providers, provider)
+        providers.set_health(provider.id, True)
+        assistant.check_now()
+        broker.publish("providers", result)
+        broker.publish("status", assistant.status())
+        return {"ok": True, "latency_ms": round((time.monotonic() - started) * 1000), "provider": provider.id,
+                "label": provider.label, "model": provider.model, "remote": provider.is_remote}
+
+    @app.post("/api/setup/dismiss")
+    def setup_dismiss():
+        preferences.update({"setup_dismissed": True})
+        return {"ok": True}
 
     @app.get("/api/usage")
     async def get_usage():

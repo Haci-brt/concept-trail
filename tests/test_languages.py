@@ -87,7 +87,7 @@ def test_the_choice_is_kept_and_checked(tmp_path):
     assert prefs.public()["assistant_language"] == "tr"
     prefs.update({"ui_language": "en", "assistant_language": "de"})
     again = Preferences(tmp_path / "preferences.json")
-    assert again.data == {"ui_language": "en", "assistant_language": "de"}
+    assert again.data == {"ui_language": "en", "assistant_language": "de", "setup_dismissed": False}
     with pytest.raises(ApiError):
         prefs.update({"ui_language": "xx"})
     with pytest.raises(ApiError):
