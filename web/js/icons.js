@@ -78,27 +78,10 @@ export function icon(name, size = 16, extraClass = "") {
   return `<svg class="ico ${extraClass}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
-let logoSeq = 0;
-
-/** The app mark (assets/icon/concept-trail-small.svg): a notebook cover with
- *  a trail of stars climbing to a bright one, and the pen writing it. Each
- *  copy gets its own gradient ids — the title bar and the welcome screen show
- *  it at once. */
+/** The app mark (assets/icon/concept-trail.png, sizes by build_icons.py): a
+ *  notebook cover with a trail of stars climbing to a bright one, and the pen
+ *  writing it. The 256 px copy stays sharp from the title bar to the welcome
+ *  screen. */
 export function logo(size = 20) {
-  const id = `lg${++logoSeq}`;
-  return `<svg class="logo" width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true">
-    <defs>
-      <linearGradient id="${id}s" x1="0.1" y1="0" x2="0.9" y2="1"><stop offset="0" stop-color="#1f3168"/><stop offset="1" stop-color="#08101f"/></linearGradient>
-      <radialGradient id="${id}d" cx="0.76" cy="0.26" r="0.55"><stop offset="0" stop-color="#6fe0c4" stop-opacity="0.55"/><stop offset="1" stop-color="#6fe0c4" stop-opacity="0"/></radialGradient>
-    </defs>
-    <rect x=".5" y=".5" width="31" height="31" rx="8" fill="url(#${id}s)"/>
-    <rect x=".5" y=".5" width="31" height="31" rx="8" fill="url(#${id}d)"/>
-    <g fill="#dfe6ff"><rect x="1.2" y="8" width="4.6" height="2" rx="1"/><rect x="1.2" y="15" width="4.6" height="2" rx="1"/><rect x="1.2" y="22" width="4.6" height="2" rx="1"/></g>
-    <path d="M10 24 L14 19.5 L13.5 13.5 L23.5 9" fill="none" stroke="#c9c0ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".9"/>
-    <circle cx="10" cy="24" r="2.1" fill="#ffd166"/><circle cx="14" cy="19.5" r="2.2" fill="#7cc0ff"/><circle cx="13.5" cy="13.5" r="2" fill="#b9a6ff"/>
-    <path d="M23.5 4 L24.7 7.8 L28.5 9 L24.7 10.2 L23.5 14 L22.3 10.2 L18.5 9 L22.3 7.8 Z" fill="#f2fffa"/>
-    <circle cx="23.5" cy="9" r="1.7" fill="#fff"/>
-    <path d="M19 20 L29 30" stroke="#eef1ff" stroke-width="3.2" stroke-linecap="round"/>
-    <path d="M17.2 18.2 L20.6 19.4 L19.4 20.6 Z" fill="#ffd166" stroke="#ffd166" stroke-width="1.2" stroke-linejoin="round"/>
-  </svg>`;
+  return `<img class="logo" src="/static/assets/concept-trail-256.png" width="${size}" height="${size}" alt="" draggable="false">`;
 }

@@ -130,7 +130,7 @@ server/       FastAPI server: assistant, decision ladder, research, providers, b
 core/         model client: prompts, parsers, thinking budget
 web/          interface (ES modules, no build step); web/locales holds the translations
 desktop/      PyQt6 desktop shell and the assistant card (HUD)
-assets/icon/  app icon (SVG, PNG, .ico); redrawn with build_icons.py
+assets/icon/  app icon: the concept-trail.png master; build_icons.py makes every size and the .ico
 scripts/      make_shortcut.py: desktop / Start menu shortcut
 install.ps1   one-command install for Windows; install.sh for macOS / Linux
 tests/        pytest; tests/manual_research_benchmark.py measures live research

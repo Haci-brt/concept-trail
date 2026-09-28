@@ -43,7 +43,8 @@ def test_the_installers_fetch_this_repository_and_keep_notes_on_update():
 
 def test_the_icon_is_there_for_the_launcher_and_the_window():
     assert make_shortcut.ICON_ICO.is_file() and make_shortcut.ICON_PNG.is_file()
-    assert (ROOT / "web" / "assets" / "concept-trail.svg").is_file()
+    assert (ROOT / "web" / "assets" / "concept-trail-64.png").is_file()
+    assert (ROOT / "web" / "assets" / "concept-trail-256.png").is_file()
 
 
 def test_the_launcher_opens_the_chosen_vault(tmp_path):

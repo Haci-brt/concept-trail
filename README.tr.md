@@ -118,7 +118,7 @@ server/       FastAPI sunucusu: asistan, karar merdiveni, araştırma, sağlayı
 core/         model istemcisi: istemler, ayrıştırıcılar, düşünme bütçesi
 web/          arayüz (derleme adımı olmayan ES modülleri); web/locales çeviri sözlükleri
 desktop/      PyQt6 masaüstü kabuğu ve asistan kartı (HUD)
-assets/icon/  uygulama logosu (SVG, PNG, .ico); build_icons.py ile yeniden çizilir
+assets/icon/  uygulama logosu: ana görsel concept-trail.png; build_icons.py bütün boyutları ve .ico'yu üretir
 scripts/      make_shortcut.py: masaüstü / Başlat menüsü kısayolu
 install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
 tests/        pytest; tests/manual_research_benchmark.py canlı araştırma ölçümü

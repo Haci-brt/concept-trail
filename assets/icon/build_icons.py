@@ -1,51 +1,50 @@
-"""Render the app icon: PNGs at every size Windows asks for and one .ico.
+"""Make every size of the app icon from the 1024 px master.
 
     python assets/icon/build_icons.py
 
-The detailed mark is drawn from 48 px up; 16–32 px use the simpler one,
-where hairlines and far stars would only turn to mush. Needs PyQt6 (already
-a dependency) and Pillow (only here, not at run time).
+concept-trail.png is the master (a notebook cover with a trail of stars
+climbing to a bright one, and the pen writing it). This writes png/ at every
+size the OS and the page ask for, and concept-trail.ico for the Windows
+shortcut and window. Small sizes get a light unsharp mask so the rings, the
+trail and the star stay crisp. Needs Pillow (only here, not at run time).
 """
-import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, Qt
-from PyQt6.QtGui import QGuiApplication, QImage, QPainter
-from PyQt6.QtSvg import QSvgRenderer
+from PIL import Image, ImageFilter
 
 HERE = Path(__file__).resolve().parent
+MASTER = HERE / "concept-trail.png"
 SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256, 512)
-SMALL = 32
+ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
+WEB = HERE.parent.parent / "web" / "assets"
 
 
-def render(svg: Path, size: int) -> QImage:
-    renderer = QSvgRenderer(QByteArray(svg.read_bytes()))
-    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    renderer.render(painter)
-    painter.end()
+def scaled(master: Image.Image, size: int) -> Image.Image:
+    # halve step by step first: one big jump to 16 px drops the thin trail
+    image = master
+    while image.width > size * 2:
+        image = image.resize((image.width // 2, image.height // 2), Image.LANCZOS)
+    image = image.resize((size, size), Image.LANCZOS)
+    if size <= 48:
+        image = image.filter(ImageFilter.UnsharpMask(radius=0.6, percent=60 if size <= 24 else 40, threshold=1))
     return image
 
 
 def main() -> None:
-    from PIL import Image
-
-    QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
+    master = Image.open(MASTER).convert("RGBA")
     out = HERE / "png"
     out.mkdir(exist_ok=True)
-    frames = []
+    frames = {}
     for size in SIZES:
-        svg = HERE / ("concept-trail-small.svg" if size <= SMALL else "concept-trail.svg")
-        path = out / f"concept-trail-{size}.png"
-        render(svg, size).save(str(path))
-        if size <= 256:
-            frames.append(Image.open(path).convert("RGBA"))
-    frames[-1].save(HERE / "concept-trail.ico", format="ICO",
-                    sizes=[(f.width, f.height) for f in frames], append_images=frames[:-1])
-    print("yazıldı:", ", ".join(p.name for p in sorted(out.glob("*.png"))), "+ concept-trail.ico")
+        frames[size] = scaled(master, size)
+        frames[size].save(out / f"concept-trail-{size}.png", optimize=True)
+    largest = frames[max(ICO_SIZES)]
+    largest.save(HERE / "concept-trail.ico", format="ICO", sizes=[(s, s) for s in ICO_SIZES],
+                 append_images=[frames[s] for s in ICO_SIZES if s != max(ICO_SIZES)])
+    # the page's tab icon and in-app mark
+    frames[64].save(WEB / "concept-trail-64.png", optimize=True)
+    frames[256].save(WEB / "concept-trail-256.png", optimize=True)
+    print("yazıldı:", len(SIZES), "PNG, concept-trail.ico, web/assets/concept-trail-64.png ve -256.png")
 
 
 if __name__ == "__main__":
