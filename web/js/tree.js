@@ -20,7 +20,8 @@ const MIN_K = 0.3;
 const MAX_K = 2.2;
 const RING_1 = 190;          // root -> first ray
 const RING_STEP = 118;       // each further level
-const ROPE_JOINTS = 5;       // points inside each string
+const ROPE_JOINTS = 8;       // points inside each string
+const ROPE_SLACK = 1.07;     // a string is a little longer than the gap it spans
 const FIXED_DT = 1 / 60;
 const IGNITE_STEP = 0.34;    // seconds between one ring lighting up and the next
 const DIM = 0.2;             // how bright the stars off the open card's path stay
@@ -739,28 +740,32 @@ export class IdeaTree {
       s.x += s.vx;
       s.y += s.vy;
     }
-    // the strings: jointed points, pinned to their stars, a little slack
+    // the strings: real ropes of a fixed length, jointed, with a little
+    // weight. Slack, a rope hangs; pulled taut, it tugs at both of its stars,
+    // the smaller one more — the note in the middle and a star in the hand
+    // do not give.
+    const give = (s) => (s === this._drag?.star || s.depth === 0 ? 0 : 0.9 / s.r);
     for (const string of this.strings.values()) {
       const a = this.stars.get(string.a), b = this.stars.get(string.b);
       if (!a || !b) continue;
       for (const p of string.points) {
-        const vx = (p.x - p.px) * 0.92, vy = (p.y - p.py) * 0.92;
+        const vx = (p.x - p.px) * 0.93, vy = (p.y - p.py) * 0.93;
         p.px = p.x; p.py = p.y;
         p.x += vx;
-        p.y += vy + 0.06;                       // a whisper of weight: strings hang, not bars
+        p.y += vy + 0.07;                       // weight: strings hang, not bars
       }
       const chain = [a, ...string.points, b];
-      const seg = Math.hypot(b.x - a.x, b.y - a.y) / (ROPE_JOINTS + 1) * 1.03;
-      for (let iter = 0; iter < 3; iter++) {
+      const seg = string.rest * ROPE_SLACK / (ROPE_JOINTS + 1);
+      const ga = string.leaving ? 0 : give(a), gb = string.leaving ? 0 : give(b);
+      for (let iter = 0; iter < 4; iter++) {
         for (let j = 0; j < chain.length - 1; j++) {
           const p = chain[j], q = chain[j + 1];
+          const wp = j === 0 ? ga : 1, wq = j + 1 === chain.length - 1 ? gb : 1;
+          if (!wp && !wq) continue;
           const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1;
-          const diff = (d - seg) / d;
-          const pinP = j === 0, pinQ = j + 1 === chain.length - 1;
-          if (pinP && pinQ) continue;
-          const share = pinP || pinQ ? 1 : 0.5;
-          if (!pinP) { p.x += dx * diff * share; p.y += dy * diff * share; }
-          if (!pinQ) { q.x -= dx * diff * share; q.y -= dy * diff * share; }
+          const share = (d - seg) / d / (wp + wq);
+          p.x += dx * share * wp; p.y += dy * share * wp;
+          q.x -= dx * share * wq; q.y -= dy * share * wq;
         }
       }
     }
@@ -1050,12 +1055,38 @@ export class IdeaTree {
       this._acc += dt;
       while (this._acc >= FIXED_DT) { this._step(FIXED_DT); this._acc -= FIXED_DT; }
       this._camStep(dt);
+      this._inertia();
       this._placeCard();
       this._placeTip();
       this._draw(this._time);
       this._raf = requestAnimationFrame(frame);
     };
     this._raf = requestAnimationFrame(frame);
+  }
+
+  /** The sky moved (a pan, its glide, a zoom, the camera flying to a card):
+   *  whatever hangs in it has weight and lags behind — the light rope joints
+   *  most, small stars more than big ones, the note not at all — then the
+   *  ropes and springs bring it back and it swings into place. */
+  _inertia() {
+    const vw = this.canvas.clientWidth, vh = this.canvas.clientHeight;
+    const view = { x: (vw / 2 - this.cam.x) / this.cam.k, y: (vh / 2 - this.cam.y) / this.cam.k };
+    const before = this._view;
+    this._view = view;
+    if (!before || reducedMotion()) return;
+    let dx = view.x - before.x, dy = view.y - before.y;
+    const moved = Math.hypot(dx, dy);
+    if (moved < 0.01 || moved > 400) return;          // still, or a jump (a fit, a new note)
+    if (moved > 40) { dx *= 40 / moved; dy *= 40 / moved; }
+    for (const s of this.stars.values()) {
+      if (s.depth === 0 || s.leaving || s === this._drag?.star) continue;
+      const lag = Math.min(0.06, 0.22 / s.r);
+      s.vx += dx * lag;
+      s.vy += dy * lag;
+    }
+    for (const string of this.strings.values()) {
+      for (const p of string.points) { p.x += dx * 0.35; p.y += dy * 0.35; }
+    }
   }
 
   _resize() {
