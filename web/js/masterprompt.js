@@ -6,6 +6,7 @@
 // writer sees exactly what was decided for them before handing it over.
 import { api, streamPost } from "./api.js";
 import { icon } from "./icons.js";
+import { LANGUAGES, lang as uiLang, locale } from "./i18n.js";
 import { esc, html, toast } from "./util.js";
 
 const LANG_KEY = "fikir.master.lang.v1";
@@ -15,7 +16,7 @@ const SECTIONS = ["Ajan kuralları", "Ürün özeti", "Kullanıcılar", "Kapsam"
   "Bitti ölçütü", "Varsayımlar"];
 
 const words = (text) => (String(text || "").match(/\S+/g) || []).length;
-const fmt = (n) => n.toLocaleString("tr-TR");
+const fmt = (n) => n.toLocaleString(locale());
 
 export class MasterPromptDialog {
   /** handlers: getContent(path) -> unsaved text or null; openNote(path) */
@@ -27,7 +28,9 @@ export class MasterPromptDialog {
     this.stats = null;
     this.running = false;
     this.view = "preview";
-    try { this.lang = localStorage.getItem(LANG_KEY) === "en" ? "en" : "tr"; } catch { this.lang = "tr"; }
+    // the dialog's own choice if the writer made one, else the assistant's language
+    try { this.chosen = localStorage.getItem(LANG_KEY) || ""; } catch { this.chosen = ""; }
+    this.lang = LANGUAGES.some((l) => l.id === this.chosen) ? this.chosen : uiLang;
   }
 
   get isOpen() { return Boolean(this.el); }
@@ -52,8 +55,8 @@ export class MasterPromptDialog {
       </header>
       <div class="mp-ready"></div>
       <div class="mp-controls">
-        <div class="seg mp-lang" role="radiogroup" aria-label="Dil">
-          <button data-lang="tr">Türkçe</button><button data-lang="en">English</button>
+        <div class="seg mp-lang" role="radiogroup" aria-label="Dil" translate="no">
+          ${LANGUAGES.map((l) => `<button data-lang="${l.id}" title="${esc(l.label)}">${l.id.toUpperCase()}</button>`).join("")}
         </div>
         <button class="btn btn-accent mp-go" data-act="generate"></button>
         <span class="mp-grow"></span>
@@ -82,7 +85,10 @@ export class MasterPromptDialog {
       if (path !== this.path || !this.el) return;
       this.stats = state.stats;
       this.result = state.last;
-      if (state.last?.language) this.lang = state.last.language;
+      if (!this.chosen) {
+        try { this.lang = (await api.get("/api/preferences")).assistant_language || this.lang; } catch { /* keep */ }
+      }
+      if (state.last?.language && !this.chosen) this.lang = state.last.language;
       if (state.busy && !this.running) this._waitForOther();
     } catch (err) {
       toast(err.message, "error");
@@ -177,8 +183,10 @@ export class MasterPromptDialog {
         <circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="fill"
           style="stroke-dasharray:${(pct * 113.1).toFixed(1)} 113.1"/></svg>`;
     const say = product
-      ? "<b>Ürün evresi</b> — bütün kararlar verildi. Talimat notun kendi kararlarından yazılacak."
-      : `<b>${esc(s.phase_label)} evresi</b> · ${s.made}/${s.total} karar. Açık kalan ${open} kararı${s.waiting ? ` ve cevap bekleyen ${s.waiting} soruyu` : ""} model kendisi karara bağlayıp <i>Varsayımlar</i> bölümüne yazacak.`;
+      ? "<b>Ürün evresi</b><span>Bütün kararlar verildi. Talimat notun kendi kararlarından yazılacak.</span>"
+      : `<b>${esc(s.phase_label)} evresi · ${s.made}/${s.total} karar</b><span>${s.waiting
+        ? `Açık kalan ${open} kararı ve cevap bekleyen ${s.waiting} soruyu model kendisi karara bağlayıp Varsayımlar bölümüne yazacak.`
+        : `Açık kalan ${open} kararı model kendisi karara bağlayıp Varsayımlar bölümüne yazacak.`}</span>`;
     box.className = `mp-ready${product ? " product" : ""}`;
     box.innerHTML = `${ring}<span class="mp-ring-n">${s.made}<small>/${s.total}</small></span>
       <p>${say}</p>
@@ -242,7 +250,7 @@ export class MasterPromptDialog {
     }
     const r = this.result;
     if (!r) { foot.innerHTML = this.stats ? `Hazır olduğunda ${SECTIONS.length} bölüm yazılacak.` : ""; return; }
-    const when = r.created ? new Date(r.created).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+    const when = r.created ? new Date(r.created).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
     foot.innerHTML = [
       `${fmt(words(r.text))} kelime`, `${r.sections} bölüm`, `${(r.assumptions || []).length} varsayım`,
       r.open ? `<span class="warn">${r.open} satır açık uçlu kaldı</span>` : `<span class="ok">${icon("check", 12)}açık soru yok</span>`,
@@ -256,6 +264,7 @@ export class MasterPromptDialog {
     const lang = e.target.closest("[data-lang]");
     if (lang) {
       this.lang = lang.dataset.lang;
+      this.chosen = this.lang;
       try { localStorage.setItem(LANG_KEY, this.lang); } catch { /* private window */ }
       this._paint();
       return;

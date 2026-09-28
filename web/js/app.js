@@ -18,6 +18,12 @@ import { Sidebar } from "./sidebar.js";
 import { THEMES, openThemePicker, themeOf } from "./themes.js";
 import { IdeaTree } from "./tree.js";
 import { $, debounce, esc, mod, relativeSaved, toast, wordCount } from "./util.js";
+import { LANGUAGES, lang, startI18n } from "./i18n.js";
+import { openLanguagePicker, syncLanguage } from "./langpicker.js";
+
+// the dictionary is in before anything is drawn: no flash of Turkish
+await startI18n();
+syncLanguage();
 
 const SAVE_MS = 700;
 // The live watch looks at natural breaks only: a pause this long, or something
@@ -202,6 +208,8 @@ function buildChrome() {
   $("#masterLaunch").innerHTML = `${icon("wand", 15)}<span>Master prompt</span>`;
   $("#masterLaunch").onclick = () => openMaster();
   $("#themeBtn").onclick = () => openThemePicker($("#themeBtn"), theme, setTheme);
+  $("#langBtn").innerHTML = `${icon("globe", 17)}<span class="lang-badge" translate="no">${lang.toUpperCase()}</span>`;
+  $("#langBtn").onclick = () => openLanguagePicker($("#langBtn"));
   $("#focusBtn").onclick = () => setFocusMode(!focusMode);
   applyAppearance();
   $("#launchBtn").innerHTML = icon("play", 15);
@@ -1208,6 +1216,7 @@ function commands() {
     { label: state.preview === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(state.preview === "hidden" ? "preview" : "hidden") },
     { label: focusMode ? "Odak kipinden çık" : "Odak kipine geç", icon: "fit", hint: "Ctrl Shift F", action: () => setFocusMode(!focusMode) },
     { label: "Tema seç…", icon: "sparkles", action: () => openThemePicker($("#themeBtn"), theme, setTheme) },
+    { label: "Dil seç…", icon: "globe", action: () => openLanguagePicker($("#langBtn")) },
     ...THEMES.filter((t) => t.id !== theme).map((t) => ({ label: `Tema: ${t.label}`, icon: t.dark ? "moon" : "sun", action: () => setTheme(t.id) })),
     { label: "Kenar çubuğunu aç/kapat", icon: "panelLeft", hint: "Ctrl \\", action: () => setSidebar(!shown.sidebar) },
     { label: "Öneri panelini aç/kapat", icon: "panelRight", hint: "Ctrl Shift \\", action: () => setPanel(!shown.panel) },

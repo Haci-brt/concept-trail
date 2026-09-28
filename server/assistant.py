@@ -777,7 +777,8 @@ class Assistant:
                 # waiting for an answer: ask the rung's own next question
                 first = rung["open"][0]
                 result = {**result, "type": "questions",
-                          "questions": [{"text": ladder.ASK[first], "kind": first}]}
+                          "questions": [{"text": ladder.ask(first, llm_client.output_language()),
+                                         "kind": first}]}
                 kind = "questions"
         if kind == "net":
             if not quiet:

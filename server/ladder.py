@@ -62,6 +62,84 @@ ASK = {
     "dagitim": "Nasıl kurulacak, dağıtılacak ve güncellenecek?",
 }
 
+# the same questions for a writer who wants the assistant in another language
+ASK_IN = {
+    "en": {
+        "amac": "In one sentence: what problem will this software solve?",
+        "kullanici": "Who will use it: only you, a team, or everyone?",
+        "platform": "Which platform will it run on: web, desktop, mobile, command line, a library or a service?",
+        "calisma": "Will it work online or offline; will the data live on the device or on a server?",
+        "parcalar": "What will its main parts be: client, server, storage, background jobs?",
+        "veri": "What data will it keep, where will it live, and who will own it?",
+        "iletisim": "How will the parts talk to each other: an API, events, a queue, files?",
+        "dis": "Which external services or systems will it connect to?",
+        "sorumluluk": "What will be the single responsibility of each part?",
+        "arayuz": "What is the contract between the parts: which calls, which data?",
+        "hata": "What happens when a part crashes or stops responding?",
+        "teknoloji": "Which language, framework and libraries will you use, and why?",
+        "kenar": "Which edge cases matter most?",
+        "test": "How will you verify that it works correctly?",
+        "dagitim": "How will it be installed, deployed and updated?",
+    },
+    "de": {
+        "amac": "In einem Satz: Welches Problem soll diese Software lösen?",
+        "kullanici": "Wer wird sie nutzen: nur du, ein Team oder alle?",
+        "platform": "Auf welcher Plattform soll sie laufen: Web, Desktop, Mobil, Kommandozeile, Bibliothek oder Dienst?",
+        "calisma": "Soll sie online oder offline arbeiten; liegen die Daten auf dem Gerät oder auf einem Server?",
+        "parcalar": "Was werden die Hauptteile sein: Client, Server, Speicher, Hintergrundaufgaben?",
+        "veri": "Welche Daten werden gespeichert, wo liegen sie und wem gehören sie?",
+        "iletisim": "Wie sprechen die Teile miteinander: API, Ereignisse, Warteschlange, Dateien?",
+        "dis": "Mit welchen externen Diensten oder Systemen wird sie verbunden?",
+        "sorumluluk": "Was ist die eine Aufgabe jedes Teils?",
+        "arayuz": "Was ist der Vertrag zwischen den Teilen: welche Aufrufe, welche Daten?",
+        "hata": "Was passiert, wenn ein Teil abstürzt oder nicht antwortet?",
+        "teknoloji": "Welche Sprache, welches Framework und welche Bibliotheken wirst du nutzen, und warum?",
+        "kenar": "Welche Grenzfälle sind am wichtigsten?",
+        "test": "Wie wirst du prüfen, dass sie richtig funktioniert?",
+        "dagitim": "Wie wird sie installiert, ausgeliefert und aktualisiert?",
+    },
+    "es": {
+        "amac": "En una frase: ¿qué problema resolverá este software?",
+        "kullanici": "¿Quién lo usará: solo tú, un equipo o todo el mundo?",
+        "platform": "¿En qué plataforma funcionará: web, escritorio, móvil, línea de comandos, biblioteca o servicio?",
+        "calisma": "¿Funcionará con o sin conexión; los datos estarán en el dispositivo o en un servidor?",
+        "parcalar": "¿Cuáles serán sus partes principales: cliente, servidor, almacenamiento, tareas en segundo plano?",
+        "veri": "¿Qué datos guardará, dónde estarán y de quién serán?",
+        "iletisim": "¿Cómo se comunicarán las partes: API, eventos, cola, archivos?",
+        "dis": "¿A qué servicios o sistemas externos se conectará?",
+        "sorumluluk": "¿Cuál será la única responsabilidad de cada parte?",
+        "arayuz": "¿Cuál es el contrato entre las partes: qué llamadas, qué datos?",
+        "hata": "¿Qué pasa si una parte falla o deja de responder?",
+        "teknoloji": "¿Qué lenguaje, framework y bibliotecas usarás, y por qué?",
+        "kenar": "¿Qué casos límite son los más importantes?",
+        "test": "¿Cómo comprobarás que funciona correctamente?",
+        "dagitim": "¿Cómo se instalará, desplegará y actualizará?",
+    },
+    "fr": {
+        "amac": "En une phrase : quel problème ce logiciel va-t-il résoudre ?",
+        "kullanici": "Qui va l'utiliser : toi seul, une équipe ou tout le monde ?",
+        "platform": "Sur quelle plateforme tournera-t-il : web, bureau, mobile, ligne de commande, bibliothèque ou service ?",
+        "calisma": "Fonctionnera-t-il en ligne ou hors ligne ; les données seront-elles sur l'appareil ou sur un serveur ?",
+        "parcalar": "Quelles seront ses parties principales : client, serveur, stockage, tâches de fond ?",
+        "veri": "Quelles données gardera-t-il, où seront-elles et à qui appartiendront-elles ?",
+        "iletisim": "Comment les parties communiqueront-elles : API, événements, file d'attente, fichiers ?",
+        "dis": "À quels services ou systèmes externes se connectera-t-il ?",
+        "sorumluluk": "Quelle sera la responsabilité unique de chaque partie ?",
+        "arayuz": "Quel est le contrat entre les parties : quels appels, quelles données ?",
+        "hata": "Que se passe-t-il si une partie plante ou ne répond plus ?",
+        "teknoloji": "Quels langage, framework et bibliothèques utiliseras-tu, et pourquoi ?",
+        "kenar": "Quels cas limites comptent le plus ?",
+        "test": "Comment vérifieras-tu qu'il fonctionne correctement ?",
+        "dagitim": "Comment sera-t-il installé, déployé et mis à jour ?",
+    },
+}
+
+
+def ask(decision: str, language: str = "tr") -> str:
+    """The rung's own question, in the language the assistant writes in."""
+    return ASK_IN.get(language, {}).get(decision) or ASK[decision]
+
+
 # words that turn up in almost any answer whatever the note says: they cannot
 # be what ties a claimed decision to the note
 GENERIC_STEMS = {"uygu", "kull", "sist", "otom", "yazi", "olar", "olac", "yapm", "degi",

@@ -24,6 +24,7 @@ from server.assistant import Assistant
 from server.broker import Broker
 from server.errors import ApiError
 from server.masterprompt import MasterPrompts
+from server.preferences import Preferences
 from server.providers import ProviderRegistry
 from server.render import render
 from server.research import ResearchRunner
@@ -149,6 +150,32 @@ class NodeBody(BaseModel):
     node_id: str
 
 
+class PreferencesBody(BaseModel):
+    ui_language: str | None = None
+    assistant_language: str | None = None
+
+
+# the research findings' own words in the note, in the assistant's language
+FINDING_WORDS = {
+    "en": {"## Araştırma bulguları": "## Research findings", "Benzer proje": "Similar project",
+           "Okunan kaynak": "Source read", "Ayrışma": "Difference", "Argüman": "Argument", "Araç": "Tool",
+           "Geliştirme fikri": "Improvement idea", "Kaynak": "Source"},
+    "de": {"## Araştırma bulguları": "## Rechercheergebnisse", "Benzer proje": "Ähnliches Projekt",
+           "Okunan kaynak": "Gelesene Quelle", "Ayrışma": "Abgrenzung", "Argüman": "Argument", "Araç": "Werkzeug",
+           "Geliştirme fikri": "Verbesserungsidee", "Kaynak": "Quelle"},
+    "es": {"## Araştırma bulguları": "## Hallazgos de la investigación", "Benzer proje": "Proyecto similar",
+           "Okunan kaynak": "Fuente leída", "Ayrışma": "Diferencia", "Argüman": "Argumento", "Araç": "Herramienta",
+           "Geliştirme fikri": "Idea de mejora", "Kaynak": "Fuente"},
+    "fr": {"## Araştırma bulguları": "## Résultats de la recherche", "Benzer proje": "Projet similaire",
+           "Okunan kaynak": "Source lue", "Ayrışma": "Différence", "Argüman": "Argument", "Araç": "Outil",
+           "Geliştirme fikri": "Idée d'amélioration", "Kaynak": "Source"},
+}
+
+
+def _w(text: str) -> str:
+    return FINDING_WORDS.get(llm_client.output_language(), {}).get(text, text)
+
+
 class MasterPromptBody(BaseModel):
     path: str
     language: str = "tr"
@@ -222,7 +249,7 @@ def _research_proposal_text(result: dict, choices: list[ResearchChoice]) -> str:
         plain = html.unescape(re.sub(r"<[^>]+>", " ", str(value or "")))
         return " ".join(plain.split())[:limit].rstrip()
 
-    lines = ["## Araştırma bulguları"]
+    lines = [_w("## Araştırma bulguları")]
     seen = set()
     for choice in choices:
         key = (choice.type, choice.id)
@@ -236,21 +263,23 @@ def _research_proposal_text(result: dict, choices: list[ResearchChoice]) -> str:
         if choice.type == "project":
             name = line(row.get("repo") or choice.id, 120)
             detail = line(row.get("description"), 350)
-            lines.append(f"- **Benzer proje: {name}** — {detail}" if detail else f"- **Benzer proje: {name}**")
+            lines.append(f"- **{_w('Benzer proje')}: {name}** — {detail}" if detail
+                         else f"- **{_w('Benzer proje')}: {name}**")
         elif choice.type == "source":
-            name = line(row.get("title") or "Kaynak", 120)
+            name = line(row.get("title") or _w("Kaynak"), 120)
             detail = line(row.get("excerpt") or row.get("snippet"), 350)
-            lines.append(f"- **Okunan kaynak: {name}** — {detail}" if detail else f"- **Okunan kaynak: {name}**")
+            lines.append(f"- **{_w('Okunan kaynak')}: {name}** — {detail}" if detail
+                         else f"- **{_w('Okunan kaynak')}: {name}**")
         elif choice.type == "insight":
-            label = "Ayrışma" if row.get("kind") == "ayrisma" else "Argüman"
+            label = _w("Ayrışma") if row.get("kind") == "ayrisma" else _w("Argüman")
             lines.append(f"- **{label}:** {line(row.get('text'), 400)}")
             continue
         elif choice.type == "tool":
             name = line(row.get("name") or row.get("repo") or choice.id, 120)
             detail = line(row.get("why") or row.get("description"), 350)
-            lines.append(f"- **Araç: {name}** — {detail}" if detail else f"- **Araç: {name}**")
+            lines.append(f"- **{_w('Araç')}: {name}** — {detail}" if detail else f"- **{_w('Araç')}: {name}**")
         else:
-            title = line(row.get("title") or "Geliştirme fikri", 120)
+            title = line(row.get("title") or _w("Geliştirme fikri"), 120)
             detail = line(row.get("detail"), 350)
             lines.append(f"- **{title}** — {detail}" if detail else f"- **{title}**")
 
@@ -258,7 +287,7 @@ def _research_proposal_text(result: dict, choices: list[ResearchChoice]) -> str:
         for url in list(urls)[:1]:
             parsed = urlparse(str(url))
             if parsed.scheme in ("http", "https") and parsed.netloc and len(str(url)) <= 220:
-                lines.append(f"  Kaynak: {url}")
+                lines.append(f"  {_w('Kaynak')}: {url}")
     return "\n".join(lines)
 
 
@@ -273,6 +302,8 @@ def create_app(settings: Settings) -> FastAPI:
     research = ResearchRunner(vault, notes, broker, tool_hub, assistant.provider_for,
                               assistant.budget.record, assistant.is_private)
     master = MasterPrompts(vault, notes, assistant)
+    preferences = Preferences()
+    llm_client.set_output_language(preferences.data["assistant_language"])
     session_file = vault.meta_dir / "session.json"
 
     @asynccontextmanager
@@ -568,6 +599,18 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post("/api/assistant/summarize")
     async def summarize(body: NodeBody):
         return await assistant.summarize(body.path, body.node_id)
+
+    # ---- languages: the interface and what the assistant writes in ----
+    @app.get("/api/preferences")
+    def get_preferences():
+        return preferences.public()
+
+    @app.put("/api/preferences")
+    def put_preferences(body: PreferencesBody):
+        changes = {k: v for k, v in body.model_dump().items() if v is not None}
+        result = preferences.update(changes)
+        llm_client.set_output_language(result["assistant_language"])
+        return result
 
     # ---- the master prompt: build instructions for a coding agent ----
     @app.get("/api/master-prompt")

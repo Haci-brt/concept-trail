@@ -77,6 +77,7 @@
 .mp-ready:empty { display: none; }
 .mp-ready.product { border-color: var(--accent-border); background: var(--accent-softer); }
 .mp-ready p { flex: 1; margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.mp-ready p span { display: block; }
 .mp-ready b { color: var(--text); }
 .mp-ring { width: 44px; height: 44px; flex: none; transform: rotate(-90deg); }
 .mp-ring circle { fill: none; stroke-width: 4; }

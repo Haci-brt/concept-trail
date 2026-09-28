@@ -2,6 +2,7 @@
 // note, but the existing assistant approval event is the only write path.
 import { api } from "./api.js";
 import { icon } from "./icons.js";
+import { locale } from "./i18n.js";
 import { esc, html, toast } from "./util.js";
 
 const STEP_LABELS = {
@@ -365,7 +366,7 @@ export class ResearchPanel {
     const list = (title, items) => items?.length ? `<div class="r-deep-list"><b>${title}</b><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>` : "";
     const cards = projects.map((p) => {
       const href = safeUrl(p.url || `https://github.com/${p.repo}`);
-      const facts = [p.stars != null ? `${Number(p.stars).toLocaleString("tr-TR")} yıldız` : "",
+      const facts = [p.stars != null ? `${Number(p.stars).toLocaleString(locale())} yıldız` : "",
         p.updated ? `son güncelleme ${esc(p.updated)}` : "", p.license ? esc(p.license) : "",
         p.archived ? "arşivlenmiş" : ""].filter(Boolean);
       return `<article class="r-result r-deep-card"><div class="r-deep-top"><strong>${esc(p.repo)}</strong>${href ? `<a class="r-source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">Kaynak ↗</a>` : ""}</div>
@@ -439,7 +440,7 @@ export class ResearchPanel {
     const body = String(source.content || source.excerpt || "").trim();
     const label = source.verified ? "Sayfa okundu" : source.read_error ? "Okunamadı" : "Arama özeti";
     const kind = { prior: "Benzer fikir", support: "Yardımcı araç", adjacent: "Yakın fikir" }[source.kind] || "Kaynak";
-    return `<article class="r-source ${source.verified ? "read" : ""}"><div class="r-source-top"><div class="r-source-tags"><span class="r-read-status">${label}</span><span class="r-kind">${kind}</span></div>${source.verified ? this._select("source", href, sourceTitle(source, new URL(href).hostname)) : `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(sourceTitle(source, new URL(href).hostname))}</a>`}<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Kaynağı aç ↗</a></div><p>${esc(String(source.excerpt || source.snippet || source.read_error || "").slice(0, 700))}</p>${body ? `<details class="r-page"><summary>Sayfa içeriğini oku <span>${Math.min(body.length, 8000).toLocaleString("tr-TR")} karakter</span></summary><div class="r-page-text">${esc(body.slice(0, 8000))}</div></details>` : ""}</article>`;
+    return `<article class="r-source ${source.verified ? "read" : ""}"><div class="r-source-top"><div class="r-source-tags"><span class="r-read-status">${label}</span><span class="r-kind">${kind}</span></div>${source.verified ? this._select("source", href, sourceTitle(source, new URL(href).hostname)) : `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(sourceTitle(source, new URL(href).hostname))}</a>`}<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Kaynağı aç ↗</a></div><p>${esc(String(source.excerpt || source.snippet || source.read_error || "").slice(0, 700))}</p>${body ? `<details class="r-page"><summary>Sayfa içeriğini oku <span>${Math.min(body.length, 8000).toLocaleString(locale())} karakter</span></summary><div class="r-page-text">${esc(body.slice(0, 8000))}</div></details>` : ""}</article>`;
   }
 
   _proposal() {

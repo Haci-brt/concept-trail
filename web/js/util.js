@@ -1,3 +1,5 @@
+import { locale } from "./i18n.js";
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -46,11 +48,11 @@ export function formatClock(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const now = new Date();
-  const hm = d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  const hm = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
   if (d.toDateString() === now.toDateString()) return hm;
   const y = new Date(now); y.setDate(now.getDate() - 1);
   if (d.toDateString() === y.toDateString()) return `Dün ${hm}`;
-  return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+  return d.toLocaleDateString(locale(), { day: "numeric", month: "short" });
 }
 
 export function relativeSaved(date) {
@@ -58,7 +60,7 @@ export function relativeSaved(date) {
   const s = Math.round((Date.now() - date.getTime()) / 1000);
   if (s < 45) return "az önce";
   if (s < 3600) return `${Math.round(s / 60)} dk önce`;
-  return date.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 export function wordCount(text) {

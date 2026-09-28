@@ -7,9 +7,14 @@
 import { api, connectEvents } from "./api.js";
 import { desktopCall } from "./desktop.js";
 import { HudCard } from "./hudcard.js";
+import { startI18n } from "./i18n.js";
+
+await startI18n();
 
 function syncTheme() {
-  document.documentElement.dataset.theme = localStorage.getItem("fikir.appearance.v1") === "dark" ? "dark" : "light";
+  let theme = "light";
+  try { theme = localStorage.getItem("fikir.appearance.v1") || "light"; } catch { /* private window */ }
+  document.documentElement.dataset.theme = theme;
 }
 syncTheme();
 window.addEventListener("storage", (event) => {

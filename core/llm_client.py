@@ -304,6 +304,36 @@ def note_context(full_text: str, span: list[int] | None = None) -> str:
     return f"{head}\n[…]\n\n{section}"
 
 
+# ---------------------------------------------------------------- output language
+# The writer may want the assistant to write in another language than these
+# prompts are written in. Only what the writer reads changes — questions,
+# suggestions, answers, text for the note, explanations; the protocol the
+# parsers read (SORU, BİLİNİYOR, ÖNERİ, JSON keys, decision ids) stays as it is.
+OUTPUT_LANGUAGES = {"tr": "Türkçe", "en": "English", "de": "Deutsch", "es": "Español", "fr": "Français"}
+_output_language = "tr"
+
+
+def set_output_language(code: str) -> None:
+    global _output_language
+    _output_language = code if code in OUTPUT_LANGUAGES else "tr"
+
+
+def output_language() -> str:
+    return _output_language
+
+
+def language_rule() -> str:
+    """Appended to a system prompt; nothing for Turkish, which the prompts are in."""
+    if _output_language == "tr":
+        return ""
+    name = OUTPUT_LANGUAGES[_output_language]
+    return (f"\n\n[DİL] Kullanıcının okuyacağı bütün metni — sorular, öneriler, cevaplar, nota "
+            f"eklenecek metin, özetler, açıklamalar ve gerekçeler — {name} yaz; not başka dilde olsa "
+            "bile. Protokol etiketlerini (SORU, BİLİNİYOR, ÖNERİ, ARAŞTIR, NOT gibi), JSON anahtarlarını, "
+            "karar ve proje kimliklerini olduğu gibi bırak. BİLİNİYOR satırlarındaki değerleri ve notun "
+            "kendisinden yaptığın alıntıları notun kendi kelimeleriyle yaz.")
+
+
 THINK_OPEN = re.compile(r"<think>", re.IGNORECASE)
 THINK_CLOSE = re.compile(r"</think>", re.IGNORECASE)
 
@@ -782,7 +812,7 @@ def offer_extras(full_text: str, roadmap: str = "", provider=None, on_usage=None
     if roadmap:
         parts.append(roadmap)
     content = _complete_thinking_capped(
-        [{"role": "system", "content": EXTRAS_PROMPT},
+        [{"role": "system", "content": EXTRAS_PROMPT + language_rule()},
          {"role": "user", "content": "\n\n".join(parts)}],
         temperature=0.3, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
     return parse_extras(_strip_think(content), full_text)
@@ -892,7 +922,8 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
 
     content = _complete_thinking_capped(
         [
-            {"role": "system", "content": LADDER_SYSTEM_PROMPT if mode == "yazilim" else SYSTEM_PROMPT},
+            {"role": "system", "content": (LADDER_SYSTEM_PROMPT if mode == "yazilim" else SYSTEM_PROMPT)
+             + language_rule()},
             {"role": "user", "content": "\n\n".join(parts)},
         ],
         temperature=0.3, max_tokens=ANALYZE_MAX_TOKENS, on_chunk=on_chunk,
@@ -910,7 +941,7 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
 
 def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None) -> str:
     """Multi-turn conversation about a question the assistant raised."""
-    system = f"{CHAT_SYSTEM_PROMPT}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    system = f"{CHAT_SYSTEM_PROMPT}{language_rule()}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
     content = _complete(
         [{"role": "system", "content": system}] + history,
         temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,
@@ -922,7 +953,7 @@ def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=N
 def chat_answer(history: list[dict], note_excerpt: str, on_chunk=None, provider=None,
                 on_usage=None) -> str:
     """The user asked something back — answer it, don't treat it as an answer."""
-    system = f"{CHAT_ANSWER_PROMPT}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    system = f"{CHAT_ANSWER_PROMPT}{language_rule()}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
     content = _complete(
         [{"role": "system", "content": system}] + history,
         temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,
@@ -943,7 +974,7 @@ def chat_answer_with_tools(history: list[dict], note_excerpt: str, provider, hub
 
     Returns complete_with_tools' {"content", "messages", "calls"}.
     """
-    system = f"{CHAT_ANSWER_PROMPT}{TOOL_GUIDANCE}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    system = f"{CHAT_ANSWER_PROMPT}{TOOL_GUIDANCE}{language_rule()}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
     return complete_with_tools(
         [{"role": "system", "content": system}] + history,
         hub=hub, temperature=0.5, max_tokens=CHAT_MAX_TOKENS, provider=provider,
@@ -958,7 +989,7 @@ def summarize_for_note(history: list[dict], provider=None, on_usage=None, direct
     )
     content = _complete(
         [
-            {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT +
+            {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT + language_rule() +
              (f"\n\nKullanıcının son yönü (eski kararlardan öncelikli): {direction}" if direction else "")},
             {"role": "user", "content": convo},
         ],
@@ -1233,7 +1264,7 @@ def judge_prior_art(note_text: str, candidates: list[dict], provider=None, on_us
         for s in (sources or []) if s.get("verified") and
         (s.get("url") in candidate_urls or s.get("kind") == "prior"))
     content = _complete_thinking_capped(
-        [{"role": "system", "content": PRIOR_ART_PROMPT},
+        [{"role": "system", "content": PRIOR_ART_PROMPT + language_rule()},
          {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n"
           f"[BULUNAN PROJELER]\n{listed}\n\n[OKUNMUŞ KAYNAK KANITI]\n"
           f"{evidence[:6000] or '(okunmuş kaynak yok)'}"}],
@@ -1356,7 +1387,7 @@ def recommend_research(note_text: str, candidates: list[dict], sources: list[dic
         f"- {s['url']} | {str(s.get('title') or '')[:120]} | "
         f"{str(s.get('excerpt') or '')[:900]}"
         for s in selected_sources[:12]) or "(okunmus web kaynagi yok)"
-    messages = [{"role": "system", "content": RESEARCH_RECOMMEND_PROMPT},
+    messages = [{"role": "system", "content": RESEARCH_RECOMMEND_PROMPT + language_rule()},
                  {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n"
                   f"[GITHUB ADAYLARI]\n{listed}\n\n[OKUNMUŞ KAYNAKLAR]\n{evidence}"}]
     result = {"tools": [], "opportunities": []}
@@ -1460,7 +1491,7 @@ def plan_direction(note_text: str, category: str, text: str, decisions: dict, qu
         parts.append(f"[ÖNCEKİ YÖN]\n{previous}")
     parts.append(f"[YENİ YÖN — alan: {category}]\n{text}")
     content = _complete_thinking_capped(
-        [{"role": "system", "content": DIRECTION_PROMPT},
+        [{"role": "system", "content": DIRECTION_PROMPT + language_rule()},
          {"role": "user", "content": "\n\n".join(parts)}],
         temperature=0.2, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
     return parse_direction_plan(content, decisions, questions, proposals, category)
@@ -1680,7 +1711,7 @@ def classify_competitors(note_text: str, candidates: list[dict], provider=None, 
                      f"{' '.join(str(item.get('description') or '').split())[:220]}"
                      + (f" [etiketler: {topics}]" if topics else ""))
     content = _complete_thinking_capped(
-        [{"role": "system", "content": COMPETITOR_KIND_PROMPT},
+        [{"role": "system", "content": COMPETITOR_KIND_PROMPT + language_rule()},
          {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n[ADAYLAR]\n" + "\n".join(lines)}],
         temperature=0.1, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
     return parse_competitor_kinds(content, [item["repo"] for item in candidates])
@@ -1705,7 +1736,7 @@ def compare_projects(note_text: str, components: list[str], projects: list[dict]
             f"Site: {str(item.get('site') or '(yok)')[:900]}\n"
             f"Son issue başlıkları: {issues[:700]}")
     content = _complete_thinking_capped(
-        [{"role": "system", "content": COMPARE_PROMPT},
+        [{"role": "system", "content": COMPARE_PROMPT + language_rule()},
          {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n"
           + (f"{decisions}\n\n" if decisions else "")
           + f"[BİLEŞENLER]\n{', '.join(components) or '(yok)'}\n\n[PROJELER]\n" + "\n\n".join(blocks)}],
@@ -1721,7 +1752,7 @@ def compare_projects(note_text: str, components: list[str], projects: list[dict]
 # What the note leaves open the model decides — visibly, in its own section —
 # because an agent that has to guess guesses silently.
 MASTER_MAX_TOKENS = 9000
-MASTER_LANGUAGES = {"tr": "Türkçe", "en": "English"}
+MASTER_LANGUAGES = {"tr": "Türkçe", "en": "English", "de": "Deutsch", "es": "Español", "fr": "Français"}
 
 MASTER_PROMPT_SYSTEM = (
     "Sen kıdemli bir yazılım mimarı ve teknik yazarsın. Görevin: verilen not, kararlar, "

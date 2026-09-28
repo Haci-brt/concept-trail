@@ -3,6 +3,7 @@
 import { api } from "./api.js";
 import { openMenu } from "./dialogs.js";
 import { icon } from "./icons.js";
+import { locale } from "./i18n.js";
 import { debounce, esc, html, toast } from "./util.js";
 
 const KEY_MASK = "••••";
@@ -245,7 +246,7 @@ export class SettingsDialog {
       <div class="budget-now">
         <div><b>$${Number(usd).toFixed(4)}</b><span>bugünkü harcama</span></div>
         <div><b>${calls}</b><span>bugünkü uzak istek</span></div>
-        <div><b>${tokens.toLocaleString("tr-TR")}</b><span>bugünkü token</span></div>
+        <div><b>${tokens.toLocaleString(locale())}</b><span>bugünkü token</span></div>
       </div>
       <div class="budget-limits">
         <label>Günlük harcama sınırı ($)<input class="field" data-limit="daily_usd" type="number" min="0" step="0.05" value="${numberOr(limits.daily_usd, 0.5)}"></label>
