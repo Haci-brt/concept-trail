@@ -9,6 +9,7 @@ object exposed as window.desktop (see web/js/desktop.js).
 """
 import ctypes
 import sys
+from pathlib import Path
 
 from PyQt6.QtCore import (QEvent, QFile, QIODevice, QObject, QPoint, QPointF, QRect, QRectF, QSettings, Qt, QTimer, QUrl,
                           pyqtSignal, pyqtSlot)
@@ -52,9 +53,18 @@ def _bridge_script() -> QWebEngineScript:
     return script
 
 
+ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icon"
+
+
 def _app_icon() -> QIcon:
-    """High contrast mark matching web/assets/fikir-mark.svg at every OS size."""
+    """The app icon (assets/icon, drawn by build_icons.py) at every size the
+    OS asks for — title bar, taskbar, Alt+Tab. Without the files (a trimmed
+    copy of the app) the old gem mark is painted instead."""
     icon = QIcon()
+    for png in sorted((ICON_DIR / "png").glob("concept-trail-*.png")):
+        icon.addFile(str(png))
+    if not icon.isNull():
+        return icon
     for size in (16, 24, 32, 48, 64, 128, 256):
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)

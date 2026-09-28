@@ -78,14 +78,23 @@ export function icon(name, size = 16, extraClass = "") {
   return `<svg class="ico ${extraClass}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
+let logoSeq = 0;
+
+/** The app mark (assets/icon/concept-trail-small.svg): a trail of stars
+ *  climbing to a bright one. Each copy gets its own gradient ids — the title
+ *  bar and the welcome screen show it at once. */
 export function logo(size = 20) {
-  // Solid facets stay legible at title-bar size and avoid SVG gradient id
-  // collisions when the same mark appears in the welcome state.
+  const id = `lg${++logoSeq}`;
   return `<svg class="logo" width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true">
-    <rect x=".5" y=".5" width="31" height="31" rx="9" fill="#147b70"/>
-    <path d="M16 4.75 26.25 13.25 16 27.5 5.75 13.25Z" fill="#effff8"/>
-    <path d="M16 4.75 12.25 13.25h7.5Z" fill="#bfeedd"/>
-    <path d="M5.75 13.25h20.5L16 27.5Z" fill="#d8f8ed"/>
-    <path d="M5.75 13.25h20.5M16 4.75l-3.75 8.5L16 27.5l3.75-14.25Z" fill="none" stroke="#147b70" stroke-width="1.1" stroke-linejoin="round"/>
+    <defs>
+      <linearGradient id="${id}s" x1="0.1" y1="0" x2="0.9" y2="1"><stop offset="0" stop-color="#1f3168"/><stop offset="1" stop-color="#08101f"/></linearGradient>
+      <radialGradient id="${id}d" cx="0.76" cy="0.26" r="0.55"><stop offset="0" stop-color="#6fe0c4" stop-opacity="0.55"/><stop offset="1" stop-color="#6fe0c4" stop-opacity="0"/></radialGradient>
+    </defs>
+    <rect x=".5" y=".5" width="31" height="31" rx="8" fill="url(#${id}s)"/>
+    <rect x=".5" y=".5" width="31" height="31" rx="8" fill="url(#${id}d)"/>
+    <path d="M7 25 L12.5 19.5 L12 13.5 L23 9" fill="none" stroke="#c9c0ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".9"/>
+    <circle cx="7" cy="25" r="2.3" fill="#ffd166"/><circle cx="12.5" cy="19.5" r="2.4" fill="#7cc0ff"/><circle cx="12" cy="13.5" r="2.2" fill="#b9a6ff"/>
+    <path d="M23 3.5 L24.3 7.7 L28.5 9 L24.3 10.3 L23 14.5 L21.7 10.3 L17.5 9 L21.7 7.7 Z" fill="#f2fffa"/>
+    <circle cx="23" cy="9" r="1.9" fill="#fff"/>
   </svg>`;
 }

@@ -1,6 +1,22 @@
+<p align="center"><img src="assets/icon/png/concept-trail-128.png" width="104" alt="Concept Trail"></p>
+
 # Concept Trail
 
 *A thinking workspace for software ideas: it asks the open questions before you build, researches who already built it, and never writes into your notes without your approval.*
+
+**Install (Windows, PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | iex
+```
+
+**Install (macOS / Linux):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
+```
+
+The interface speaks English, Deutsch, Español, Français and Türkçe (the globe button in the title bar), and so can the assistant.
 
 Bir fikir, bir yazılım fikri aklımıza geldiğinde, o fikir henüz detaylı değilken ucu açık sorularla birlikte kafamızda tam bir yapı kuramıyoruz — ve projeye böyle başlıyoruz. Sonra o açık uçlarla karşılaşınca tıkanıyoruz: başta bu soruları düşünmeden hareket ettiğimiz için kritik sorunlar yüzünden projeyi, bütün sistemi baştan yapılandırmak zorunda kalıyoruz.
 
@@ -52,6 +68,9 @@ Seçtiğin bulgular nota yine yalnız onayınla eklenir. Hiçbir sonuç fikrin "
 ## Temalar
 Üstteki tema düğmesi yedi tema sunar — Kâğıt, Orman gecesi, **Takımyıldız** (fikir ağacıyla aynı gece gökyüzü), Gün batımı, Parşömen (basılı sayfa gibi okunan önizleme), Buzul ve Yüksek karşıtlık. Bir temanın üstüne gelmek bütün uygulamayı o temada gösterir; tıklayınca seçilir, geçiş yumuşakça olur.
 
+## Diller
+Arayüz beş dilde: Türkçe, English, Deutsch, Español, Français — üst çubuktaki dünya düğmesinden seçilir. **Asistanın dili** ayrıca seçilebilir: sorular, öneriler, sohbet cevapları ve nota eklenecek metin o dilde yazılır (seçmezsen arayüzle aynı dilde). Master prompt da beş dilden birinde hazırlanabilir. Notların ve sohbetlerin hiç çevrilmez.
+
 ---
 
 ## Modelden bağımsız
@@ -71,11 +90,31 @@ Asistan belirli bir modele bağlı değildir. OpenAI uyumlu her uç kullanılabi
 
 ## Kurulum
 
+### Tek komutla
+**Windows** (PowerShell'e yapıştır; yönetici izni gerekmez):
+
+```powershell
+irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | iex
+```
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
+```
+
+Komut uygulamayı indirir (Windows'ta `%LOCALAPPDATA%\Programs\ConceptTrail`, diğerlerinde `~/.local/share/concept-trail`), kendine ait bir Python ortamı kurar, **masaüstüne ve Başlat menüsüne logolu bir Concept Trail kısayolu** koyar ve uygulamayı açar. Python 3.10+ gerekir; Windows'ta yoksa winget ile kurmayı önerir. Notların **Belgeler\Concept Trail** klasöründe durur. Güncellemek için aynı komutu yeniden çalıştır — kod yenilenir, notlar ve ortam korunur. Kaldırmak için uygulama klasörünü ve kısayolları silmek yeter; notlar yerinde kalır.
+
+> Windows'ta denendi. macOS ve Linux betiği aynı adımları izler ama bu platformlarda henüz denenmedi; web araması ve masaüstü kartının Windows'a özgü kısımları orada çalışmayabilir.
+
+### Elle (geliştirme için)
+
 ```bash
 pip install -r requirements.txt
 python main.py              # masaüstü penceresi + her zaman üstte duran asistan kartı
 python main.py --browser    # varsayılan tarayıcıda
 python main.py --server     # yalnız sunucu
+python scripts/make_shortcut.py   # masaüstüne ve Başlat menüsüne logolu kısayol
 ```
 
 İlk açılışta **Ayarlar → Modeller**'den bir sağlayıcı ekle (OpenRouter için adres `https://openrouter.ai/api`, model adı ve API anahtarı) ve rolleri ona bağla. Notlar varsayılan olarak `./notes` klasöründe durur (`--vault` ile değiştirilir).
@@ -87,11 +126,14 @@ Araştırmanın araçları uygulamanın içindedir, başka bir kurulum istemez:
 
 ## Yapı
 ```
-server/     FastAPI sunucusu: asistan, karar merdiveni, araştırma, sağlayıcılar, bütçe
-core/       model istemcisi: istemler, ayrıştırıcılar, düşünme bütçesi
-web/        arayüz (derleme adımı olmayan ES modülleri)
-desktop/    PyQt6 masaüstü kabuğu ve asistan kartı (HUD)
-tests/      pytest; tests/manual_research_benchmark.py canlı araştırma ölçümü
+server/       FastAPI sunucusu: asistan, karar merdiveni, araştırma, sağlayıcılar, bütçe
+core/         model istemcisi: istemler, ayrıştırıcılar, düşünme bütçesi
+web/          arayüz (derleme adımı olmayan ES modülleri); web/locales çeviri sözlükleri
+desktop/      PyQt6 masaüstü kabuğu ve asistan kartı (HUD)
+assets/icon/  uygulama logosu (SVG, PNG, .ico); build_icons.py ile yeniden çizilir
+scripts/      make_shortcut.py: masaüstü / Başlat menüsü kısayolu
+install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
+tests/        pytest; tests/manual_research_benchmark.py canlı araştırma ölçümü
 ```
 
 ```bash

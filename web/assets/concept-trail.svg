@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- the same mark for 16–32 px: fewer stars, heavier strokes, no far stars -->
+  <defs>
+    <linearGradient id="cts-sky" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#1f3168"/>
+      <stop offset="1" stop-color="#08101f"/>
+    </linearGradient>
+    <radialGradient id="cts-dawn" cx="0.76" cy="0.26" r="0.55">
+      <stop offset="0" stop-color="#6fe0c4" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#6fe0c4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="8" fill="url(#cts-sky)"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="8" fill="url(#cts-dawn)"/>
+  <path d="M7 25 L12.5 19.5 L12 13.5 L23 9" fill="none" stroke="#c9c0ff" stroke-width="1.6"
+        stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".9"/>
+  <circle cx="7" cy="25" r="2.3" fill="#ffd166"/>
+  <circle cx="12.5" cy="19.5" r="2.4" fill="#7cc0ff"/>
+  <circle cx="12" cy="13.5" r="2.2" fill="#b9a6ff"/>
+  <path d="M23 3.5 L24.3 7.7 L28.5 9 L24.3 10.3 L23 14.5 L21.7 10.3 L17.5 9 L21.7 7.7 Z" fill="#f2fffa"/>
+  <circle cx="23" cy="9" r="1.9" fill="#ffffff"/>
+</svg>

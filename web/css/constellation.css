@@ -43,6 +43,10 @@
 .tree-view .seg { background: rgba(4, 9, 22, 0.6); border-color: var(--glass-line); }
 .tree-view .seg button.on { background: #1d2b50; }
 .tree-view .btn { background: var(--bg-raised); color: var(--text); border-color: var(--border-strong); }
+/* the accent button keeps its mint face in the sky, whatever the theme does
+   to accent text: a dark theme's dark label on the tree's dark button vanished */
+.tree-view .btn.btn-accent { background: var(--accent); border-color: var(--accent); color: #06201a; }
+.tree-view .btn.btn-accent:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .tree-view .tv-hint { color: var(--text-faint); text-shadow: 0 1px 6px #000; }
 
 /* a star in the legend and the counters */
