@@ -34,12 +34,23 @@ Her turda sırayla **Mimar, Ürün, Güvenlik ve işletim, Geliştirici** gözü
 ### Rotayı düzelt
 Sadece modelin sorularıyla ilerlemek fikri istediğin yerden uzaklaştırabilir. **"Rotayı düzelt"** ile projeye serbestçe yön verirsin: asistan düzeltmeni projenin amacı ve verilmiş kararlarla karşılaştırır, yeni gidişatı kısa bir özetle gösterir ve neyi değiştireceğini listeler — düzeltmenin değerini söylediği kararlar güncellenir, etkilediği kararlar yeniden sorulur, çelişen sorular kapanır. Hiçbiri sen onaylamadan olmaz; istemediğin kalemin işaretini kaldırırsın.
 
+### Fikir ağacı: bir takımyıldız
+Not ortada parlayan bir yıldız; soruları, önerileri ve sohbetleri ondan ışın ışın dağılır. **Cevap bekleyen sorular parlar** ve iplerinden ışık akar; çözülenler sakin bir ışıkla kalır. İpler gerçek iplerdir: bir yıldızı tutup sürükleyince bağlı olduklarını çeker, bırakınca yerine salınarak döner. Yazı yalnız fareyle üstüne gelince görünür. Bir yıldıza tıklayınca kartı ondan büyüyerek açılır; not ile o yıldız arasındaki yol aydınlanır, gökyüzünün geri kalanı kararır. Boşluğa tıklamak kartı yıldızına geri küçültür. **N** (ya da "Sıradaki soru") cevap bekleyen bir sonraki soruya uçar. Arkada Samanyolu, ara sıra bir kayan yıldız; not ilk açıldığında yıldızlar merkezden dışa doğru sırayla tutuşur, ipler çizilerek uzar.
+
+### Master prompt
+Tek tuş (**Ctrl Shift M**, üstteki "Master prompt"): not, yol haritasındaki kararlar, cevapladığın sorular, onayladığın ve reddettiğin öneriler ve araştırma, bir yapay zekâ kodlama ajanının (Claude Code, Codex gibi) uygulamayı **hiç soru sormadan** baştan sona yapabileceği bir talimata dönüşür: ürün özeti, kapsam, teknoloji yığını (sürümleriyle), mimari, veri modeli, API sözleşmeleri, ekranlar, hata ve uç durumlar, güvenlik, klasör yapısı, kilometre taşları, test ve kabul ölçütleri, kurulum. Notun açık bıraktığı her şeyi model kendisi karara bağlar ve bunları **Varsayımlar** bölümünde gerekçesiyle listeler; pencere o kararları en üstte gösterir. Hâlâ soru işaretiyle biten ya da kararı erteleyen bir satır kalırsa ikinci, kısa bir çağrı onları da kapatır. Not ürün evresine gelince düğme parlar, ama her an kullanılabilir. Türkçe ya da İngilizce; kopyala, yeni not olarak kaydet ya da .md indir. Son hazırlanan notla birlikte saklanır. Model ayarlarında kendi görevi vardır ("Master prompt"; boş bırakılırsa araştırma yargılarının modeli).
+
 ### Araştırma: bu fikir yapılmış mı?
 Fikrin kısa bir özetinden sonra GitHub'da ve web'de bu fikri daha önce kimin geliştirdiği aranır — birden çok yoldan (topic, anahtar kelime, popülerlik, README, "alternatives", "Show HN"); bulunanlar kaç bağımsız yolun onu bulduğuna göre sıralanır. Fikrin parçaları için kullanılabilecek kütüphaneler ayrıca aranır. Uygun sayfalar ve README'ler açılıp okunur (JavaScript'le çizilen sayfalar tarayıcı katmanıyla).
 
 **Rakip analizi:** en yakın beş proje yakından incelenir — etkinliği, lisansı, son issue'ları (kullanıcılarının neden şikâyet ettiği), README'si ve sitesi. Model bunları fikrinle karşılaştırır: fikrinin parçalarının her projede var / kısmen / yok olduğu bir tablo, her projenin fikrinle ortak yanı, eksiği, zayıf noktası ve ondan alınacak ders; **fikrini bunlardan ayıracak noktalar** ve **geliştirme argümanları**. Asistan, notunda başkalarının çözmüş olabileceği bir başlık görürse araştırmayı kendisi de önerebilir.
 
 Seçtiğin bulgular nota yine yalnız onayınla eklenir. Hiçbir sonuç fikrin "özgün" olduğunu iddia etmez: aramada görünmemek yokluk kanıtı değildir.
+
+---
+
+## Temalar
+Üstteki tema düğmesi yedi tema sunar — Kâğıt, Orman gecesi, **Takımyıldız** (fikir ağacıyla aynı gece gökyüzü), Gün batımı, Parşömen (basılı sayfa gibi okunan önizleme), Buzul ve Yüksek karşıtlık. Bir temanın üstüne gelmek bütün uygulamayı o temada gösterir; tıklayınca seçilir, geçiş yumuşakça olur.
 
 ---
 

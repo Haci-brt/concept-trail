@@ -4,6 +4,7 @@ Nothing here ever leaves the machine — this only calls http://127.0.0.1,
 the same local server started by run_qwen38.sh / run_flashnext.sh.
 Set FIKIR_LLM_URL to point at a different local server.
 """
+import dataclasses
 import json
 import os
 import re
@@ -1711,3 +1712,177 @@ def compare_projects(note_text: str, components: list[str], projects: list[dict]
         temperature=0.2, max_tokens=RECOMMEND_MAX_TOKENS, provider=provider, on_usage=on_usage,
         answer_tokens=2000)
     return parse_comparison(content, [item["repo"] for item in projects], components)
+
+
+# ---------------------------------------------------------------- master prompt
+# One button, any time: everything the note, its decisions, its answered
+# questions and its research know, written up as the instructions a coding
+# agent needs to build the thing without coming back with a single question.
+# What the note leaves open the model decides — visibly, in its own section —
+# because an agent that has to guess guesses silently.
+MASTER_MAX_TOKENS = 9000
+MASTER_LANGUAGES = {"tr": "Türkçe", "en": "English"}
+
+MASTER_PROMPT_SYSTEM = (
+    "Sen kıdemli bir yazılım mimarı ve teknik yazarsın. Görevin: verilen not, kararlar, "
+    "cevaplanmış sorular ve araştırmadan, başka bir yapay zekâ kodlama ajanının (Claude Code, "
+    "Codex gibi) bu yazılımı sıfırdan, tek başına ve HİÇ SORU SORMADAN yapabileceği bir "
+    "MASTER PROMPT yazmak.\n\n"
+    "KURALLAR\n"
+    "1. Açık soru bırakma. Notta ya da kararlarda olmayan her konuda kararı SEN ver: notun "
+    "amacına en uygun, en sade, yaygın ve bilinen seçeneği seç. Böyle her kararı son bölümde "
+    "'Karar: ... — Neden: ...' diye listele. 'Kullanıcıya sor', 'belirlenecek', 'tercihe bağlı', "
+    "'X ya da Y kullanılabilir' gibi karar ertelemeyen ifade kullanma; soru işaretiyle biten "
+    "cümle yazma.\n"
+    "2. Notta yazılan, kararlarda verilen ve cevaplanan sorularda söylenen her şey bağlayıcıdır; "
+    "onlarla çelişme. 'Kullanıcının son yönü' eski notla çelişirse son yön geçerli. Kullanıcının "
+    "reddettiği öneriyi uygulama.\n"
+    "3. Somut ol: teknoloji yığını sürüm numaralarıyla; veri modeli alan adı, tipi, zorunluluğu ve "
+    "ilişkileriyle; API ya da modül arayüzleri çağrı/yol, girdi, çıktı ve hata durumlarıyla; "
+    "ekranlar ve kullanıcı akışları adım adım; her özellik için doğrulanabilir kabul kriterleri; "
+    "kurulum ve çalıştırma komutları.\n"
+    "4. Uygulama planını sıralı kilometre taşları olarak yaz; her taşın sonunda neyin çalışır "
+    "durumda olacağı ve nasıl doğrulanacağı belli olsun. İlk taş en küçük çalışan sürüm olsun.\n"
+    "5. Kapsam dışını açıkça yaz: ajanın bu sürümde yapmaması gerekenler.\n"
+    "6. Sırlar (anahtar, parola, token) koda ya da depoya yazılmaz; ortam değişkeni ya da "
+    "yapılandırma dosyası ve örnek dosyası (.env.example) kullanılır. Girdi doğrulaması ve yetki "
+    "kuralları yazılır.\n"
+    "7. Emin olmadığın bir kütüphane ya da servis adı uydurma; yaygın ve bilinen olanı seç.\n"
+    "8. Araştırma bulguları verildiyse rakiplerden alınacak dersleri ve bu ürünün farkını kısaca "
+    "kat; rakibin kodunu kopyalama talimatı verme.\n"
+    "9. Ajanın çalışma kuralları bölümünde şunlar olsun: belgeyi baştan sona okuyup plana göre "
+    "ilerle; her kilometre taşından sonra testleri çalıştır; soru sorma — belgede cevabı olmayan "
+    "küçük bir konuda en sade seçimi yap ve README'deki 'Kararlar' listesine yaz.\n\n"
+    "BİÇİM: Markdown. Başlıklar bu sırayla (başlıkları da çıktı dilinde yaz):\n"
+    "# <Uygulamanın adı> — Yapım talimatı\n"
+    "## 0. Ajan için çalışma kuralları\n"
+    "## 1. Ürün özeti\n"
+    "## 2. Kullanıcılar ve temel senaryolar\n"
+    "## 3. Kapsam (bu sürümde var / yok)\n"
+    "## 4. Platform ve çalışma ortamı\n"
+    "## 5. Teknoloji yığını (tablo: katman | seçim | sürüm | neden)\n"
+    "## 6. Mimari (parçalar ve veri akışı; metinle çizilmiş bir şema)\n"
+    "## 7. Veri modeli\n"
+    "## 8. Arayüzler ve API sözleşmeleri\n"
+    "## 9. Ekranlar ve kullanıcı akışları\n"
+    "## 10. Hata durumları ve uç durumlar\n"
+    "## 11. Güvenlik, gizlilik ve yapılandırma\n"
+    "## 12. Klasör yapısı\n"
+    "## 13. Uygulama planı (kilometre taşları)\n"
+    "## 14. Test planı ve kabul kriterleri\n"
+    "## 15. Kurulum, çalıştırma ve dağıtım\n"
+    "## 16. Kodlama kuralları\n"
+    "## 17. Bitti sayılma ölçütü\n"
+    "## 18. Varsayımlar (notta olmayan, senin verdiğin kararlar)\n\n"
+    "Yalnız master prompt metnini yaz: öncesine ve sonrasına açıklama ekleme, tamamını kod "
+    "bloğuna sarma."
+)
+
+MASTER_FIX_PROMPT = (
+    "Aşağıdaki numaralı satırlar bir yapım talimatından alındı ve hâlâ açık bir soru ya da "
+    "ertelenmiş bir karar içeriyor. Her biri için kararı SEN ver ve satırın yerine geçecek TEK "
+    "satırı yaz; satırın biçimini (madde işareti, tablo, girinti) koru, soru işaretiyle bitirme. "
+    "Biçim: her satır için '<numara>: <yeni satır>'. Başka hiçbir şey yazma."
+)
+
+# words that put a decision off rather than make it
+OPEN_MARK = re.compile(r"\b(tbd|todo|belirlenecek|belirlenmeli|karar verilecek|karar verilmeli|"
+                       r"netlestirilecek|netlestirilmeli|kullaniciya sor\w*|kullaniciya danis\w*|"
+                       r"sonra karar\w*|to be decided|to be determined|ask the user|decide later)\b")
+QUOTES = "\"“”«»'‘’`"
+
+
+def unresolved_lines(text: str) -> list[int]:
+    """Lines of a master prompt that still leave something open: a sentence
+    ending in a question mark (not one quoted as UI copy, not in a code
+    block) or a word that puts the decision off. Only finds them — which way
+    to decide is the model's call (fix_master_prompt)."""
+    found, fence = [], False
+    for index, line in enumerate(text.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            fence = not fence
+            continue
+        if fence or not stripped or stripped.startswith("#"):
+            continue
+        asks_ = stripped.rstrip("*_ ").endswith("?") and not any(q in stripped for q in QUOTES)
+        if asks_ or OPEN_MARK.search(plain(stripped)):
+            found.append(index)
+    return found
+
+
+def _unwrap(text: str) -> str:
+    """A reply wrapped whole in a ```markdown block is unwrapped."""
+    text = _strip_think(text).strip()
+    match = re.fullmatch(r"```(?:markdown|md)?\s*\n(.*)\n```", text, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else text
+
+
+def fastest_route(provider):
+    """The same provider and model, asked to route to its fastest host.
+
+    OpenRouter serves one model from several hosts and picks one per request;
+    the same DeepSeek V4 Flash call ran at 7 to 38 words a second on two
+    tries, and one master prompt crawled at 1.5 — thirty minutes for a long
+    document. Only the routing changes, and only when nobody configured it."""
+    if provider is None or "openrouter.ai" not in (provider.base_url or "") or "provider" in (provider.extras or {}):
+        return provider
+    return dataclasses.replace(provider, extras={**(provider.extras or {}), "provider": {"sort": "throughput"}})
+
+
+def master_prompt(material: str, language: str = "tr", provider=None, on_chunk=None,
+                  on_usage=None) -> str:
+    """Write the build instructions for a coding agent from `material` (the
+    note and everything decided about it)."""
+    provider = fastest_route(provider)
+    lang = MASTER_LANGUAGES.get(language, MASTER_LANGUAGES["tr"])
+    content = _complete(
+        [{"role": "system", "content": MASTER_PROMPT_SYSTEM + f"\n\nÇIKTI DİLİ: {lang}."},
+         {"role": "user", "content": material}],
+        temperature=0.3, max_tokens=MASTER_MAX_TOKENS, provider=provider, on_chunk=on_chunk,
+        on_usage=on_usage)
+    return _unwrap(content)
+
+
+def parse_fixes(raw: str, wanted: list[int]) -> dict[int, str]:
+    """'<n>: <line>' replies, only for the lines that were asked about."""
+    fixes = {}
+    for line in _strip_think(raw).splitlines():
+        match = re.match(r"^\s*(\d+)\s*[:.)]\s*(.+?)\s*$", line)
+        if match and int(match.group(1)) in wanted and match.group(2).strip():
+            fixes[int(match.group(1))] = match.group(2)
+    return fixes
+
+
+def fix_master_prompt(text: str, provider=None, on_usage=None) -> tuple[str, int]:
+    """One pass over the lines that still leave something open: the model
+    decides each and the line is replaced. Returns (text, lines fixed)."""
+    wanted = unresolved_lines(text)
+    if not wanted:
+        return text, 0
+    lines = text.splitlines()
+    asked = "\n".join(f"{i}: {lines[i]}" for i in wanted[:40])
+    raw = _complete(
+        [{"role": "system", "content": MASTER_FIX_PROMPT},
+         {"role": "user", "content": f"[TALİMATIN BAŞI]\n{text[:2500]}\n\n[AÇIK SATIRLAR]\n{asked}"}],
+        temperature=0.2, max_tokens=2400, provider=provider, on_usage=on_usage)
+    fixes = parse_fixes(raw, wanted[:40])
+    for index, new in fixes.items():
+        indent = lines[index][:len(lines[index]) - len(lines[index].lstrip())]
+        lines[index] = indent + new.lstrip()
+    return "\n".join(lines), len(fixes)
+
+
+def master_assumptions(text: str) -> list[str]:
+    """The decisions the model made itself: the bullets of the last section
+    whose heading speaks of assumptions."""
+    items, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("#"):
+            inside = bool(re.search(r"varsay|assumption", plain(line)))
+            continue
+        if inside and re.match(r"^\s*([-*•]|\d+[.)])\s+", line):
+            # shown as plain text in the dialog: the bold markers go
+            item = re.sub(r"^\s*([-*•]|\d+[.)])\s+", "", line)
+            items.append(re.sub(r"\*\*|__", "", item).strip())
+    return items

@@ -1,0 +1,140 @@
+/* Fikir Ağacı as a constellation: a night sky in both themes, stars drawn on
+   a canvas, and the one card that grows out of the star it belongs to. */
+.tree-view {
+  --sky-0: #060a18;
+  --sky-1: #0b1224;
+  --glass: rgba(10, 17, 36, 0.72);
+  --glass-line: rgba(160, 190, 235, 0.16);
+  --text: #eef3ff;
+  --text-2: #d3dcf0;
+  --text-muted: #9fb0cc;
+  --text-faint: #7486a6;
+  --bg-sunken: rgba(8, 14, 30, 0.8);
+  --bg-raised: #1a2542;
+  --bg-raised-2: #24345c;
+  --border: rgba(160, 190, 235, 0.14);
+  --border-strong: rgba(160, 190, 235, 0.24);
+  --accent: #6fe0c4;
+  --accent-strong: #8eeccf;
+  --accent-bright: #b5f5e0;
+  --accent-soft: rgba(111, 224, 196, 0.16);
+  background: var(--sky-0);
+  border-color: #16213d;
+  color: var(--text);
+}
+
+.cv-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.cv-canvas.over-star { cursor: pointer; }
+.cv-canvas.panning, .cv-canvas.dragging { cursor: grabbing; }
+
+/* the bars float over the sky like glass */
+.tree-view .tv-bar {
+  background: var(--glass);
+  border-color: var(--glass-line);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 16px 36px -22px rgba(0, 0, 0, 0.9);
+}
+.tree-view .seg { background: rgba(4, 9, 22, 0.6); border-color: var(--glass-line); }
+.tree-view .seg button.on { background: #1d2b50; }
+.tree-view .btn { background: var(--bg-raised); color: var(--text); border-color: var(--border-strong); }
+.tree-view .tv-hint { color: var(--text-faint); text-shadow: 0 1px 6px #000; }
+
+/* a star in the legend and the counters */
+.tree-view .star {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 30%, var(--c) 60%);
+  box-shadow: 0 0 8px 1px color-mix(in srgb, var(--c) 70%, transparent);
+}
+.tree-view .star.glow { --c: #b9a6ff; box-shadow: 0 0 10px 3px rgba(185, 166, 255, 0.65); animation: star-breathe 2.6s ease-in-out infinite; }
+.tree-view .star.calm { --c: #6fe3a1; box-shadow: 0 0 5px rgba(111, 227, 161, 0.45); }
+.tree-view .star.warm { --c: #ffd166; }
+.tree-view .star.cool { --c: #7cc0ff; }
+.tree-view .star.pink { --c: #ff8fc8; }
+@keyframes star-breathe { 50% { box-shadow: 0 0 14px 5px rgba(185, 166, 255, 0.35); } }
+
+/* the card: grows out of its star, shrinks back into it */
+.tree-view .cv-card {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  top: 0;
+  width: 310px;
+  max-height: calc(100% - 110px);
+  overflow-y: auto;
+  padding: 13px 14px 13px 16px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--tone) 38%, rgba(160, 190, 235, 0.2));
+  background:
+    radial-gradient(120% 90% at 0 0, color-mix(in srgb, var(--tone) 16%, transparent), transparent 60%),
+    linear-gradient(180deg, rgba(16, 25, 50, 0.96), rgba(9, 15, 33, 0.96));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 24px 60px -24px rgba(0, 0, 0, 0.95),
+    0 0 40px -12px color-mix(in srgb, var(--tone) 45%, transparent);
+  cursor: default;
+  opacity: 0;
+  transform: scale(0.05);
+  pointer-events: none;
+  transition: transform 0.44s cubic-bezier(0.2, 0.9, 0.25, 1.12), opacity 0.26s ease;
+  will-change: transform, opacity;
+}
+.tree-view .cv-card.open { opacity: 1; transform: scale(1); pointer-events: auto; }
+.tree-view .cv-card:hover { border-color: color-mix(in srgb, var(--tone) 55%, rgba(160, 190, 235, 0.2)); }
+.tree-view .cv-card.tn-root { --tone: #8eeccf; }
+.tree-view .cv-card.tn-section { --tone: #9fb3c8; }
+.tree-view .cv-card.tn-question { --tone: #b9a6ff; }
+.tree-view .cv-card.tn-resolved { --tone: #6fe3a1; }
+.tree-view .cv-card.tn-edit { --tone: #7cc0ff; }
+.tree-view .cv-card.tn-thread { --tone: #ff8fc8; }
+.tree-view .cv-card.tn-summary { --tone: #ffd166; }
+.tree-view .cv-card.tn-ghost { --tone: #dbe7f5; }
+.tree-view .cv-card .tn-body { display: block; -webkit-line-clamp: unset; }
+.tree-view .cv-card .tn-foot { flex-wrap: wrap; }
+
+/* the name of a star, only while the pointer rests on it */
+.tree-view .cv-tip {
+  --tone: #b9a6ff;
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  top: 0;
+  max-width: 290px;
+  padding: 9px 12px 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--tone) 34%, rgba(160, 190, 235, 0.16));
+  background: rgba(8, 14, 31, 0.8);
+  backdrop-filter: blur(12px) saturate(1.3);
+  box-shadow: 0 14px 34px -16px rgba(0, 0, 0, 0.9), 0 0 26px -12px color-mix(in srgb, var(--tone) 60%, transparent);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.tree-view .cv-tip.show { opacity: 1; }
+.tree-view .cv-tip b {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--tone);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.tree-view .cv-tip span { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; color: var(--text); }
+
+.tree-view .tv-empty h3 { color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-view .cv-card { transition: opacity 0.15s ease; transform: none; }
+  .tree-view .star.glow { animation: none; }
+}

@@ -12,6 +12,7 @@ const ROLE_INFO = [
   ["chat", "Sohbet", "Cevabını değerlendirir, anlamadıysa tekrar sorar."],
   ["summary", "Nota yazma", "Sonucu notuna eklenecek cümleye dönüştürür."],
   ["compare", "Araştırma yargıları", "Fikre özel arama kurallarını çıkarır, rakipleri ayıklar ve karşılaştırır; araştırma başına üç çağrı. Daha güçlü bir model burada fark eder (boş bırakılırsa not izleme modeli)."],
+  ["master", "Master prompt", "Notu, kararları ve araştırmayı bir kodlama yapay zekâsı için eksiksiz yapım talimatına çevirir; tuşa her basışta bir uzun yazı. Boş bırakılırsa araştırma yargılarının modeli."],
 ];
 
 const PRESETS = [

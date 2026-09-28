@@ -14,6 +14,9 @@
   <link rel="stylesheet" href="/static/css/research-enhanced.css">
   <link rel="stylesheet" href="/static/css/research-workspace.css">
   <link rel="stylesheet" href="/static/css/ladder.css">
+  <link rel="stylesheet" href="/static/css/constellation.css">
+  <link rel="stylesheet" href="/static/css/masterprompt.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
 </head>
 <body>
   <div class="app" id="app">
@@ -23,13 +26,14 @@
         <button class="icon-btn" id="toggleSidebar" title="Kenar çubuğu (Ctrl+\)"></button>
         <button class="global-search" id="globalSearch" title="Not, metin, etiket veya komut ara (Ctrl+P)"></button>
         <button class="research-launch" id="researchLaunch" title="Açık notu araştır">Araştır</button>
+        <button class="mp-launch" id="masterLaunch" title="Master prompt: bu notu bir yapay zekâya yaptıracak eksiksiz talimat (Ctrl+Shift+M)">Master prompt</button>
       </div>
       <div class="crumbs" id="crumbs"></div>
       <div class="tb-right">
         <div class="llm-pill" id="fastPill" title="Not izleme ve araştırma modeli"><span class="dot"></span><span class="lbl"></span></div>
         <div class="llm-pill" id="llmPill" title="Sohbet modeli"><span class="dot"></span><span class="lbl">LLM: bağlanıyor…</span></div>
         <button class="icon-btn" id="launchBtn" title="Modeli başlat"></button>
-        <button class="icon-btn" id="themeBtn" title="Görünümü değiştir"></button>
+        <button class="icon-btn" id="themeBtn" title="Tema"></button>
         <button class="icon-btn" id="settingsBtn" title="Modeller ve anahtarlar (Ctrl+,)"></button>
         <span class="tb-sep"></span>
         <button class="icon-btn" id="togglePanel" title="Öneri paneli (Ctrl+Shift+\)"></button>

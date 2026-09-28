@@ -23,6 +23,7 @@ from server import ladder
 from server.assistant import Assistant
 from server.broker import Broker
 from server.errors import ApiError
+from server.masterprompt import MasterPrompts
 from server.providers import ProviderRegistry
 from server.render import render
 from server.research import ResearchRunner
@@ -148,6 +149,12 @@ class NodeBody(BaseModel):
     node_id: str
 
 
+class MasterPromptBody(BaseModel):
+    path: str
+    language: str = "tr"
+    content: str | None = None
+
+
 class ChatBody(NodeBody):
     message: str
 
@@ -265,6 +272,7 @@ def create_app(settings: Settings) -> FastAPI:
     assistant = Assistant(vault, notes, history, broker, providers, tool_hub)
     research = ResearchRunner(vault, notes, broker, tool_hub, assistant.provider_for,
                               assistant.budget.record, assistant.is_private)
+    master = MasterPrompts(vault, notes, assistant)
     session_file = vault.meta_dir / "session.json"
 
     @asynccontextmanager
@@ -560,6 +568,26 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post("/api/assistant/summarize")
     async def summarize(body: NodeBody):
         return await assistant.summarize(body.path, body.node_id)
+
+    # ---- the master prompt: build instructions for a coding agent ----
+    @app.get("/api/master-prompt")
+    def master_prompt_state(path: str):
+        vault.note_path(path)
+        _, stats = master.material(path)
+        return {"last": master.last(path) or None, "stats": stats,
+                "busy": path in master.running}
+
+    @app.post("/api/master-prompt")
+    async def master_prompt(body: MasterPromptBody):
+        vault.note_path(body.path)
+        if body.language not in llm_client.MASTER_LANGUAGES:
+            raise ApiError(400, "Bilinmeyen dil.")
+
+        async def stream():
+            async for update in master.stream(body.path, body.language, body.content):
+                yield json.dumps(update, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson")
 
     # ---- prior-art research (has this idea been built already?) ----
     @app.get("/api/research")

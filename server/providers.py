@@ -21,13 +21,15 @@ from pathlib import Path
 
 from server.errors import ApiError
 
-ROLES = ("analysis", "chat", "summary", "compare")
+ROLES = ("analysis", "chat", "summary", "compare", "master")
 # A role nobody bound follows another: the competitor analysis ("compare")
 # is one call per research, where a stronger model than the watch's pays off
 # (measured: GPT-4o-mini paraphrased competitors, DeepSeek V4 Flash turned
 # their users' issues into decisions) — but until someone says so, it runs
 # on whatever does the analysis.
-ROLE_FALLBACK = {"compare": "analysis"}
+# The master prompt is one long piece of writing per press of the button:
+# it follows the research judgements' model, which writes long and structured.
+ROLE_FALLBACK = {"compare": "analysis", "master": "compare"}
 KEY_MASK = "••••"
 HEALTH_STYLES = ("llama", "models", "none")
 KINDS = ("local", "remote")

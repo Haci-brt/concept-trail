@@ -1,0 +1,167 @@
+/* The themes beyond Kâğıt (light) and Orman gecesi (dark): every surface in
+   the app reads these tokens, so a theme is only its colours — plus a few
+   touches where a theme has a character of its own. */
+
+:root[data-theme="takimyildiz"] {
+  color-scheme: dark;
+  --bg-app: #070b18; --bg-panel: #0d1326; --bg-surface: #10172d; --bg-sunken: #0a1022;
+  --bg-raised: #172040; --bg-raised-2: #212c55;
+  --bg-hover: rgba(160, 190, 255, .07); --bg-active: rgba(160, 190, 255, .12);
+  --border: #1e2847; --border-soft: #182139; --border-strong: #2d3a63;
+  --text: #eef2ff; --text-2: #cdd5ee; --text-muted: #93a0c4; --text-faint: #6a7699;
+  --accent: #6fe0c4; --accent-strong: #8eeccf; --accent-bright: #b5f5e0; --accent-hover: #4fc9ab;
+  --accent-soft: rgba(111, 224, 196, .15); --accent-softer: rgba(111, 224, 196, .07); --accent-border: rgba(111, 224, 196, .42);
+  --green: #6fe3a1; --green-soft: rgba(111, 227, 161, .14);
+  --amber: #ffd166; --amber-soft: rgba(255, 209, 102, .14);
+  --blue: #7cc0ff; --blue-soft: rgba(124, 192, 255, .15);
+  --teal: #4fe0c8; --teal-soft: rgba(79, 224, 200, .13);
+  --pink: #ff8fc8; --pink-soft: rgba(255, 143, 200, .14);
+  --red: #ff8a8a; --red-soft: rgba(255, 138, 138, .14);
+  --header-bg: #0a1022; --sidebar-bg: #0b1124; --card-bg: #0f162c; --editor-bg: #0f162c; --preview-bg: #111a33;
+  --soft-shadow: 0 16px 36px -20px rgba(0, 0, 0, .7);
+  --scroll-thumb: rgba(160, 190, 255, .2);
+  --tree-bg: #060a18;
+}
+/* a faint sky behind the whole workspace */
+:root[data-theme="takimyildiz"] body {
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, .5), transparent 60%),
+    radial-gradient(1px 1px at 68% 8%, rgba(255, 255, 255, .45), transparent 60%),
+    radial-gradient(1.2px 1.2px at 88% 42%, rgba(207, 227, 255, .5), transparent 60%),
+    radial-gradient(1px 1px at 34% 72%, rgba(255, 255, 255, .35), transparent 60%),
+    radial-gradient(60% 50% at 80% 0%, rgba(129, 120, 255, .12), transparent 70%),
+    radial-gradient(50% 40% at 0% 100%, rgba(72, 196, 170, .1), transparent 70%),
+    #070b18;
+}
+:root[data-theme="takimyildiz"] .btn-accent { color: #06201a; }
+
+:root[data-theme="gunbatimi"] {
+  color-scheme: dark;
+  --bg-app: #1a1016; --bg-panel: #22151d; --bg-surface: #261821; --bg-sunken: #1d1219;
+  --bg-raised: #321f2a; --bg-raised-2: #432a38;
+  --bg-hover: rgba(255, 170, 140, .07); --bg-active: rgba(255, 170, 140, .12);
+  --border: #3a2531; --border-soft: #2f1e28; --border-strong: #553648;
+  --text: #fbeee8; --text-2: #e8d2cb; --text-muted: #b8978f; --text-faint: #8a6b66;
+  --accent: #ff8a5c; --accent-strong: #ffa37d; --accent-bright: #ffbd9d; --accent-hover: #f0703f;
+  --accent-soft: rgba(255, 138, 92, .16); --accent-softer: rgba(255, 138, 92, .08); --accent-border: rgba(255, 138, 92, .45);
+  --green: #8fd694; --green-soft: rgba(143, 214, 148, .14);
+  --amber: #ffc15e; --amber-soft: rgba(255, 193, 94, .15);
+  --blue: #9bb8ff; --blue-soft: rgba(155, 184, 255, .15);
+  --teal: #7fd6c2; --teal-soft: rgba(127, 214, 194, .13);
+  --pink: #ff8fb8; --pink-soft: rgba(255, 143, 184, .15);
+  --red: #ff7b7b; --red-soft: rgba(255, 123, 123, .15);
+  --header-bg: #1f131a; --sidebar-bg: #21141c; --card-bg: #271821; --editor-bg: #271821; --preview-bg: #2b1b25;
+  --soft-shadow: 0 16px 34px -20px rgba(0, 0, 0, .6);
+  --scroll-thumb: rgba(255, 190, 170, .2);
+  --tree-bg: #1c1118;
+}
+:root[data-theme="gunbatimi"] body { background: radial-gradient(70% 45% at 50% 0%, rgba(255, 138, 92, .1), transparent 70%), #1a1016; }
+:root[data-theme="gunbatimi"] .btn-accent { color: #2a0f05; }
+
+:root[data-theme="parsomen"] {
+  color-scheme: light;
+  --bg-app: #efe7d8; --bg-panel: #fbf6ec; --bg-surface: #fdf9f1; --bg-sunken: #f5eee0;
+  --bg-raised: #efe4cf; --bg-raised-2: #e6d6b8;
+  --bg-hover: rgba(120, 80, 30, .07); --bg-active: rgba(120, 80, 30, .12);
+  --border: #e2d4ba; --border-soft: #ece2cf; --border-strong: #cdb892;
+  --text: #3b2f22; --text-2: #574634; --text-muted: #86735a; --text-faint: #a8977c;
+  --accent: #a4532b; --accent-strong: #8f4522; --accent-bright: #7d3a1b; --accent-hover: #7a3a1c;
+  --accent-soft: rgba(164, 83, 43, .12); --accent-softer: rgba(164, 83, 43, .06); --accent-border: rgba(164, 83, 43, .4);
+  --green: #5b7d2e; --green-soft: #eaf0da;
+  --amber: #a86b12; --amber-soft: #f8ebcc;
+  --blue: #3f6a8a; --blue-soft: #e4eef3;
+  --teal: #3d7f73; --teal-soft: #e0efe9;
+  --pink: #a1476a; --pink-soft: #f7e4ea;
+  --red: #b23b35; --red-soft: #f8e2dd;
+  --header-bg: #f8f1e3; --sidebar-bg: #f5ecdb; --card-bg: #fdf9f1; --editor-bg: #fffbf3; --preview-bg: #fbf5e9;
+  --soft-shadow: 0 12px 30px -24px rgba(80, 55, 20, .35);
+  --scroll-thumb: rgba(120, 80, 30, .22);
+  --tree-bg: #f2e9d8;
+}
+/* read like a printed page */
+:root[data-theme="parsomen"] .md { font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: 15px; }
+
+:root[data-theme="buzul"] {
+  color-scheme: light;
+  --bg-app: #e8eef5; --bg-panel: #fff; --bg-surface: #fff; --bg-sunken: #f3f6fa;
+  --bg-raised: #e6eef7; --bg-raised-2: #d5e2f0;
+  --bg-hover: rgba(40, 90, 160, .07); --bg-active: rgba(40, 90, 160, .12);
+  --border: #d5dfea; --border-soft: #e3eaf2; --border-strong: #b8c8da;
+  --text: #1f2a37; --text-2: #3b4a5c; --text-muted: #66778b; --text-faint: #8b9aac;
+  --accent: #2f6fdb; --accent-strong: #255fc2; --accent-bright: #1f55ad; --accent-hover: #1f55ad;
+  --accent-soft: rgba(47, 111, 219, .11); --accent-softer: rgba(47, 111, 219, .06); --accent-border: rgba(47, 111, 219, .38);
+  --green: #23855f; --green-soft: #e1f3ea;
+  --amber: #9a6a12; --amber-soft: #fbf0d6;
+  --blue: #2f6fdb; --blue-soft: #e3edfb;
+  --teal: #1b8795; --teal-soft: #dff2f4;
+  --pink: #b0467a; --pink-soft: #f9e6ef;
+  --red: #c03d45; --red-soft: #fbe5e6;
+  --header-bg: #f7fafd; --sidebar-bg: #f3f7fb; --card-bg: #fff; --editor-bg: #fff; --preview-bg: #f9fbfd;
+  --soft-shadow: 0 12px 30px -24px rgba(30, 60, 100, .28);
+  --scroll-thumb: rgba(40, 80, 130, .2);
+  --tree-bg: #eaf0f7;
+}
+
+:root[data-theme="kontrast"] {
+  color-scheme: dark;
+  --bg-app: #000; --bg-panel: #0a0a0a; --bg-surface: #0d0d0d; --bg-sunken: #000;
+  --bg-raised: #1a1a1a; --bg-raised-2: #262626;
+  --bg-hover: rgba(255, 255, 255, .1); --bg-active: rgba(255, 255, 255, .18);
+  --border: #6b6b6b; --border-soft: #4a4a4a; --border-strong: #a3a3a3;
+  --text: #fff; --text-2: #f2f2f2; --text-muted: #d4d4d4; --text-faint: #b3b3b3;
+  --accent: #ffd400; --accent-strong: #ffe14d; --accent-bright: #ffea80; --accent-hover: #e6bf00;
+  --accent-soft: rgba(255, 212, 0, .2); --accent-softer: rgba(255, 212, 0, .1); --accent-border: #ffd400;
+  --green: #5cff8f; --green-soft: rgba(92, 255, 143, .18);
+  --amber: #ffd400; --amber-soft: rgba(255, 212, 0, .18);
+  --blue: #7ab8ff; --blue-soft: rgba(122, 184, 255, .2);
+  --teal: #5ff5e0; --teal-soft: rgba(95, 245, 224, .18);
+  --pink: #ff8ad8; --pink-soft: rgba(255, 138, 216, .2);
+  --red: #ff6b6b; --red-soft: rgba(255, 107, 107, .2);
+  --header-bg: #000; --sidebar-bg: #050505; --card-bg: #0d0d0d; --editor-bg: #000; --preview-bg: #050505;
+  --soft-shadow: 0 0 0 1px #6b6b6b;
+  --scroll-thumb: rgba(255, 255, 255, .45);
+  --tree-bg: #000;
+}
+:root[data-theme="kontrast"] .btn-accent, :root[data-theme="kontrast"] .lg-master { color: #000; }
+:root[data-theme="kontrast"] :focus-visible { outline: 3px solid #ffd400; outline-offset: 2px; }
+:root[data-theme="kontrast"] .md a { color: #ffd400; }
+
+/* every change of theme fades instead of snapping */
+:root.theme-fading, :root.theme-fading * { transition: background-color .35s ease, border-color .35s ease, color .25s ease !important; }
+
+/* the picker */
+.theme-pop {
+  position: fixed; z-index: 130; width: 404px; padding: 12px;
+  border: 1px solid var(--border); border-radius: 16px; background: var(--card-bg); color: var(--text);
+  box-shadow: 0 26px 60px -24px rgba(0, 0, 0, .5);
+  opacity: 0; transform: translateY(-6px) scale(.98); transition: opacity .18s ease, transform .22s cubic-bezier(.2, .9, .25, 1.1);
+}
+.theme-pop.in { opacity: 1; transform: none; }
+.theme-pop-head { display: flex; align-items: center; gap: 7px; padding: 2px 4px 10px; color: var(--accent); }
+.theme-pop-head b { color: var(--text); font-size: 13px; }
+.theme-pop-head span { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+.theme-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.theme-card {
+  display: grid; gap: 3px; padding: 7px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-sunken); color: var(--text); text-align: left; cursor: pointer; font: inherit;
+  transition: border-color .15s ease, transform .15s ease;
+}
+.theme-card:hover { border-color: var(--accent-border); transform: translateY(-1px); }
+.theme-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.theme-paint {
+  position: relative; display: block; height: 58px; overflow: hidden; border-radius: 8px; background: var(--a);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .18);
+}
+.theme-paint i { position: absolute; display: block; }
+.theme-paint .bar { inset: 0 0 auto; height: 11px; background: var(--b); opacity: .9; }
+.theme-paint .card { left: 8px; top: 18px; width: 58%; height: 32px; border-radius: 5px; background: var(--b); }
+.theme-paint .dot { right: 10px; top: 20px; width: 14px; height: 14px; border-radius: 50%; background: var(--c); box-shadow: 0 0 10px var(--c); }
+.theme-paint .line { left: 14px; top: 25px; width: 40%; height: 4px; border-radius: 2px; background: var(--d); opacity: .75; }
+.theme-paint .line.s { top: 34px; width: 26%; background: var(--c); opacity: .9; }
+.theme-name { display: flex; align-items: center; gap: 5px; margin-top: 3px; font-weight: 650; font-size: 12.5px; }
+.theme-name svg { color: var(--accent); }
+.theme-note { color: var(--text-muted); font-size: 11px; line-height: 1.35; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root.theme-fading, :root.theme-fading * { transition: none !important; }
+}

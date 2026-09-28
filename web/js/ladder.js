@@ -10,10 +10,12 @@ const BY = { not: "notta yazıyor", cevap: "soruya cevap verdin", sen: "sen işa
 
 export class LadderPanel {
   /** showWaiting(): bring the list of waiting questions into view. */
-  constructor(root, { showWaiting, correctDirection } = {}) {
+  constructor(root, { showWaiting, correctDirection, master, onRender } = {}) {
     this.root = root;
     this.showWaiting = showWaiting;
     this.correctDirection = correctDirection;
+    this.master = master;
+    this.onRender = onRender;
     this.path = null;
     this.state = null;
     this.mode = null;
@@ -65,6 +67,7 @@ export class LadderPanel {
 
   render() {
     const s = this.state;
+    this.onRender?.(this.mode === "fikir" ? null : s);
     if (!s || this.mode === "fikir") {
       this.root.hidden = true;
       this.root.innerHTML = "";
@@ -87,7 +90,8 @@ export class LadderPanel {
           ${icon("questionSquare", 12)}${this.waiting.size} soru bekliyor</button>` : "";
     const head = product
       ? `<div class="lg-head product">${icon("sprout", 15)}<span class="lg-title">Ürün evresi</span>${waiting}<button class="lg-correct" data-act="direction">Rotayı düzelt</button><span class="lg-count">${s.made}/${s.total}</span></div>
-         <p class="lg-note">Bütün kararlar verildi: kapsam, mimari, bileşenler ve detaylar belli. Bu not yapmaya başlamak için yeterli.</p>`
+         <p class="lg-note">Bütün kararlar verildi: kapsam, mimari, bileşenler ve detaylar belli. Bu not yapmaya başlamak için yeterli.</p>
+         <button class="lg-master" data-act="master">${icon("wand", 13)}Master prompt hazırla</button>`
       : `<div class="lg-head">${icon("tree", 15)}<span class="lg-title">Yol haritası</span>
          <span class="lg-phase">${esc(s.phase_label)}</span>${waiting}<button class="lg-correct" data-act="direction">Rotayı düzelt</button><span class="lg-count">${s.made}/${s.total}</span></div>`;
     const label = level.id === s.current ? `${esc(level.label)} · şimdi bunu netleştiriyoruz`
@@ -100,6 +104,10 @@ export class LadderPanel {
   async _click(e) {
     if (e.target.closest('[data-act="direction"]')) {
       this.correctDirection?.(this.path);
+      return;
+    }
+    if (e.target.closest('[data-act="master"]')) {
+      this.master?.();
       return;
     }
     if (e.target.closest('[data-act="waiting"]')) {

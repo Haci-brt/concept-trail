@@ -8,12 +8,14 @@ import { confirmDialog, openMenu, promptDialog, shortcutsDialog } from "./dialog
 import { MarkdownEditor } from "./editor.js";
 import { HistoryPanel } from "./history.js";
 import { LadderPanel } from "./ladder.js";
+import { MasterPromptDialog } from "./masterprompt.js";
 import { HudCard } from "./hudcard.js";
 import { icon, logo } from "./icons.js";
 import { Palette } from "./palette.js";
 import { ResearchPanel } from "./research.js";
 import { SettingsDialog } from "./settings.js";
 import { Sidebar } from "./sidebar.js";
+import { THEMES, openThemePicker, themeOf } from "./themes.js";
 import { IdeaTree } from "./tree.js";
 import { $, debounce, esc, mod, relativeSaved, toast, wordCount } from "./util.js";
 
@@ -46,7 +48,7 @@ let tabSeq = 0;
 const pendingOpens = new Map();
 const appearanceKey = "fikir.appearance.v1";
 const focusKey = "fikir.focus.v1";
-let theme = localStorage.getItem(appearanceKey) === "dark" ? "dark" : "light";
+let theme = themeOf(localStorage.getItem(appearanceKey) || "light").id;
 let focusMode = localStorage.getItem(focusKey) === "true";
 document.documentElement.dataset.theme = theme;
 
@@ -103,7 +105,20 @@ const ladderPanel = new LadderPanel($("#ladder"), {
     $("#history .h-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
   },
   correctDirection: (path) => direction.open(path),
+  master: () => openMaster(),
+  // the master prompt button lights up once the open note is ready to build
+  onRender: (ladder) => $("#masterLaunch")?.classList.toggle("ready", ladder?.phase === "urun"),
 });
+
+const master = new MasterPromptDialog({
+  getContent: (path) => tabByPath(path)?.editor.value ?? null,
+  openNote: (path) => openNote(path),
+});
+
+function openMaster() {
+  const tab = activeTab();
+  master.open(tab?.path, tab?.name);
+}
 
 const direction = new DirectionDialog({
   beforeOpen: async (path) => {
@@ -143,6 +158,7 @@ const tree = new IdeaTree($("#treeView"), {
   ask: (path) => { const tab = tabByPath(path); if (tab) analyze(tab, true); },
   openNote: (path) => { openNote(path); setView("editor"); },
   openSection: (path, heading) => goToSection(path, heading),
+  master: () => openMaster(),
 });
 
 /** Put the cursor on a heading in the note and flash it — used by the idea
@@ -183,7 +199,9 @@ function buildChrome() {
   $("#globalSearch").onclick = () => palette.open();
   $("#researchLaunch").innerHTML = `${icon("search", 15)}<span>Araştır</span>`;
   $("#researchLaunch").onclick = () => research.open();
-  $("#themeBtn").onclick = () => setTheme(theme === "light" ? "dark" : "light");
+  $("#masterLaunch").innerHTML = `${icon("wand", 15)}<span>Master prompt</span>`;
+  $("#masterLaunch").onclick = () => openMaster();
+  $("#themeBtn").onclick = () => openThemePicker($("#themeBtn"), theme, setTheme);
   $("#focusBtn").onclick = () => setFocusMode(!focusMode);
   applyAppearance();
   $("#launchBtn").innerHTML = icon("play", 15);
@@ -456,8 +474,8 @@ function setPreview(mode) {
 
 function applyAppearance() {
   document.documentElement.dataset.theme = theme;
-  $("#themeBtn").innerHTML = icon(theme === "light" ? "moon" : "sun", 17);
-  $("#themeBtn").title = theme === "light" ? "Koyu görünüme geç" : "Açık görünüme geç";
+  $("#themeBtn").innerHTML = icon(themeOf(theme).dark ? "moon" : "sun", 17);
+  $("#themeBtn").title = `Tema: ${themeOf(theme).label} — değiştirmek için tıkla`;
   $("#themeBtn").setAttribute("aria-label", $("#themeBtn").title);
   $("#app").classList.toggle("focus-mode", focusMode);
   $("#focusBtn").innerHTML = `${icon(focusMode ? "columns" : "fit", 15)}<span>${focusMode ? "Odaktan çık" : "Odak"}</span>`;
@@ -466,8 +484,12 @@ function applyAppearance() {
 }
 
 function setTheme(next) {
-  theme = next;
+  theme = themeOf(next).id;
   localStorage.setItem(appearanceKey, theme);
+  // a theme change fades across the whole app instead of snapping
+  document.documentElement.classList.add("theme-fading");
+  clearTimeout(setTheme.timer);
+  setTheme.timer = setTimeout(() => document.documentElement.classList.remove("theme-fading"), 450);
   applyAppearance();
 }
 
@@ -1178,13 +1200,15 @@ function commands() {
     { label: "Yeni klasör", icon: "folderPlus", action: () => newFolder("") },
     { label: "Asistana şimdi sor", icon: "sparkles", hint: "Ctrl Enter", action: () => tab && analyze(tab, true) },
     { label: "Açık notu araştır", icon: "search", action: () => research.open() },
+    { label: "Master prompt hazırla", icon: "wand", hint: "Ctrl Shift M", action: () => openMaster() },
     { label: state.liveWatch ? "Canlı izlemeyi kapat" : "Canlı izlemeyi aç", icon: state.liveWatch ? "eyeOff" : "eye", action: () => setLiveWatch(!state.liveWatch) },
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
     { label: "Modeli başlat", icon: "play", action: () => launchModel() },
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
     { label: state.preview === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(state.preview === "hidden" ? "preview" : "hidden") },
     { label: focusMode ? "Odak kipinden çık" : "Odak kipine geç", icon: "fit", hint: "Ctrl Shift F", action: () => setFocusMode(!focusMode) },
-    { label: theme === "light" ? "Koyu görünüm" : "Açık görünüm", icon: theme === "light" ? "moon" : "sun", action: () => setTheme(theme === "light" ? "dark" : "light") },
+    { label: "Tema seç…", icon: "sparkles", action: () => openThemePicker($("#themeBtn"), theme, setTheme) },
+    ...THEMES.filter((t) => t.id !== theme).map((t) => ({ label: `Tema: ${t.label}`, icon: t.dark ? "moon" : "sun", action: () => setTheme(t.id) })),
     { label: "Kenar çubuğunu aç/kapat", icon: "panelLeft", hint: "Ctrl \\", action: () => setSidebar(!shown.sidebar) },
     { label: "Öneri panelini aç/kapat", icon: "panelRight", hint: "Ctrl Shift \\", action: () => setPanel(!shown.panel) },
     { label: "Modeller ve anahtarlar", icon: "settings", hint: "Ctrl ,", action: () => settings.open() },
@@ -1202,6 +1226,7 @@ function commands() {
 }
 
 document.addEventListener("keydown", (e) => {
+  if (master.isOpen) return;          // the sheet handles its own keys
   if (e.key === "Escape" && focusMode && !chat.isOpen && !palette.isOpen && !document.querySelector(".dialog, .menu")) {
     setFocusMode(false);
     return;
@@ -1222,6 +1247,7 @@ document.addEventListener("keydown", (e) => {
   else if (key === "s") { e.preventDefault(); if (tab) saveTab(tab); }
   else if (key === "g") { e.preventDefault(); if (tab) setView(state.view === "tree" ? "editor" : "tree"); }
   else if (key === "f" && e.shiftKey) { e.preventDefault(); setFocusMode(!focusMode); }
+  else if (key === "m" && e.shiftKey) { e.preventDefault(); openMaster(); }
   else if (e.code === "Backslash") { e.preventDefault(); if (e.shiftKey) setPanel(!shown.panel); else setSidebar(!shown.sidebar); }
   else if (e.key === "Tab") { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); }
   else if (e.key === "Enter" && tab && !e.target.closest("textarea, input")) { e.preventDefault(); analyze(tab, true); }
@@ -1288,7 +1314,8 @@ function connect() {
       // the note reaching the product phase is the one thing here worth
       // interrupting for; a finished rung is a quieter nod
       const product = transition.phase === "urun";
-      toast(`${noteName(path)} · ${transition.title}: ${transition.body}`, "success", product ? 12000 : 5000);
+      toast(`${noteName(path)} · ${transition.title}: ${transition.body}${product ? " Master prompt hazırlamak için Ctrl+Shift+M." : ""}`,
+            "success", product ? 12000 : 5000);
     },
     apply_edit: (event) => applyApprovedEdit(event),
     append_note: (event) => appendAssistantText(event),
