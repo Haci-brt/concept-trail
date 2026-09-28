@@ -202,10 +202,12 @@ class Cancelled(Exception):
 
 
 class ProviderError(Exception):
-    def __init__(self, message: str, status: int | None = None, retryable: bool = False):
+    def __init__(self, message: str, status: int | None = None, retryable: bool = False,
+                 retry_after: float | None = None):
         super().__init__(message)
         self.status = status
         self.retryable = retryable
+        self.retry_after = retry_after
 
 
 def _raise_for_api(response) -> None:
@@ -226,8 +228,12 @@ def _raise_for_api(response) -> None:
         404: "Model ya da adres bulunamadı.",
         429: "Kota ya da hız sınırına takıldı.",
     }.get(status, f"Sağlayıcı {status} döndürdü.")
+    try:
+        retry_after = float(response.headers.get("retry-after") or "")
+    except (TypeError, ValueError):
+        retry_after = None
     raise ProviderError(f"{friendly} {detail}".strip(), status=status,
-                        retryable=status == 429 or status >= 500)
+                        retryable=status == 429 or status >= 500, retry_after=retry_after)
 
 
 def default_provider():
@@ -325,8 +331,57 @@ def _report_usage(on_usage, provider, usage) -> None:
             pass  # accounting must never break a reply
 
 
+# One connection the far side reset ("Connection aborted") ended a whole
+# research (measured 2026-09-28). A dropped connection, a timeout, 429 or a
+# 5xx gets two more tries with growing waits — longer when the provider says
+# how long (Retry-After, capped). A wrong key or a missing model fails at
+# once. A local server that refuses the connection is simply down, so that
+# is not waited on; and an answer already streaming to the writer is never
+# asked again, or its first half would be shown twice.
+RETRY_WAITS = (2.0, 6.0)
+MAX_RETRY_AFTER = 30.0
+
+
+def _retry_wait(exc: Exception, attempt: int, provider) -> float | None:
+    if attempt >= len(RETRY_WAITS):
+        return None
+    if isinstance(exc, ProviderError):
+        return max(RETRY_WAITS[attempt], min(exc.retry_after or 0.0, MAX_RETRY_AFTER)) if exc.retryable else None
+    transient = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
+    if isinstance(exc, transient) and getattr(provider, "is_remote", False):
+        return RETRY_WAITS[attempt]
+    return None
+
+
 def _complete(messages: list[dict], *, temperature: float, max_tokens: int, on_chunk=None,
               provider=None, timeout: float | None = None, should_cancel=None, on_usage=None) -> str:
+    """One chat completion, tried again on a transient failure (see RETRY_WAITS)."""
+    provider = provider or default_provider()
+    shown = []
+
+    def passed_on(text):
+        shown.append(True)
+        on_chunk(text)
+
+    for attempt in range(len(RETRY_WAITS) + 1):
+        try:
+            return _complete_once(messages, temperature=temperature, max_tokens=max_tokens,
+                                  on_chunk=passed_on if on_chunk is not None else None, provider=provider,
+                                  timeout=timeout, should_cancel=should_cancel, on_usage=on_usage)
+        except Cancelled:
+            raise
+        except Exception as exc:
+            wait = None if shown else _retry_wait(exc, attempt, provider)
+            if wait is None:
+                raise
+            if should_cancel is not None and should_cancel():
+                raise Cancelled() from exc
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
+def _complete_once(messages: list[dict], *, temperature: float, max_tokens: int, on_chunk=None,
+                   provider=None, timeout: float | None = None, should_cancel=None, on_usage=None) -> str:
     """One chat completion. With on_chunk, streams and calls on_chunk(accumulated)
     after every delta. Servers that split reasoning into `reasoning_content` get
     it folded back into a <think> block so callers see one uniform shape."""
@@ -443,11 +498,20 @@ class ToolBudget(Exception):
 
 
 def _one_turn(messages, *, temperature, max_tokens, provider, tools, timeout, on_usage):
-    """A single non-streaming completion that may come back asking for tools."""
+    """A single non-streaming completion that may come back asking for tools,
+    tried again on a transient failure like every other call (RETRY_WAITS)."""
     payload = provider.build_payload(messages, temperature, max_tokens, False, tools=tools)
-    r = requests.post(provider.chat_url, json=payload, headers=provider.headers(),
-                      timeout=timeout or provider.timeout)
-    _raise_for_api(r)
+    for attempt in range(len(RETRY_WAITS) + 1):
+        try:
+            r = requests.post(provider.chat_url, json=payload, headers=provider.headers(),
+                              timeout=timeout or provider.timeout)
+            _raise_for_api(r)
+            break
+        except Exception as exc:
+            wait = _retry_wait(exc, attempt, provider)
+            if wait is None:
+                raise
+            time.sleep(wait)
     body = r.json()
     _report_usage(on_usage, provider, body.get("usage"))
     return body["choices"][0]["message"]
