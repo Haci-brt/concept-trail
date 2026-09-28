@@ -2,96 +2,96 @@
 
 # Concept Trail
 
+**English** · [Türkçe](README.tr.md)
+
 *A thinking workspace for software ideas: it asks the open questions before you build, researches who already built it, and never writes into your notes without your approval.*
 
-**Install (Windows, PowerShell):**
+**Install on Windows** (paste into PowerShell, no admin rights needed):
 
 ```powershell
 irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | iex
 ```
 
-**Install (macOS / Linux):**
+**Install on macOS / Linux:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
 ```
 
-The interface speaks English, Deutsch, Español, Français and Türkçe (the globe button in the title bar), and so can the assistant.
+When a software idea first comes to mind it is still vague, full of open questions we cannot yet see the shape of — and that is exactly when we start building. Later we run into those open ends, and because we never thought them through, a critical problem forces us to restructure the project, sometimes the whole system.
 
-Bir fikir, bir yazılım fikri aklımıza geldiğinde, o fikir henüz detaylı değilken ucu açık sorularla birlikte kafamızda tam bir yapı kuramıyoruz — ve projeye böyle başlıyoruz. Sonra o açık uçlarla karşılaşınca tıkanıyoruz: başta bu soruları düşünmeden hareket ettiğimiz için kritik sorunlar yüzünden projeyi, bütün sistemi baştan yapılandırmak zorunda kalıyoruz.
-
-**Concept Trail bu sorunu kaldırmak için hazırlanmış bir yardımcı araç.** Fikrini bir nota yazarsın; asistan fikri genişten dara netleştiren sorular sorar, cevaplarını tartışır, daha önce kimin ne yaptığını araştırır — ve not hep senin kalır.
+**Concept Trail is a tool made to remove that problem.** You write your idea in a note; the assistant asks questions that narrow the idea from broad to specific, talks your answers through, researches who has already built what — and the note always stays yours.
 
 ---
 
-## Nasıl çalışır
+## How it works
 
-### Not canlı izlenir
-Yazmaya **15 saniye ara verdiğinde** ya da bir şey **yapıştırdığında** asistan notuna sessizce bakar: eksikleri ve açık uçları bulur. Yazarken araya girmez; bulduğu sorular sağdaki panelde bekler, ekrana kart fırlatmaz. Durum çubuğundan açılıp kapatılır; `Ctrl+Enter` ile her an elle de sorulabilir.
+### The note is watched while you write
+When you **pause for 15 seconds** or **paste something**, the assistant quietly reads your note and finds what is missing or still open. It never interrupts your writing: its questions wait in the panel on the right instead of popping up cards. Live watch is switched on and off from the status bar, and `Ctrl+Enter` asks at any moment.
 
-### Sorular genişten dara: karar merdiveni
-Bir yazılım notu dört basamaktan geçer; asistan yalnızca bulunduğu basamağın açık kararlarını sorar:
+### Questions go from broad to narrow: the decision ladder
+A software note climbs four rungs, and the assistant only asks about the open decisions of the rung it is on:
 
-| Basamak | Kararlar |
+| Rung | Decisions |
 |---|---|
-| **Kapsam** | amaç · kullanıcı · platform · çalışma ortamı |
-| **Mimari** | ana parçalar · veri · iletişim · dış bağımlılıklar |
-| **Bileşenler** | sorumluluklar · arayüzler · hata durumu |
-| **Detay** | teknoloji · uç durumlar · doğrulama · dağıtım |
+| **Scope** | goal · user · platform · runtime |
+| **Architecture** | main parts · data · communication · external dependencies |
+| **Components** | responsibilities · interfaces · failure |
+| **Details** | technology · edge cases · verification · deployment |
 
-Notta zaten yazan bir kararı tekrar sormaz (notun kendi kelimeleriyle kaydeder); verdiğin cevap o kararın değeri olur ve sonraki sorular onun üstüne kurulur. On beş kararın hepsi verildiğinde not **"ürün evresine"** geldi diye duyurulur. Yol haritası kartındaki her karar bir çiptir: model yanılırsa işaretleyip geri alabilirsin.
+It never asks about a decision the note already states (it records it in the note's own words); your answer becomes the value of that decision and the next questions build on it. When all fifteen decisions are made, the note is announced as having reached the **product phase**. Every decision on the roadmap card is a chip: if the model got one wrong, you can mark it or take it back.
 
-### Her soru için bir sohbet
-Bir soruya panelde tek satırla cevap verebilir ya da onun için ayrı bir sohbet açabilirsin. Anlaşılmayan noktalar orada tartışılır; asistan sonuca ulaşınca bunu nota eklemek için **onay ister**. Beğenmezsen eklemez, sohbet sürer. Bir cevaptan doğan yeni soru üst sorusuna bağlanır; sohbet o dalın önceki konuşmasını bilir.
+### A chat for every question
+Answer a question with one line in the panel, or open a chat for it. Anything unclear is talked through there; when the assistant reaches a conclusion it **asks for your approval** before adding it to the note. If you don't like it, nothing is added and the chat goes on. A new question born from an answer hangs under its parent question, and the chat knows the earlier conversation of that branch.
 
-### Modelin önerisi ve bakış açıları
-Her turda sırayla **Mimar, Ürün, Güvenlik ve işletim, Geliştirici** gözü notu eleştirir ve nota eklenmeye değer somut bir argüman ya da gözden kaçan bir risk önerebilir ("Aile ortak kullanacağı için her fiş kimin harcaması olduğuyla etiketlenmeli"). Öneri de onaysız nota girmez; genel tavsiye cümleleri öneri sayılmaz.
+### The model's suggestions, seen through different lenses
+Each round, in turn, the eyes of an **Architect, Product, Security & Operations** and **Developer** critique the note and may suggest a concrete argument worth adding or a risk that was missed ("Since the family will share it, every receipt should be tagged with whose expense it is"). Suggestions never enter the note without approval either, and generic advice does not count as a suggestion.
 
-### Rotayı düzelt
-Sadece modelin sorularıyla ilerlemek fikri istediğin yerden uzaklaştırabilir. **"Rotayı düzelt"** ile projeye serbestçe yön verirsin: asistan düzeltmeni projenin amacı ve verilmiş kararlarla karşılaştırır, yeni gidişatı kısa bir özetle gösterir ve neyi değiştireceğini listeler — düzeltmenin değerini söylediği kararlar güncellenir, etkilediği kararlar yeniden sorulur, çelişen sorular kapanır. Hiçbiri sen onaylamadan olmaz; istemediğin kalemin işaretini kaldırırsın.
+### Correct the course
+Following only the model's questions can pull the idea away from where you want it. **Correct course** lets you steer freely: the assistant compares your correction with the project's goal and the decisions already made, shows the new course in a short summary and lists what it would change — decisions whose value your correction states are updated, decisions it affects are asked again, conflicting questions are closed. Nothing happens until you approve; untick any item you don't want.
 
-### Fikir ağacı: bir takımyıldız
-Not ortada parlayan bir yıldız; soruları, önerileri ve sohbetleri ondan ışın ışın dağılır. **Cevap bekleyen sorular parlar** ve iplerinden ışık akar; çözülenler sakin bir ışıkla kalır. İpler gerçek iplerdir: bir yıldızı tutup sürükleyince bağlı olduklarını çeker, bırakınca yerine salınarak döner. Yazı yalnız fareyle üstüne gelince görünür. Bir yıldıza tıklayınca kartı ondan büyüyerek açılır; not ile o yıldız arasındaki yol aydınlanır, gökyüzünün geri kalanı kararır. Boşluğa tıklamak kartı yıldızına geri küçültür. **N** (ya da "Sıradaki soru") cevap bekleyen bir sonraki soruya uçar. Arkada Samanyolu, ara sıra bir kayan yıldız; not ilk açıldığında yıldızlar merkezden dışa doğru sırayla tutuşur, ipler çizilerek uzar.
+### The idea tree: a constellation
+The note is a bright star in the middle; its questions, suggestions and chats branch out from it ray by ray. **Questions waiting for an answer glow**, with light flowing along their strings; resolved ones settle into a calm light. The strings are real ropes: pick up a star and drag it and it pulls the others along; let go and it swings back into place. Pan the sky and whatever hangs in it lags behind and sways. Text only appears when you hover over a star. Click a star and its card grows out of it; the path from the note to that star lights up while the rest of the sky dims. Clicking empty space shrinks the card back into its star. **N** (or "Next question") flies to the next question waiting for an answer. Behind it all: the Milky Way and the occasional shooting star; when a note first opens, the stars light up from the centre outwards and the strings draw themselves out.
 
 ### Master prompt
-Tek tuş (**Ctrl Shift M**, üstteki "Master prompt"): not, yol haritasındaki kararlar, cevapladığın sorular, onayladığın ve reddettiğin öneriler ve araştırma, bir yapay zekâ kodlama ajanının (Claude Code, Codex gibi) uygulamayı **hiç soru sormadan** baştan sona yapabileceği bir talimata dönüşür: ürün özeti, kapsam, teknoloji yığını (sürümleriyle), mimari, veri modeli, API sözleşmeleri, ekranlar, hata ve uç durumlar, güvenlik, klasör yapısı, kilometre taşları, test ve kabul ölçütleri, kurulum. Notun açık bıraktığı her şeyi model kendisi karara bağlar ve bunları **Varsayımlar** bölümünde gerekçesiyle listeler; pencere o kararları en üstte gösterir. Hâlâ soru işaretiyle biten ya da kararı erteleyen bir satır kalırsa ikinci, kısa bir çağrı onları da kapatır. Not ürün evresine gelince düğme parlar, ama her an kullanılabilir. Türkçe ya da İngilizce; kopyala, yeni not olarak kaydet ya da .md indir. Son hazırlanan notla birlikte saklanır. Model ayarlarında kendi görevi vardır ("Master prompt"; boş bırakılırsa araştırma yargılarının modeli).
+One button (**Ctrl Shift M**, "Master prompt" in the title bar): the note, the roadmap decisions, the questions you answered, the suggestions you approved and rejected, and the research become instructions a coding agent (such as Claude Code or Codex) can follow to build the app end to end **without asking a single question**: product summary, scope, tech stack (with versions), architecture, data model, API contracts, screens, errors and edge cases, security, folder structure, milestones, tests and acceptance criteria, setup. Whatever the note leaves open, the model decides itself and lists under **Assumptions** with its reasons; the dialog shows those decisions first. If a line still ends in a question mark or puts a decision off, a second short call settles it. The button lights up when the note reaches the product phase, but it works at any time. In any of five languages; copy it, save it as a new note or download it as .md. The last one is kept with the note. It has its own job in the model settings ("Master prompt"; if left empty, the research judgements' model).
 
-### Araştırma: bu fikir yapılmış mı?
-Fikrin kısa bir özetinden sonra GitHub'da ve web'de bu fikri daha önce kimin geliştirdiği aranır — birden çok yoldan (topic, anahtar kelime, popülerlik, README, "alternatives", "Show HN"); bulunanlar kaç bağımsız yolun onu bulduğuna göre sıralanır. Fikrin parçaları için kullanılabilecek kütüphaneler ayrıca aranır. Uygun sayfalar ve README'ler açılıp okunur (JavaScript'le çizilen sayfalar tarayıcı katmanıyla).
+### Research: has this idea been built already?
+After a short summary of your idea, GitHub and the web are searched for who has built it before — along several paths (topics, keywords, popularity, READMEs, "alternatives", "Show HN"); what is found is ranked by how many independent paths found it. Libraries for the parts of the idea are searched separately. Suitable pages and READMEs are opened and read (pages drawn with JavaScript through a browser layer).
 
-**Rakip analizi:** en yakın beş proje yakından incelenir — etkinliği, lisansı, son issue'ları (kullanıcılarının neden şikâyet ettiği), README'si ve sitesi. Model bunları fikrinle karşılaştırır: fikrinin parçalarının her projede var / kısmen / yok olduğu bir tablo, her projenin fikrinle ortak yanı, eksiği, zayıf noktası ve ondan alınacak ders; **fikrini bunlardan ayıracak noktalar** ve **geliştirme argümanları**. Asistan, notunda başkalarının çözmüş olabileceği bir başlık görürse araştırmayı kendisi de önerebilir.
+**Competitor analysis:** the closest projects are examined up close — activity, licence, recent issues (why their users complain), README and website. The model compares them with your idea: a table of which parts of your idea each project has, partly has or lacks; what each project shares with your idea, what it lacks, its weak point and the lesson to take from it; **points that set your idea apart** and **arguments for improving it**. If the assistant notices a topic in your note that others may have solved, it can suggest the research itself.
 
-Seçtiğin bulgular nota yine yalnız onayınla eklenir. Hiçbir sonuç fikrin "özgün" olduğunu iddia etmez: aramada görünmemek yokluk kanıtı değildir.
-
----
-
-## Temalar
-Üstteki tema düğmesi yedi tema sunar — Kâğıt, Orman gecesi, **Takımyıldız** (fikir ağacıyla aynı gece gökyüzü), Gün batımı, Parşömen (basılı sayfa gibi okunan önizleme), Buzul ve Yüksek karşıtlık. Bir temanın üstüne gelmek bütün uygulamayı o temada gösterir; tıklayınca seçilir, geçiş yumuşakça olur.
-
-## Diller
-Arayüz beş dilde: Türkçe, English, Deutsch, Español, Français — üst çubuktaki dünya düğmesinden seçilir. **Asistanın dili** ayrıca seçilebilir: sorular, öneriler, sohbet cevapları ve nota eklenecek metin o dilde yazılır (seçmezsen arayüzle aynı dilde). Master prompt da beş dilden birinde hazırlanabilir. Notların ve sohbetlerin hiç çevrilmez.
+Findings you choose are added to the note only with your approval. No result ever claims your idea is "original": not showing up in a search is not proof of absence.
 
 ---
 
-## Modelden bağımsız
-Asistan belirli bir modele bağlı değildir. OpenAI uyumlu her uç kullanılabilir: **OpenRouter** (varsayılan olarak ucuz ve hızlı bir model, ör. `openai/gpt-4o-mini`), başka bir bulut API'si ya da **yerel llama.cpp / ik_llama** sunucusu. İşler rollere ayrılır — *analiz* (not izleme, araştırma), *sohbet*, *özet* — ve her rol ayarlardan bir sağlayıcı zincirine bağlanır; ilki kapalıysa sıradaki devreye girer.
+## Languages
+The interface comes in five languages — English, Deutsch, Español, Français and Türkçe — chosen from the globe button in the title bar. **The assistant's language** can be set separately: questions, suggestions, chat answers and text for the note are written in it (by default the same as the interface). The master prompt can be written in any of the five as well. Your notes and chats are never translated.
 
-Ölçerek seçildi: aynı beş senaryoda GPT-4o-mini notta yazan 14/14 kararı buldu, hiçbirini uydurmadı, tur başına ~2 sn ve ~$0,0002. Uzun düşünen yerel modeller için düşünme bütçesi var; düşünmeden cevap vermeyen modelde de ayrıştırıcılar dayanıklı.
-
-**Harcama koruması:** OpenRouter her isteğin gerçek maliyetini bildirir; günlük dolar, istek ve token sınırları ayarlardan değiştirilir (varsayılan günlük $0,50).
-
-## Gizlilik
-- Uygulama yalnız `127.0.0.1` üzerinde çalışır; başka siteler tarayıcın üzerinden istek atamaz.
-- Frontmatter'ında `gizli: true` olan bir not uzak modellere gönderilmez ve araştırılmaz.
-- Asistan notuna **hiçbir zaman kendi başına yazmaz**; her ekleme ve düzenleme bir öneridir.
-- API anahtarları notların yanında değil, işletim sisteminin ayar klasöründe (`%APPDATA%\ConceptTrail`) durur.
+## Themes
+The theme button in the title bar offers seven themes — Paper, Forest night, **Constellation** (the same night sky as the idea tree), Sunset, Parchment (a preview that reads like a printed page), Glacier and High contrast. Hovering over a theme shows the whole app in it; a click chooses it, and the change fades in smoothly.
 
 ---
 
-## Kurulum
+## Model-independent
+The assistant is not tied to one model. Any OpenAI-compatible endpoint works: **OpenRouter** (by default a cheap, fast model such as `openai/gpt-4o-mini`), another cloud API, or a **local llama.cpp / ik_llama** server. The work is split into roles — *analysis* (note watch, research), *chat*, *summary*, *research judgements*, *master prompt* — and each role is bound to a chain of providers in the settings; if the first is down, the next one takes over.
 
-### Tek komutla
-**Windows** (PowerShell'e yapıştır; yönetici izni gerekmez):
+Chosen by measurement: across the same five scenarios GPT-4o-mini found 14 of the 14 decisions stated in the notes and invented none, at about 2 s and $0.0002 a round. Local models that think at length get a thinking budget; the parsers also hold up with models that answer without thinking.
+
+**Spending guard:** OpenRouter reports the real cost of every request; daily dollar, request and token limits can be changed in the settings (default: $0.50 a day).
+
+## Privacy
+- The app only runs on `127.0.0.1`; other websites cannot send requests through your browser.
+- A note with `private: true` (or `gizli: true`) in its frontmatter is never sent to remote models and never researched.
+- The assistant **never writes to your note on its own**; every addition and edit is a suggestion.
+- API keys live in the operating system's settings folder (`%APPDATA%\ConceptTrail`), not next to your notes.
+
+---
+
+## Installation
+
+### One command
+**Windows** (paste into PowerShell; no admin rights needed):
 
 ```powershell
 irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | iex
@@ -103,37 +103,37 @@ irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | 
 curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
 ```
 
-Komut uygulamayı indirir (Windows'ta `%LOCALAPPDATA%\Programs\ConceptTrail`, diğerlerinde `~/.local/share/concept-trail`), kendine ait bir Python ortamı kurar, **masaüstüne ve Başlat menüsüne logolu bir Concept Trail kısayolu** koyar ve uygulamayı açar. Python 3.10+ gerekir; Windows'ta yoksa winget ile kurmayı önerir. Notların **Belgeler\Concept Trail** klasöründe durur. Güncellemek için aynı komutu yeniden çalıştır — kod yenilenir, notlar ve ortam korunur. Kaldırmak için uygulama klasörünü ve kısayolları silmek yeter; notlar yerinde kalır.
+The command downloads the app (to `%LOCALAPPDATA%\Programs\ConceptTrail` on Windows, `~/.local/share/concept-trail` elsewhere), sets up its own Python environment, puts **a Concept Trail shortcut with the app icon on the desktop and in the Start menu**, and opens the app. It needs Python 3.10+; on Windows it offers to install it with winget if it is missing. Your notes live in **Documents\Concept Trail**. To update, run the same command again — the code is replaced, your notes and the environment are kept. To uninstall, delete the app folder and the shortcuts; your notes stay where they are.
 
-> Windows'ta denendi. macOS ve Linux betiği aynı adımları izler ama bu platformlarda henüz denenmedi; web araması ve masaüstü kartının Windows'a özgü kısımları orada çalışmayabilir.
+> Tested on Windows. The macOS and Linux script follows the same steps but has not been tried on those platforms yet; the Windows-specific parts of web search and the desktop card may not work there.
 
-### Elle (geliştirme için)
+### By hand (for development)
 
 ```bash
 pip install -r requirements.txt
-python main.py              # masaüstü penceresi + her zaman üstte duran asistan kartı
-python main.py --browser    # varsayılan tarayıcıda
-python main.py --server     # yalnız sunucu
-python scripts/make_shortcut.py   # masaüstüne ve Başlat menüsüne logolu kısayol
+python main.py              # desktop window + always-on-top assistant card
+python main.py --browser    # in your default browser
+python main.py --server     # server only
+python scripts/make_shortcut.py   # desktop and Start menu shortcut with the app icon
 ```
 
-İlk açılışta **Ayarlar → Modeller**'den bir sağlayıcı ekle (OpenRouter için adres `https://openrouter.ai/api`, model adı ve API anahtarı) ve rolleri ona bağla. Notlar varsayılan olarak `./notes` klasöründe durur (`--vault` ile değiştirilir).
+On first start, add a provider under **Settings → Models** (for OpenRouter: address `https://openrouter.ai/api`, a model name and an API key) and bind the roles to it. Notes live in `./notes` by default (change it with `--vault`).
 
-Araştırmanın araçları uygulamanın içindedir, başka bir kurulum istemez:
-- **GitHub** (`server/github.py`): yalnız herkese açık depolar, GitHub'ın hız sınırına uyar, sonuçları bir saat önbellekte tutar. Anahtar isteğe bağlıdır (ayarlar penceresinden girilir); anahtarla aramalar 2 sn, anahtarsız 6 sn aralıklarla yapılır.
-- **Web araması** (`server/websearch.py`): bilgisayardaki Opera ile yapılır, ama penceresi ekranda görünmez; kişisel profilin kullanılmaz. Opera başka bir yerdeyse `OPERA_EXECUTABLE` ile gösterilir. Araştır panelinden kapatılabilir.
-- **Sayfa okuma** (`server/fetch.py`): JavaScript'le çizilen sayfalar için `playwright install chromium` gerekir.
+The research tools are built into the app and need nothing else installed:
+- **GitHub** (`server/github.py`): public repositories only, respects GitHub's rate limits, caches results for an hour. A token is optional (entered in the settings); with one, searches run 2 s apart, without one 6 s apart.
+- **Web search** (`server/websearch.py`): runs through the Opera on your computer, but its window never shows on screen and your personal profile is not used. If Opera lives somewhere else, point `OPERA_EXECUTABLE` at it. It can be switched off in the research panel.
+- **Page reading** (`server/fetch.py`): pages drawn with JavaScript need `playwright install chromium`.
 
-## Yapı
+## Layout
 ```
-server/       FastAPI sunucusu: asistan, karar merdiveni, araştırma, sağlayıcılar, bütçe
-core/         model istemcisi: istemler, ayrıştırıcılar, düşünme bütçesi
-web/          arayüz (derleme adımı olmayan ES modülleri); web/locales çeviri sözlükleri
-desktop/      PyQt6 masaüstü kabuğu ve asistan kartı (HUD)
-assets/icon/  uygulama logosu (SVG, PNG, .ico); build_icons.py ile yeniden çizilir
-scripts/      make_shortcut.py: masaüstü / Başlat menüsü kısayolu
-install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
-tests/        pytest; tests/manual_research_benchmark.py canlı araştırma ölçümü
+server/       FastAPI server: assistant, decision ladder, research, providers, budget
+core/         model client: prompts, parsers, thinking budget
+web/          interface (ES modules, no build step); web/locales holds the translations
+desktop/      PyQt6 desktop shell and the assistant card (HUD)
+assets/icon/  app icon (SVG, PNG, .ico); redrawn with build_icons.py
+scripts/      make_shortcut.py: desktop / Start menu shortcut
+install.ps1   one-command install for Windows; install.sh for macOS / Linux
+tests/        pytest; tests/manual_research_benchmark.py measures live research
 ```
 
 ```bash
