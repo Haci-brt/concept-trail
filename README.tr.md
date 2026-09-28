@@ -2,7 +2,7 @@
 
 # Concept Trail
 
-[English](README.md) · **Türkçe**
+[English](README.md) · **Türkçe** · **[Tanıtım: neyi çözer, baştan sona bir örnekle](docs/TANITIM.md)**
 
 *Yazılım fikirleri için bir düşünme alanı: sen yapmaya başlamadan önce açık soruları sorar, fikri daha önce kimin yaptığını araştırır ve senin onayın olmadan notuna tek kelime yazmaz.*
 
@@ -16,6 +16,8 @@ Bir fikir, bir yazılım fikri aklımıza geldiğinde, o fikir henüz detaylı d
 
 ### Not canlı izlenir
 Yazmaya **15 saniye ara verdiğinde** ya da bir şey **yapıştırdığında** asistan notuna sessizce bakar: eksikleri ve açık uçları bulur. Yazarken araya girmez; bulduğu sorular sağdaki panelde bekler, ekrana kart fırlatmaz. Durum çubuğundan açılıp kapatılır; `Ctrl+Enter` ile her an elle de sorulabilir.
+
+**Kaç soru sorulacağına model karar verir.** Sorulara nasıl yetiştiğin ona bildirilir: kaç soru bekliyor, en eskisi ne kadardır bekliyor, son zamanlarda kaçını sonuçlandırdın. Tempoyu buna göre ayarlar: konuşulacak çok şey varsa ve sen cevap verdikçe sormaya devam eder; cevapsız sorular birikirse yalnız önemli olanı sorar. Sohbette de bir cevabın yeterince net olduğuna aynı şekilde kendisi karar verir. Sabit bir soru sınırı yok; kod yalnızca bozulmuş bir modele karşı bir sigorta tutar.
 
 ### Sorular genişten dara: karar merdiveni
 Bir yazılım notu dört basamaktan geçer; asistan yalnızca bulunduğu basamağın açık kararlarını sorar:
@@ -39,7 +41,7 @@ Her turda sırayla **Mimar, Ürün, Güvenlik ve işletim, Geliştirici** gözü
 Sadece modelin sorularıyla ilerlemek fikri istediğin yerden uzaklaştırabilir. **"Rotayı düzelt"** ile projeye serbestçe yön verirsin: asistan düzeltmeni projenin amacı ve verilmiş kararlarla karşılaştırır, yeni gidişatı kısa bir özetle gösterir ve neyi değiştireceğini listeler — düzeltmenin değerini söylediği kararlar güncellenir, etkilediği kararlar yeniden sorulur, çelişen sorular kapanır. Hiçbiri sen onaylamadan olmaz; istemediğin kalemin işaretini kaldırırsın.
 
 ### Fikir ağacı: bir takımyıldız
-Not ortada parlayan bir yıldız; soruları, önerileri ve sohbetleri ondan ışın ışın dağılır. **Cevap bekleyen sorular parlar** ve iplerinden ışık akar; çözülenler sakin bir ışıkla kalır. İpler gerçek iplerdir: bir yıldızı tutup sürükleyince bağlı olduklarını çeker, bırakınca yerine salınarak döner. Gökyüzünü kaydırınca asılı olan her şey geride kalıp salınır. Yazı yalnız fareyle üstüne gelince görünür. Bir yıldıza tıklayınca kartı ondan büyüyerek açılır; not ile o yıldız arasındaki yol aydınlanır, gökyüzünün geri kalanı kararır. Boşluğa tıklamak kartı yıldızına geri küçültür. **N** (ya da "Sıradaki soru") cevap bekleyen bir sonraki soruya uçar. Arkada Samanyolu, ara sıra bir kayan yıldız; not ilk açıldığında yıldızlar merkezden dışa doğru sırayla tutuşur, ipler çizilerek uzar.
+Not ortada parlayan bir yıldız; soruları, önerileri ve sohbetleri ondan ışın ışın dağılır. **Cevap bekleyen sorular parlar** ve iplerinden ışık akar; çözülenler sakin bir ışıkla kalır. İpler gerçek iplerdir: bir yıldızı tutup sürükleyince bağlı olduklarını çeker, bırakınca yerine salınarak döner. Gökyüzünü kaydırınca asılı olan her şey geride kalıp salınır. Yazı yalnız fareyle üstüne gelince görünür. Bir yıldıza tıklayınca kartı ondan büyüyerek açılır; not ile o yıldız arasındaki yol aydınlanır, gökyüzünün geri kalanı kararır. Boşluğa tıklamak kartı yıldızına geri küçültür. **N** (ya da "Sıradaki soru") cevap bekleyen bir sonraki soruya uçar. Arkada hiç tam durmayan bir gökyüzü var: süzülen gaz bulutları, Samanyolu, farklı derinliklerde yıldız katmanları, arada bir parlayan bir yıldız, kayan yıldızlar. Gökyüzü temayla değişir: açık bir gece, ateş böcekli bir orman gecesi, sıcak ufkun üstünde kıvılcımlı bir gün batımı, sepya bir yıldız haritası, kutup ışıklı bir buzul gecesi, yüksek karşıtlık için sade bir siyah. Yakınlaşıp uzaklaşmak ağacı sarsmaz; kaydırmak onu yalnızca kalkışta ve duruşta salındırır. Not ilk açıldığında yıldızlar merkezden dışa doğru sırayla tutuşur, ipler çizilerek uzar.
 
 ### Master prompt
 Tek tuş (**Ctrl Shift M**, üstteki "Master prompt"): not, yol haritasındaki kararlar, cevapladığın sorular, onayladığın ve reddettiğin öneriler ve araştırma, bir yapay zekâ kodlama ajanının (Claude Code, Codex gibi) uygulamayı **hiç soru sormadan** baştan sona yapabileceği bir talimata dönüşür: ürün özeti, kapsam, teknoloji yığını (sürümleriyle), mimari, veri modeli, API sözleşmeleri, ekranlar, hata ve uç durumlar, güvenlik, klasör yapısı, kilometre taşları, test ve kabul ölçütleri, kurulum. Notun açık bıraktığı her şeyi model kendisi karara bağlar ve bunları **Varsayımlar** bölümünde gerekçesiyle listeler; pencere o kararları en üstte gösterir. Hâlâ soru işaretiyle biten ya da kararı erteleyen bir satır kalırsa ikinci, kısa bir çağrı onları da kapatır. Not ürün evresine gelince düğme parlar, ama her an kullanılabilir. Beş dilden birinde (Türkçe, English, Deutsch, Español, Français); kopyala, yeni not olarak kaydet ya da .md indir. Son hazırlanan notla birlikte saklanır. Model ayarlarında kendi görevi vardır ("Master prompt"; boş bırakılırsa araştırma yargılarının modeli).
@@ -120,6 +122,7 @@ web/          arayüz (derleme adımı olmayan ES modülleri); web/locales çevi
 desktop/      PyQt6 masaüstü kabuğu ve asistan kartı (HUD)
 assets/icon/  uygulama logosu: ana görsel concept-trail.png; build_icons.py bütün boyutları ve .ico'yu üretir
 scripts/      make_shortcut.py: masaüstü / Başlat menüsü kısayolu
+docs/         tanıtım, baştan sona bir örnekle (TANITIM.md, INTRODUCTION.md)
 install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
 tests/        pytest; tests/manual_research_benchmark.py canlı araştırma ölçümü
 ```

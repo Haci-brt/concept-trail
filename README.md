@@ -2,7 +2,7 @@
 
 # Concept Trail
 
-**English** · [Türkçe](README.tr.md)
+**English** · [Türkçe](README.tr.md) · **[Introduction: what it solves, with a worked example](docs/INTRODUCTION.md)**
 
 *A thinking workspace for software ideas: it asks the open questions before you build, researches who already built it, and never writes into your notes without your approval.*
 
@@ -29,6 +29,8 @@ When a software idea first comes to mind it is still vague, full of open questio
 ### The note is watched while you write
 When you **pause for 15 seconds** or **paste something**, the assistant quietly reads your note and finds what is missing or still open. It never interrupts your writing: its questions wait in the panel on the right instead of popping up cards. Live watch is switched on and off from the status bar, and `Ctrl+Enter` asks at any moment.
 
+**How many questions to ask is the model's call.** It is told how you are keeping up — how many questions wait, how long the oldest has waited, how many you settled lately — and paces itself: while there is much to talk through and you keep answering, it keeps asking; when unanswered questions pile up, it asks only what matters. In a chat it decides the same way when an answer is clear enough. There is no fixed cap; the code only keeps a fuse against a model gone wrong.
+
 ### Questions go from broad to narrow: the decision ladder
 A software note climbs four rungs, and the assistant only asks about the open decisions of the rung it is on:
 
@@ -51,7 +53,7 @@ Each round, in turn, the eyes of an **Architect, Product, Security & Operations*
 Following only the model's questions can pull the idea away from where you want it. **Correct course** lets you steer freely: the assistant compares your correction with the project's goal and the decisions already made, shows the new course in a short summary and lists what it would change — decisions whose value your correction states are updated, decisions it affects are asked again, conflicting questions are closed. Nothing happens until you approve; untick any item you don't want.
 
 ### The idea tree: a constellation
-The note is a bright star in the middle; its questions, suggestions and chats branch out from it ray by ray. **Questions waiting for an answer glow**, with light flowing along their strings; resolved ones settle into a calm light. The strings are real ropes: pick up a star and drag it and it pulls the others along; let go and it swings back into place. Pan the sky and whatever hangs in it lags behind and sways. Text only appears when you hover over a star. Click a star and its card grows out of it; the path from the note to that star lights up while the rest of the sky dims. Clicking empty space shrinks the card back into its star. **N** (or "Next question") flies to the next question waiting for an answer. Behind it all: the Milky Way and the occasional shooting star; when a note first opens, the stars light up from the centre outwards and the strings draw themselves out.
+The note is a bright star in the middle; its questions, suggestions and chats branch out from it ray by ray. **Questions waiting for an answer glow**, with light flowing along their strings; resolved ones settle into a calm light. The strings are real ropes: pick up a star and drag it and it pulls the others along; let go and it swings back into place. Pan the sky and whatever hangs in it lags behind and sways. Text only appears when you hover over a star. Click a star and its card grows out of it; the path from the note to that star lights up while the rest of the sky dims. Clicking empty space shrinks the card back into its star. **N** (or "Next question") flies to the next question waiting for an answer. Behind it all, a sky that is never quite still: drifting clouds of gas, the Milky Way, layers of stars at different depths, a bright star flaring now and then, shooting stars — and it follows the theme: a clear night, a forest night with fireflies, a dusk with embers over a warm horizon, a sepia star chart, a polar night with an aurora, plain black for high contrast. Zooming never shakes the tree; panning only sways it as the pan sets off and stops. When a note first opens, the stars light up from the centre outwards and the strings draw themselves out.
 
 ### Master prompt
 One button (**Ctrl Shift M**, "Master prompt" in the title bar): the note, the roadmap decisions, the questions you answered, the suggestions you approved and rejected, and the research become instructions a coding agent (such as Claude Code or Codex) can follow to build the app end to end **without asking a single question**: product summary, scope, tech stack (with versions), architecture, data model, API contracts, screens, errors and edge cases, security, folder structure, milestones, tests and acceptance criteria, setup. Whatever the note leaves open, the model decides itself and lists under **Assumptions** with its reasons; the dialog shows those decisions first. If a line still ends in a question mark or puts a decision off, a second short call settles it. The button lights up when the note reaches the product phase, but it works at any time. In any of five languages; copy it, save it as a new note or download it as .md. The last one is kept with the note. It has its own job in the model settings ("Master prompt"; if left empty, the research judgements' model).
@@ -132,6 +134,7 @@ web/          interface (ES modules, no build step); web/locales holds the trans
 desktop/      PyQt6 desktop shell and the assistant card (HUD)
 assets/icon/  app icon: the concept-trail.png master; build_icons.py makes every size and the .ico
 scripts/      make_shortcut.py: desktop / Start menu shortcut
+docs/         the introduction, with a worked example (INTRODUCTION.md, TANITIM.md)
 install.ps1   one-command install for Windows; install.sh for macOS / Linux
 tests/        pytest; tests/manual_research_benchmark.py measures live research
 ```

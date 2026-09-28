@@ -14,6 +14,7 @@
 // its text stays selectable and its buttons stay buttons.
 import { api } from "./api.js";
 import { icon } from "./icons.js";
+import { Sky } from "./sky.js";
 import { esc, formatClock, splitSentence } from "./util.js";
 
 const MIN_K = 0.3;
@@ -66,20 +67,12 @@ const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce
 const easeOut = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 // a little past the mark and back: how a star pops into being
 const easeOutBack = (t) => { const x = Math.min(1, Math.max(0, t)) - 1; return 1 + 2.70158 * x * x * x + 1.70158 * x * x; };
-// roughly normal, for the density of the Milky Way across its width
-const gauss = (rnd) => (rnd() + rnd() + rnd() + rnd() - 2) * 0.87;
 
 function hexToRgb(hex) {
   const v = parseInt(hex.slice(1), 16);
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
 }
 const rgba = (hex, a) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},${a})`; };
-
-// a small deterministic generator, so the sky is the same every time
-function seeded(seed) {
-  let s = seed >>> 0;
-  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
-}
 
 export class IdeaTree {
   constructor(host, handlers) {
@@ -108,6 +101,9 @@ export class IdeaTree {
     this._dpr = 1;
     this._focusMix = 0;
     this._coast = null;
+    this._zoomAim = null;            // where a wheel zoom is easing to, and about which point
+    this._camPrev = null;            // the camera a frame ago
+    this._skyPan = { x: 0, y: 0 };   // how far the sky has been panned, zooms left out
 
     host.innerHTML = `
       <canvas class="cv-canvas" aria-label="Fikir ağacı: notun sorularından oluşan takımyıldızı"></canvas>
@@ -149,7 +145,7 @@ export class IdeaTree {
     this.ctx = this.canvas.getContext("2d");
     this.card = host.querySelector(".cv-card");
     this.tip = host.querySelector(".cv-tip");
-    this.sky = this._makeSky();
+    this.sky = new Sky();
 
     host.addEventListener("click", (e) => this._click(e));
     // the pointer went from a star onto a bar or the card: the star is no longer under it
@@ -484,125 +480,6 @@ export class IdeaTree {
     this._cardAnchor = { sx, sy, left, top, w, h };
   }
 
-  // ---------- the sky ----------
-  _makeSky() {
-    const rnd = seeded(7);
-    const stars = [];
-    for (let i = 0; i < 320; i++) {
-      stars.push({ x: rnd(), y: rnd(), r: 0.35 + rnd() * rnd() * 1.5, a: 0.25 + rnd() * 0.6,
-                   phase: rnd() * Math.PI * 2, speed: 0.4 + rnd() * 1.6, depth: 0.04 + rnd() * 0.12,
-                   tint: rnd() < 0.15 ? "#ffe8c2" : rnd() < 0.3 ? "#cfe3ff" : "#ffffff" });
-    }
-    const nebulae = [
-      { x: -0.25, y: -0.2, r: 0.75, c: "rgba(72, 196, 170, 0.10)" },
-      { x: 0.35, y: 0.25, r: 0.65, c: "rgba(129, 120, 255, 0.10)" },
-      { x: 0.05, y: 0.45, r: 0.5, c: "rgba(255, 143, 200, 0.05)" },
-    ];
-    return { stars, nebulae, meteor: null, nextMeteor: 8 + Math.random() * 10, band: null };
-  }
-
-  /** The Milky Way: a soft diagonal band of countless faint stars with a dark
-   *  lane of dust down its middle. Drawn once per size, then only moved. */
-  _makeBand(w, h) {
-    const W = Math.ceil(w * 1.35), H = Math.ceil(h * 1.35), scale = Math.min(1.5, this._dpr);
-    const c = document.createElement("canvas");
-    c.width = Math.round(W * scale);
-    c.height = Math.round(H * scale);
-    const g = c.getContext("2d");
-    g.scale(scale, scale);
-    const rnd = seeded(21);
-    const len = Math.hypot(W, H), thick = Math.min(W, H) * 0.2;
-    g.translate(W / 2, H / 2);
-    g.rotate(-0.5);
-    const hues = ["150, 140, 255", "110, 220, 200", "255, 196, 226", "200, 215, 255"];
-    for (let i = 0; i < 34; i++) {
-      const x = (rnd() - 0.5) * len, y = gauss(rnd) * thick * 0.35, r = thick * (0.45 + rnd() * 0.8);
-      const glow = g.createRadialGradient(x, y, 0, x, y, r);
-      const hue = hues[Math.floor(rnd() * hues.length)];
-      glow.addColorStop(0, `rgba(${hue}, 0.07)`);
-      glow.addColorStop(1, `rgba(${hue}, 0)`);
-      g.fillStyle = glow;
-      g.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    for (let i = 0; i < 3200; i++) {
-      const x = (rnd() - 0.5) * len, y = gauss(rnd) * thick * 0.4, big = rnd() < 0.06;
-      g.globalAlpha = 0.1 + rnd() * (big ? 0.7 : 0.4);
-      g.fillStyle = rnd() < 0.18 ? "#ffe6c8" : rnd() < 0.3 ? "#cfe0ff" : "#f2f5ff";
-      g.beginPath();
-      g.arc(x, y, big ? 0.9 + rnd() * 0.6 : 0.35 + rnd() * 0.45, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.globalAlpha = 1;
-    for (let i = 0; i < 26; i++) {
-      const x = (rnd() - 0.5) * len * 0.9, y = gauss(rnd) * thick * 0.07, r = thick * (0.12 + rnd() * 0.22);
-      const dust = g.createRadialGradient(x, y, 0, x, y, r);
-      dust.addColorStop(0, "rgba(5, 8, 20, 0.34)");
-      dust.addColorStop(1, "rgba(5, 8, 20, 0)");
-      g.fillStyle = dust;
-      g.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    return { canvas: c, w, h, W, H };
-  }
-
-  _drawSky(ctx, w, h, t, still) {
-    const g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, "#060a18");
-    g.addColorStop(1, "#0b1224");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-    const size = Math.max(w, h);
-    for (const n of this.sky.nebulae) {
-      const cx = w / 2 + n.x * size + this.cam.x * 0.08, cy = h / 2 + n.y * size + this.cam.y * 0.08;
-      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, n.r * size);
-      grad.addColorStop(0, n.c);
-      grad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
-    }
-    // the Milky Way sits furthest back and moves least
-    if (!this.sky.band || this.sky.band.w !== w || this.sky.band.h !== h) this.sky.band = this._makeBand(w, h);
-    const band = this.sky.band, room = { x: (band.W - w) / 2, y: (band.H - h) / 2 };
-    const bx = Math.max(-room.x, Math.min(room.x, this.cam.x * 0.03)), by = Math.max(-room.y, Math.min(room.y, this.cam.y * 0.03));
-    ctx.globalAlpha = 0.9 - this._focusMix * 0.35;
-    ctx.drawImage(band.canvas, -room.x + bx, -room.y + by, band.W, band.H);
-    ctx.globalAlpha = 1;
-    for (const s of this.sky.stars) {
-      // a little parallax: the far sky moves less than the constellation
-      const x = ((s.x * w + this.cam.x * s.depth) % w + w) % w;
-      const y = ((s.y * h + this.cam.y * s.depth) % h + h) % h;
-      const twinkle = still ? 1 : 0.65 + 0.35 * Math.sin(t * s.speed + s.phase);
-      ctx.globalAlpha = s.a * twinkle;
-      ctx.fillStyle = s.tint;
-      ctx.beginPath();
-      ctx.arc(x, y, s.r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-    // now and then a shooting star, never while the writer holds a star
-    if (!still) {
-      const m = this.sky.meteor;
-      if (!m && t > this.sky.nextMeteor && !this._drag) {
-        this.sky.meteor = { x: Math.random() * w * 0.7 + w * 0.15, y: Math.random() * h * 0.3, born: t,
-                            dx: 380 + Math.random() * 180, dy: 150 + Math.random() * 90 };
-      } else if (m) {
-        const p = (t - m.born) / 0.9;
-        if (p >= 1) { this.sky.meteor = null; this.sky.nextMeteor = t + 14 + Math.random() * 16; }
-        else {
-          const hx = m.x + m.dx * p, hy = m.y + m.dy * p;
-          const tail = ctx.createLinearGradient(hx, hy, hx - m.dx * 0.25, hy - m.dy * 0.25);
-          tail.addColorStop(0, `rgba(255,255,255,${0.75 * (1 - p)})`);
-          tail.addColorStop(1, "rgba(255,255,255,0)");
-          ctx.strokeStyle = tail;
-          ctx.lineWidth = 1.4;
-          ctx.beginPath();
-          ctx.moveTo(hx, hy);
-          ctx.lineTo(hx - m.dx * 0.25, hy - m.dy * 0.25);
-          ctx.stroke();
-        }
-      }
-    }
-  }
-
   // ---------- update: the tree -> stars and strings ----------
   _update() {
     const tree = this._build();
@@ -825,7 +702,8 @@ export class IdeaTree {
       s.hov += ((s.id === this.hovered ? 1 : 0) - s.hov) * Math.min(1, dt * 12);
     }
     ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
-    this._drawSky(ctx, w, h, t, still);
+    this.sky.draw(ctx, w, h, t, { pan: this._skyPan, k: this.cam.k, still, focus: this._focusMix,
+                                  calm: Boolean(this._drag), dpr: this._dpr });
     ctx.save();
     ctx.translate(this.cam.x, this.cam.y);
     ctx.scale(this.cam.k, this.cam.k);
@@ -1055,7 +933,7 @@ export class IdeaTree {
       this._acc += dt;
       while (this._acc >= FIXED_DT) { this._step(FIXED_DT); this._acc -= FIXED_DT; }
       this._camStep(dt);
-      this._inertia();
+      this._inertia(this._trackCamera(), dt);
       this._placeCard();
       this._placeTip();
       this._draw(this._time);
@@ -1064,28 +942,55 @@ export class IdeaTree {
     this._raf = requestAnimationFrame(frame);
   }
 
-  /** The sky moved (a pan, its glide, a zoom, the camera flying to a card):
-   *  whatever hangs in it has weight and lags behind — the light rope joints
-   *  most, small stars more than big ones, the note not at all — then the
-   *  ropes and springs bring it back and it swings into place. */
-  _inertia() {
-    const vw = this.canvas.clientWidth, vh = this.canvas.clientHeight;
-    const view = { x: (vw / 2 - this.cam.x) / this.cam.k, y: (vh / 2 - this.cam.y) / this.cam.k };
-    const before = this._view;
-    this._view = view;
-    if (!before || reducedMotion()) return;
-    let dx = view.x - before.x, dy = view.y - before.y;
-    const moved = Math.hypot(dx, dy);
-    if (moved < 0.01 || moved > 400) return;          // still, or a jump (a fit, a new note)
-    if (moved > 40) { dx *= 40 / moved; dy *= 40 / moved; }
+  /** What the camera did this frame, as a pan in screen pixels — or nothing.
+   *  A zoom is not a movement of the sky: zooming about the pointer shifts
+   *  the view too, and read as a pan (divided by a small scale when zoomed
+   *  out) it flung every star and rope sideways at each notch of the wheel.
+   *  So only a frame whose scale held still counts as a pan. */
+  _trackCamera() {
+    const prev = this._camPrev, cam = this.cam;
+    this._camPrev = { ...cam };
+    if (!prev || Math.abs(cam.k / prev.k - 1) > 1e-4) return null;
+    const x = cam.x - prev.x, y = cam.y - prev.y;
+    if (Math.hypot(x, y) > 250) { this._panPace = null; return null; }   // a jump: a fit, a new note
+    this._skyPan.x += x;
+    this._skyPan.y += y;
+    return { x, y };
+  }
+
+  /** The sky was panned (by hand, its glide, the camera flying to a card):
+   *  whatever hangs in it has weight. Like anything carried, it is the
+   *  change of speed that it feels, not the speed — it lags as the pan sets
+   *  off, swings on as the pan stops, and rides along untouched while the
+   *  pan keeps an even pace. (Pushing it by the speed itself, as before, kept
+   *  the whole tree dragged 100 px out of shape for as long as a hand panned.)
+   *  The pointer and the frames do not keep step — one frame gets two moves,
+   *  the next none — so the speed is smoothed before it is differentiated.
+   *  Measured on the screen, so it feels the same at every zoom. */
+  _inertia(pan, dt = FIXED_DT) {
+    if (!pan) return;                    // a zoom or a jump: the pace carries over as it was
+    const v = this._panPace || (this._panPace = { x: 0, y: 0, sx: 0, sy: 0 });
+    const before = { x: v.x, y: v.y };
+    const a = 1 - Math.exp(-dt * 18), perFrame = 1 / Math.max(dt * 60, 0.25);
+    v.sx += (pan.x * perFrame - v.sx) * a;
+    v.sy += (pan.y * perFrame - v.sy) * a;
+    v.x += (v.sx - v.x) * a;
+    v.y += (v.sy - v.y) * a;
+    if (reducedMotion()) return;
+    let ax = v.x - before.x, ay = v.y - before.y;   // screen px per 1/60 s, gained this frame
+    const change = Math.hypot(ax, ay);
+    if (change < 0.002) return;
+    if (change > 12) { ax *= 12 / change; ay *= 12 / change; }
+    const dx = -ax / this.cam.k, dy = -ay / this.cam.k;
     for (const s of this.stars.values()) {
       if (s.depth === 0 || s.leaving || s === this._drag?.star) continue;
-      const lag = Math.min(0.06, 0.22 / s.r);
-      s.vx += dx * lag;
-      s.vy += dy * lag;
+      const give = Math.min(0.45, 2.4 / s.r);      // small stars swing more than big ones
+      s.vx += dx * give;
+      s.vy += dy * give;
     }
     for (const string of this.strings.values()) {
-      for (const p of string.points) { p.x += dx * 0.35; p.y += dy * 0.35; }
+      // a rope joint's speed is where it is minus where it was
+      for (const p of string.points) { p.px -= dx * 0.7; p.py -= dy * 0.7; }
     }
   }
 
@@ -1108,10 +1013,27 @@ export class IdeaTree {
 
   _glideTo(target, ms = 560) {
     this._coast = null;
+    this._zoomAim = null;
     this.glide = { from: { ...this.cam }, to: target, start: performance.now(), ms };
   }
 
+  /** Scale to k keeping the point (px, py) of the screen where it is. */
+  _zoomAround(k, px, py) {
+    const r = k / this.cam.k;
+    this.cam = { k, x: px - (px - this.cam.x) * r, y: py - (py - this.cam.y) * r };
+    this._setZoomLabel();
+  }
+
   _camStep(dt = FIXED_DT) {
+    // a wheel zoom eases to where the wheel sent it, about the pointer:
+    // several notches in a row are one smooth move, not a row of jumps
+    if (this._zoomAim) {
+      const aim = this._zoomAim;
+      const step = 1 - Math.exp(-dt * 14);
+      let k = Math.exp(Math.log(this.cam.k) + Math.log(aim.k / this.cam.k) * step);
+      if (Math.abs(Math.log(aim.k / k)) < 0.002) { k = aim.k; this._zoomAim = null; }
+      this._zoomAround(k, aim.px, aim.py);
+    }
     // a pan let go with speed keeps sliding, slowing like a puck on ice
     if (this._coast) {
       const f = dt * 60;
@@ -1142,19 +1064,17 @@ export class IdeaTree {
     const k = Math.min(1.3, Math.max(MIN_K, Math.min((vw - padX * 2) / Math.max(1, maxX - minX), (vh - padTop - padBottom) / Math.max(1, maxY - minY))));
     const target = { k, x: vw / 2 - ((minX + maxX) / 2) * k, y: padTop + (vh - padTop - padBottom) / 2 - ((minY + maxY) / 2) * k };
     if (animate) this._glideTo(target);
-    else { this.cam = target; this.glide = null; this._setZoomLabel(); }
+    else { this.cam = target; this.glide = null; this._zoomAim = null; this._setZoomLabel(); }
     this._autoFit = true;               // until the writer moves the sky themselves
   }
 
-  _zoomTo(k, cx = this.canvas.clientWidth / 2, cy = this.canvas.clientHeight / 2, animate = true) {
+  _zoomTo(k, cx = this.canvas.clientWidth / 2, cy = this.canvas.clientHeight / 2) {
     const nk = Math.min(MAX_K, Math.max(MIN_K, k));
     const { x, y, k: ok } = this.glide ? this.glide.to : this.cam;
-    const target = { k: nk, x: cx - (cx - x) * (nk / ok), y: cy - (cy - y) * (nk / ok) };
-    if (animate) this._glideTo(target, 320);
-    else { this.cam = target; this.glide = null; this._setZoomLabel(); }
+    this._glideTo({ k: nk, x: cx - (cx - x) * (nk / ok), y: cy - (cy - y) * (nk / ok) }, 320);
   }
 
-  _zoomBy(f) { this._zoomTo((this.glide ? this.glide.to.k : this.cam.k) * f); }
+  _zoomBy(f) { this._zoomTo((this.glide ? this.glide.to.k : this._zoomAim ? this._zoomAim.k : this.cam.k) * f); }
 
   // ---------- pointer ----------
   _starAt(px, py) {
@@ -1179,6 +1099,7 @@ export class IdeaTree {
       c.setPointerCapture(e.pointerId);
       this.glide = null;
       this._coast = null;
+      this._zoomAim = null;
       this._autoFit = false;
       if (star) {
         this._drag = { star, sx: px, sy: py, moved: false, lastX: px, lastY: py, lastT: performance.now(), vx: 0, vy: 0 };
@@ -1254,10 +1175,15 @@ export class IdeaTree {
       e.preventDefault();
       this._coast = null;
       this._autoFit = false;
+      this.glide = null;                  // the hand takes over from a glide where it is
       const [px, py] = local(e);
-      const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0016));
-      this._zoomTo((this.glide ? this.glide.to.k : this.cam.k) * factor, px, py, false);
-      this._setZoomLabel();
+      // a mouse notch is ~100 px (or 3 lines); a trackpad sends many small
+      // deltas, a pinch comes with ctrlKey
+      const dy = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1);
+      const factor = Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0016));
+      const k = Math.min(MAX_K, Math.max(MIN_K, (this._zoomAim ? this._zoomAim.k : this.cam.k) * factor));
+      if (reducedMotion()) { this._zoomAim = null; this._zoomAround(k, px, py); }
+      else this._zoomAim = { k, px, py };
     }, { passive: false });
   }
 

@@ -30,7 +30,10 @@ HEAD_CONTEXT_CHARS = 700
 # mid-think and came back empty. On the ladder prompt it thinks far longer than
 # the 150-280 tokens measured for chat: 900-3,800 characters (2026-09-27), and
 # at 900 tokens two note passes in thirteen ran out before </think>.
-MAX_QUESTIONS = 3
+# How many questions a pass asks is the model's call, not a number in the code
+# (a fixed three held back writers who wanted to keep going). This only guards
+# against a reply gone wrong — a model writing SORU lines on and on.
+QUESTION_FUSE = 8
 # what a question is for — drives its label and colour in the UI
 # the curiosity kinds used for `tur: fikir` notes, then the decision ids of the
 # ladder — a software note's question is tagged with the decision it asks for
@@ -53,9 +56,13 @@ SYSTEM_PROMPT = (
     "1) [AÇIK SORULAR] listesindeki numaralı sorulardan biri [YENİ EKLENEN] kısmında artık "
     "cevaplanmışsa (sadece numarayı yaz, başka hiçbir şey yazma):\n"
     "COZULDU: <numara>\n\n"
-    "2) Kullanıcıyı kendi fikri üzerine düşündürecek SORULAR (en fazla 3 satır, her biri ayrı "
-    "satırda, [AÇIK SORULAR]'da zaten yoksa). Amacın bilgi toplamak DEĞİL; kullanıcının kendi "
-    "yazdığına yeni bir gözle bakmasını sağlamak. Her soruyu türüyle etiketle:\n"
+    "2) Kullanıcıyı kendi fikri üzerine düşündürecek SORULAR (her biri ayrı satırda, [AÇIK "
+    "SORULAR]'da zaten yoksa). Amacın bilgi toplamak DEĞİL; kullanıcının kendi yazdığına yeni bir "
+    "gözle bakmasını sağlamak. KAÇ soru soracağına sen karar ver: notta şu an gerçekten "
+    "düşünülmeye değer kaç nokta varsa o kadar — bazen bir, bazen beş altı. Sayı doldurmak için "
+    "soru uydurma. [TEMPO] yazarın sorularla nasıl ilerlediğini gösterir: soruları cevaplıyor ve "
+    "konuşulacak çok şey varsa cömert ol, merakını kısma; cevapsız sorular birikmişse yalnızca "
+    "gerçekten önemli olanı sor. Her soruyu türüyle etiketle:\n"
     "SORU[derinlestirme]: <notta yazan somut bir noktayı bir adım öteye taşıyan soru>\n"
     "SORU[alternatif]: <'ya şöyle olsaydı' diye başka bir yol düşündüren soru>\n"
     "SORU[sonuc]: <bu fikir gerçek olsa ne değişirdi, kim ne hissederdi>\n"
@@ -151,6 +158,10 @@ CHAT_SYSTEM_PROMPT = (
     "Kurallar:\n"
     "- Sadece bu iki formattan birini yaz; selamlama, açıklama veya <think> bloğu ekleme.\n"
     "- Cevap anlaşılıyorsa ısrar etme, fazladan detay isteme: ANLADIM yaz.\n"
+    "- Kaç kez netleştirme soracağına sen karar ver; [SOHBET TEMPOSU] bu sohbette kaç tane "
+    "sorduğunu gösterir. Cevap gerçekten hâlâ belirsizse sormaya devam edebilirsin, ama aynı şeyi "
+    "başka kelimelerle yeniden sorma. Kullanıcının cevapları kısalıyor ya da sabırsızlaşıyorsa "
+    "elindekiyle ANLADIM yaz.\n"
     "- Sorduğun sorunun dışına çıkma, yeni konu açma.\n"
     "- NOT satırı kullanıcının notuna aynen eklenecek: doğrudan notun dili ile yaz, "
     "'kullanıcı dedi ki' gibi ifadeler kullanma ve uydurma bilgi ekleme."
@@ -711,7 +722,7 @@ def _parse_move(raw: str) -> dict:
                 question["parent_id"] = match.group(2)
             questions.append(question)
     if questions:
-        return {"type": "questions", "questions": questions[:MAX_QUESTIONS]}
+        return {"type": "questions", "questions": questions[:QUESTION_FUSE]}
 
     # unlabeled fallback: treat short leftover text as a question, ignore noise
     if len(text) > 3:
@@ -861,7 +872,7 @@ def parse_ladder(raw: str, open_decisions=None, note: str | None = None) -> dict
             # the model wrote what the note says, and the note does say it
             known.append(decision)
             values[decision] = value[:160]
-    result = {"type": "questions", "questions": questions[:MAX_QUESTIONS]} if questions else {"type": "net"}
+    result = {"type": "questions", "questions": questions[:QUESTION_FUSE]} if questions else {"type": "net"}
     if known:
         result["known"] = known
     if values:
@@ -899,7 +910,7 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
                    on_chunk=None, provider=None, span: list[int] | None = None,
                    should_cancel=None, on_usage=None, coverage: str = "",
                    roadmap: str = "", mode: str = "fikir", open_decisions=None,
-                   direction: str = "") -> dict:
+                   direction: str = "", tempo: str = "") -> dict:
     """Send the whole note (plus open questions) to the local model and get back
     a structured event: a net-effect no-op, a question, a resolved question, or
     an edit suggestion.
@@ -918,6 +929,8 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
         parts.append(f"[AÇIK SORULAR]\n{listed}")
     if coverage:
         parts.append(f"[NOTUN BÖLÜMLERİ]\n{coverage}")
+    if tempo and mode != "yazilim":
+        parts.append(f"[TEMPO]\n{tempo}")
     parts.append(f"[YENİ EKLENEN]\n{new_part}")
 
     content = _complete_thinking_capped(
@@ -939,9 +952,13 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     return parse_ladder(reply, open_decisions, grounded_text) if mode == "yazilim" else parse_response(reply)
 
 
-def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None) -> str:
-    """Multi-turn conversation about a question the assistant raised."""
-    system = f"{CHAT_SYSTEM_PROMPT}{language_rule()}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None,
+               asked: int = 0) -> str:
+    """Multi-turn conversation about a question the assistant raised. asked:
+    the follow-up questions it has put in this thread so far — it decides by
+    them when to stop asking."""
+    system = (f"{CHAT_SYSTEM_PROMPT}{language_rule()}\n\n[SOHBET TEMPOSU] Bu sohbette şimdiye kadar "
+              f"{asked} netleştirme sorusu sordun.\n\nNot bağlamı:\n{note_excerpt[-2000:]}")
     content = _complete(
         [{"role": "system", "content": system}] + history,
         temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,

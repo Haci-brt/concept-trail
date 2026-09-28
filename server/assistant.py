@@ -9,6 +9,7 @@ nodes, history entries and HUD cards; note changes still require approval.
 import asyncio
 import contextlib
 import difflib
+import functools
 import os
 import re
 import shlex
@@ -191,8 +192,12 @@ def under_path(path: str, prefix: str) -> bool:
 MIN_NEW_CHARS = 40
 THINKING_THROTTLE_S = 0.4
 CHAT_THROTTLE_S = 0.12
-MAX_FOLLOWUPS = 3  # keep asking until the answer makes sense — but never pester forever
-MAX_OPEN_QUESTIONS = 3  # unanswered questions pile up fast; stop nagging past this
+# How many questions to ask, and how long to keep asking in a chat, is the
+# model's call: it sees how the writer is keeping up ([TEMPO]) and paces itself.
+# A fixed three cut writers off just as they got going. These two are fuses
+# for a model gone wrong, set well past anything a normal session reaches.
+FOLLOWUP_FUSE = 8
+OPEN_QUESTION_FUSE = 12
 HEALTH_INTERVAL_UP_S = 15
 HEALTH_INTERVAL_DOWN_S = 5
 LAUNCH_TIMEOUT_S = 240  # a 75 GB MoE checkpoint needs ~1 min cold, more on a busy disk
@@ -654,7 +659,7 @@ class Assistant:
                     on_chunk, provider, span, cancelled, self.budget.record,
                     "" if climbing else coverage,
                     roadmap, mode, self.ladder_for(rel)["open"],
-                    direction,
+                    direction, tempo=self._tempo(rel),
                 )
             except llm_client.Cancelled:
                 return
@@ -706,6 +711,29 @@ class Assistant:
             await self.analyze(rel, content, True)
         except Exception:
             pass  # the note went away meanwhile; there is nothing left to look at
+
+    def _tempo(self, rel: str) -> str:
+        """How the writer is keeping up with the questions, for the model to
+        pace itself by: how many wait, how long the oldest has waited, how
+        many were settled lately."""
+        questions = [n for n in self.notes.load(rel)["nodes"] if n["type"] == "question"]
+        waiting = [n for n in questions if n.get("status") == "open"]
+        now = datetime.now()
+
+        def minutes_since(stamp) -> float:
+            try:
+                return (now - datetime.fromisoformat(stamp)).total_seconds() / 60
+            except (TypeError, ValueError):
+                return float("inf")
+
+        settled = sum(1 for n in questions
+                      if n.get("status") == "resolved" and minutes_since(n.get("resolved_at")) <= 30)
+        line = f"Cevap bekleyen soru: {len(waiting)}"
+        if waiting:
+            oldest = max(minutes_since(n.get("created")) for n in waiting)
+            if oldest != float("inf"):
+                line += f" (en eskisi {max(1, round(oldest))} dakikadır bekliyor)"
+        return f"{line}. Son 30 dakikada sonuçlanan soru: {settled}."
 
     def _question_branches(self, rel: str, nodes: list[dict]) -> str:
         """Give the analysis model real ids and settled details from earlier turns."""
@@ -796,9 +824,9 @@ class Assistant:
                 {"text": t, "kind": "soru"} for t in (result.get("texts") or [result.get("text", "")])
             ]
             open_now = self.notes.open_questions(rel)
-            room = MAX_OPEN_QUESTIONS - len(open_now)
+            room = OPEN_QUESTION_FUSE - len(open_now)
             if room <= 0:
-                return  # already waiting on enough; the pass can still resolve or suggest edits
+                return  # the fuse: the pass can still resolve or suggest edits
             asked = {fold(n["text"]) for n in open_now}
             asked.add(fold(state.get("last_question", "")))
             previous_questions = [n for n in state["nodes"]
@@ -1307,8 +1335,8 @@ class Assistant:
                 last_emit = now
                 loop.call_soon_threadsafe(updates.put_nowait, ("progress", accumulated))
 
-        # only the assistant's own follow-up questions count toward the cap;
-        # answering the user's questions should never run the thread out
+        # the model is told how many follow-ups it has asked and decides when
+        # to stop; answering the user's own questions never counts
         asked_before = sum(1 for n in self.notes.thread(rel, node_id)
                            if n["type"] == "chat-assistant" and n.get("mode") == "question")
         user_asked = looks_like_question(message)
@@ -1347,7 +1375,8 @@ class Assistant:
                     raw = None
 
             if raw is None:
-                call = llm_client.chat_answer if user_asked else llm_client.chat_reply
+                call = llm_client.chat_answer if user_asked else functools.partial(
+                    llm_client.chat_reply, asked=asked_before)
                 try:
                     raw = await asyncio.to_thread(call, messages, note_text, on_chunk,
                                                   provider, self.budget.record)
@@ -1370,8 +1399,9 @@ class Assistant:
                 return
 
             result = llm_client.parse_chat_reply(raw)
-            # it may keep asking until the answer makes sense, but not forever
-            if result["type"] == "question" and asked_before < MAX_FOLLOWUPS:
+            # it keeps asking while it judges the answer unclear; the fuse only
+            # stops a model that never judges it clear
+            if result["type"] == "question" and asked_before < FOLLOWUP_FUSE:
                 node = self.notes.add_node(rel, "chat-assistant", result["text"], parent_id=node_id,
                                            mode="question")
                 self._publish_node(rel, node)
