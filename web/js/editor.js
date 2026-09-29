@@ -8,6 +8,8 @@ const TR = "A-Za-zÇĞİÖŞÜçğıöşü";
 const TAG_RE = new RegExp(`(^|[\\s(])(#[${TR}][\\w\\-/${TR}]*)`, "g");
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\])?(\s*)(.*)$/;
 const MARKER_RE = /^(\s*)(?:[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+|>\s?)/;
+// how long a pause at the end of a line before the rest of it is suggested
+const SUGGEST_IDLE_MS = 700;
 
 /** Headings for the editor's local chapter picker. Code and frontmatter are
  *  skipped so a `#` example does not become a false navigation target. */
@@ -171,11 +173,18 @@ export function renderLines(text, flash, written) {
 }
 
 export class MarkdownEditor {
-  constructor({ value = "", placeholder = "", onChange, onCursor, onAsk, onScroll } = {}) {
+  constructor({ value = "", placeholder = "", onChange, onCursor, onAsk, onScroll, suggest } = {}) {
     this.onChange = onChange;
     this.onCursor = onCursor;
     this.onAsk = onAsk;
     this.onScroll = onScroll;
+    // suggest(before, after, signal) -> Promise<string>: the rest of the line
+    this.suggest = suggest;
+    this._ghost = null;               // { text, at }: the suggestion showing after the cursor
+    this._ghostNext = null;           // what is left of it after taking one word
+    this._suggestTimer = 0;
+    this._suggestAbort = null;
+    this._lastAskKey = "";
     this._lines = [];
     this._flash = null;
     this._written = [];
@@ -204,6 +213,7 @@ export class MarkdownEditor {
     this.input.addEventListener("input", (e) => this._handleInput(e));
     this.input.addEventListener("keydown", (e) => this._keydown(e));
     for (const ev of ["keyup", "click", "focus", "select"]) this.input.addEventListener(ev, () => this._updateCursor());
+    this.input.addEventListener("blur", () => { clearTimeout(this._suggestTimer); this._clearGhost(); });
     this.chapterSelect.addEventListener("change", () => {
       const index = Number(this.chapterSelect.value);
       this.jumpToHeading(Number.isInteger(index) && this.chapterSelect.value !== "start" ? index : -1);
@@ -223,6 +233,7 @@ export class MarkdownEditor {
   /** Replace the whole text from outside (file reloaded). Not undoable. */
   setValue(text) {
     if (text === this.input.value) return;
+    this._clearGhost();
     const { selectionStart: s, selectionEnd: e } = this.input;
     const top = this.scroller.scrollTop;
     this.input.value = text;
@@ -235,11 +246,103 @@ export class MarkdownEditor {
 
   // ---------- rendering ----------
   _handleInput(event) {
+    this._followGhost(event);
     this._render();
     this._updateCursor();
     // something was put in whole (pasted or dropped) rather than typed
     const pasted = event?.inputType === "insertFromPaste" || event?.inputType === "insertFromDrop";
     this.onChange?.(this.input.value, { pasted });
+    if (!this._ghost) this._scheduleSuggest();
+  }
+
+  // ---------- the rest of the line, suggested ----------
+  // Like a code editor's inline completion: a pause at the end of a line
+  // asks for the rest of it, which shows in faint text after the cursor. Tab
+  // takes it, Ctrl+→ one word of it, Esc (or going on otherwise) drops it,
+  // Ctrl+Space asks at once. Typing the very letters it shows keeps it. It is
+  // only ever the writer's key that puts it into the note — and then as one
+  // step on the ordinary undo stack.
+
+  _scheduleSuggest(delay = SUGGEST_IDLE_MS) {
+    clearTimeout(this._suggestTimer);
+    this._suggestAbort?.abort();
+    if (this.suggest) this._suggestTimer = setTimeout(() => this._askSuggestion(false), delay);
+  }
+
+  async _askSuggestion(force) {
+    const el = this.input;
+    if (!this.suggest || document.activeElement !== el || el.selectionStart !== el.selectionEnd) return;
+    const value = el.value, at = el.selectionStart;
+    if (value[at] !== undefined && value[at] !== "\n") return;          // only at the end of a line
+    const line = value.slice(value.lastIndexOf("\n", at - 1) + 1, at);
+    // a bare list marker or heading sign is too little to go on
+    if (!force && line.replace(/^[\s>#*+\-\d.)[\]xX]+/, "").trim().length < 3) return;
+    const before = value.slice(0, at), after = value.slice(at);
+    const key = `${before.slice(-300)}\u0000${after.slice(0, 80)}`;
+    if (!force && key === this._lastAskKey) return;                    // asked already, got nothing
+    this._lastAskKey = key;
+    this._suggestAbort?.abort();
+    const abort = new AbortController();
+    this._suggestAbort = abort;
+    let text = "";
+    try { text = await this.suggest(before, after, abort.signal); } catch { return; }
+    if (abort.signal.aborted || !text || el.value !== value || document.activeElement !== el
+        || el.selectionStart !== at || el.selectionEnd !== at) return;
+    this._ghost = { text, at };
+    this._attachGhost();
+  }
+
+  /** Take the suggestion — all of it, or its next word. */
+  acceptGhost(wordOnly = false) {
+    const ghost = this._ghost;
+    if (!ghost) return false;
+    const take = wordOnly ? (/^\s*\S+/.exec(ghost.text)?.[0] || ghost.text) : ghost.text;
+    const rest = ghost.text.slice(take.length);
+    this._ghost = null;
+    this._ghostNext = rest.trim() ? { text: rest, at: ghost.at + take.length } : null;
+    this.replaceRange(ghost.at, ghost.at, take);
+    return true;
+  }
+
+  /** On an edit: typing the very letters the suggestion shows keeps the rest
+   *  of it; taking a word leaves the rest; anything else drops it. */
+  _followGhost(event) {
+    const el = this.input, pos = el.selectionStart;
+    const next = this._ghostNext;
+    this._ghostNext = null;
+    if (next && pos === next.at && el.selectionEnd === pos) { this._ghost = next; return; }
+    const ghost = this._ghost;
+    if (!ghost) return;
+    const typed = event?.inputType === "insertText" ? event.data : null;
+    if (typed && ghost.text.startsWith(typed) && pos === ghost.at + typed.length && el.selectionEnd === pos) {
+      const rest = ghost.text.slice(typed.length);
+      this._ghost = rest.trim() ? { text: rest, at: pos } : null;
+    } else {
+      this._ghost = null;
+    }
+  }
+
+  /** Draw the suggestion into the mirror, after the text of its line. The
+   *  textarea never holds it; only the mirror shows it. */
+  _attachGhost() {
+    this.mirror.querySelector(".ghost")?.remove();
+    const ghost = this._ghost;
+    if (!ghost) return;
+    let line = 0;
+    const text = this.input.value;
+    for (let i = text.indexOf("\n"); i !== -1 && i < ghost.at; i = text.indexOf("\n", i + 1)) line++;
+    const tx = this.mirror.children[line]?.querySelector(".tx");
+    if (!tx) return;
+    const span = document.createElement("span");
+    span.className = "ghost";
+    span.textContent = ghost.text;
+    tx.append(span);
+  }
+
+  _clearGhost() {
+    this._ghost = null;
+    this._ghostNext = null;
+    this.mirror.querySelector(".ghost")?.remove();
   }
 
   _render() {
@@ -268,6 +371,7 @@ export class MarkdownEditor {
     this._curLine = -1;
     this._markCurrentLine();
     this._refreshHeadings();
+    this._attachGhost();
   }
 
   cursorInfo() {
@@ -287,6 +391,8 @@ export class MarkdownEditor {
   }
 
   _updateCursor() {
+    const ghost = this._ghost;
+    if (ghost && (this.input.selectionStart !== ghost.at || this.input.selectionEnd !== ghost.at)) this._clearGhost();
     this._markCurrentLine();
     this._updateChapter();
     this.onCursor?.(this.cursorInfo());
@@ -585,6 +691,17 @@ export class MarkdownEditor {
   _keydown(e) {
     if (e.isComposing) return;
     const m = mod(e);
+    if (this._ghost) {
+      if (e.key === "Tab" && !m && !e.altKey && !e.shiftKey) { e.preventDefault(); this.acceptGhost(); return; }
+      if (e.key === "ArrowRight" && m && !e.altKey && !e.shiftKey) { e.preventDefault(); this.acceptGhost(true); return; }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this._clearGhost(); return; }
+    }
+    if (e.key === " " && m && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      clearTimeout(this._suggestTimer);
+      this._askSuggestion(true);
+      return;
+    }
     if (m && !e.altKey && !e.shiftKey) {
       const key = e.key.toLowerCase();
       const actions = {

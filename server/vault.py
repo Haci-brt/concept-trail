@@ -178,7 +178,7 @@ class Vault:
         counts: Counter = Counter()
         for path in self.iter_notes():
             try:
-                counts.update(note_tags(path.read_text(encoding="utf-8", errors="ignore")))
+                counts.update(note_tags(path.read_text(encoding="utf-8-sig", errors="ignore")))
             except OSError:
                 continue
         return [{"tag": tag, "count": n} for tag, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
@@ -192,7 +192,7 @@ class Vault:
             wanted = query[1:].casefold()
             for path in self.iter_notes():
                 try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    text = path.read_text(encoding="utf-8-sig", errors="ignore")
                 except OSError:
                     continue
                 if wanted in note_tags(text):
@@ -202,7 +202,7 @@ class Vault:
         needle = fold(query)
         for path in self.iter_notes():
             try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
+                text = path.read_text(encoding="utf-8-sig", errors="ignore")
             except OSError:
                 continue
             idx = fold(text).find(needle)
@@ -223,9 +223,9 @@ class Vault:
     def read_note(self, rel: str) -> dict:
         path = self.note_path(rel)
         try:
-            content = path.read_text(encoding="utf-8")
+            content = path.read_text(encoding="utf-8-sig")
         except UnicodeDecodeError:
-            content = path.read_text(encoding="utf-8", errors="replace")
+            content = path.read_text(encoding="utf-8-sig", errors="replace")
         return {"path": self.rel(path), "name": path.stem, "content": content,
                 "mtime": path.stat().st_mtime}
 

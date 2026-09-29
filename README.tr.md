@@ -19,6 +19,9 @@ Yazmaya **15 saniye ara verdiğinde** ya da bir şey **yapıştırdığında** a
 
 **Kaç soru sorulacağına model karar verir.** Sorulara nasıl yetiştiğin ona bildirilir: kaç soru bekliyor, en eskisi ne kadardır bekliyor, son zamanlarda kaçını sonuçlandırdın. Tempoyu buna göre ayarlar: konuşulacak çok şey varsa ve sen cevap verdikçe sormaya devam eder; cevapsız sorular birikirse yalnız önemli olanı sorar. Sohbette de bir cevabın yeterince net olduğuna aynı şekilde kendisi karar verir. Sabit bir soru sınırı yok; kod yalnızca bozulmuş bir modele karşı bir sigorta tutar.
 
+### Yazarken tamamlama
+Kod editörlerindeki satır içi öneriler gibi: bir satırın sonunda bir an durduğunda devamı imlecin önünde soluk yazıyla, notunun kendi dili ve üslubuyla belirir. **Tab** hepsini alır, **Ctrl+→** bir kelimesini alır, **Esc** kapatır, **Ctrl+Space** hemen ister; gösterdiği harfleri yazmaya devam edersen gerisi durur. Nota yalnızca senin tuşunla, geri alınabilir tek bir adım olarak girer. Model ayarlarında kendi görevi vardır (*Yazarken tamamlama*; hızlı ve ucuz bir model yeter, boş bırakılırsa not izleme modeli), durum çubuğunda açma/kapama düğmesi vardır; cevap verecek model yoksa sessiz kalır. Gizli notlar burada da yalnız yerel modellere gider.
+
 ### Sorular genişten dara: karar merdiveni
 Bir yazılım notu dört basamaktan geçer; asistan yalnızca bulunduğu basamağın açık kararlarını sorar:
 

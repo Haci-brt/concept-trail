@@ -31,6 +31,9 @@ When you **pause for 15 seconds** or **paste something**, the assistant quietly 
 
 **How many questions to ask is the model's call.** It is told how you are keeping up — how many questions wait, how long the oldest has waited, how many you settled lately — and paces itself: while there is much to talk through and you keep answering, it keeps asking; when unanswered questions pile up, it asks only what matters. In a chat it decides the same way when an answer is clear enough. There is no fixed cap; the code only keeps a fuse against a model gone wrong.
 
+### Completion while writing
+Like a code editor's inline suggestions: pause for a moment at the end of a line and the rest of it appears in faint text after the cursor, in your note's own language and voice. **Tab** takes it, **Ctrl+→** takes one word, **Esc** drops it, **Ctrl+Space** asks at once; typing the very letters it shows keeps the rest. It is only ever your key that puts it into the note, as one step you can undo. It has its own job in the model settings (*Completion while writing*; a fast, cheap model is enough — left empty, the note-watch model does it), a switch in the status bar, and it stays silent when no model can answer. Private notes stay on local models here too.
+
 ### Questions go from broad to narrow: the decision ladder
 A software note climbs four rungs, and the assistant only asks about the open decisions of the rung it is on:
 

@@ -44,6 +44,7 @@ const state = {
   view: "editor",
   preview: "preview",
   liveWatch: true,
+  inlineComplete: true,
   split: 0.5,
   sidebar: true,
   panel: true,
@@ -289,9 +290,12 @@ function buildChrome() {
     <span class="grow"></span>
     <button class="item watch" id="stWatch" title="Canlı izleme: 15 saniye durduğunda ya da bir şey yapıştırdığında not sessizce incelenir. Tıklayıp aç/kapat."><span class="dot"></span><span class="lbl"></span></button>
     <span class="sepv"></span>
+    <button class="item watch" id="stComplete" title="Yazarken tamamlama: satır sonunda bir an durunca devamı soluk yazıyla önerilir. Tab alır, Ctrl+→ bir kelime alır, Esc kapatır, Ctrl+Space hemen ister. Tıklayıp aç/kapat."><span class="dot"></span><span class="lbl"></span></button>
+    <span class="sepv"></span>
     <span class="item" id="stSaved"></span>
     <button class="item" id="stKeys" title="Klavye kısayolları">${icon("keyboard", 15)}</button>`;
   $("#stWatch").onclick = () => setLiveWatch(!state.liveWatch);
+  $("#stComplete").onclick = () => setInlineComplete(!state.inlineComplete);
   $("#stKeys").onclick = shortcutsDialog;
 
   $("#settingsBtn").onclick = () => settings.open();
@@ -406,6 +410,10 @@ function renderStatus() {
   watch.classList.toggle("on", state.liveWatch && state.model.model_up && state.connected);
   watch.classList.toggle("busy", Boolean(busyHere));
   watch.querySelector(".lbl").textContent = label;
+
+  const complete = $("#stComplete");
+  complete.classList.toggle("on", state.inlineComplete && state.model.model_up && state.connected);
+  complete.querySelector(".lbl").textContent = state.inlineComplete ? "Tamamlama açık" : "Tamamlama kapalı";
 }
 
 function renderModel() {
@@ -570,6 +578,7 @@ const saveSession = debounce(() => {
     view: state.view,
     preview: state.preview,
     liveWatch: state.liveWatch,
+    inlineComplete: state.inlineComplete,
     split: state.split,
     sidebar: state.sidebar,
     panel: state.panel,
@@ -790,6 +799,7 @@ function createTab(note) {
     onCursor: (c) => { if (tab.id === state.activeId) { state.cursor = c; renderStatus(); } },
     onAsk: () => analyze(tab, true),
     onScroll: () => { if (tab.id === state.activeId) syncPreviewScroll(tab); },
+    suggest: (before, after, signal) => suggestLine(tab, before, after, signal),
   });
   $("#editorHost").append(tab.editor.root);
   state.tabs.push(tab);
@@ -942,6 +952,24 @@ async function liveLook(tab) {
   try {
     await api.post("/api/assistant/analyze", { path: tab.path, content: tab.editor.value, force: false });
   } catch { /* best effort: the next pause tries again */ }
+}
+
+/** The rest of the line being written, from the "Yazarken tamamlama" model.
+ *  Nothing — not an error — whenever it is switched off or cannot answer. */
+async function suggestLine(tab, before, after, signal) {
+  if (!state.inlineComplete || !state.connected || !state.model.model_up || state.setupNeeded
+      || tab.id !== state.activeId || tab.closed) return "";
+  const { text } = await api.post("/api/complete", { path: tab.path, before, after }, { signal });
+  return text || "";
+}
+
+function setInlineComplete(on) {
+  state.inlineComplete = on;
+  if (!on) for (const tab of state.tabs) tab.editor?._clearGhost();
+  renderStatus();
+  toast(on ? "Yazarken tamamlama açık — satır sonunda bir an durunca devamı soluk yazıyla önerilir; Tab ile al."
+           : "Yazarken tamamlama kapalı.");
+  saveSession();
 }
 
 function setLiveWatch(on) {
@@ -1224,6 +1252,7 @@ function commands() {
     { label: "Açık notu araştır", icon: "search", action: () => research.open() },
     { label: "Master prompt hazırla", icon: "wand", hint: "Ctrl Shift M", action: () => openMaster() },
     { label: state.liveWatch ? "Canlı izlemeyi kapat" : "Canlı izlemeyi aç", icon: state.liveWatch ? "eyeOff" : "eye", action: () => setLiveWatch(!state.liveWatch) },
+    { label: state.inlineComplete ? "Yazarken tamamlamayı kapat" : "Yazarken tamamlamayı aç", icon: "sparkle", action: () => setInlineComplete(!state.inlineComplete) },
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
     { label: "Modeli başlat", icon: "play", action: () => launchModel() },
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
@@ -1396,6 +1425,7 @@ async function boot() {
 
   state.preview = ["preview", "source", "hidden"].includes(session.preview) ? session.preview : "preview";
   state.liveWatch = session.liveWatch ?? true;
+  state.inlineComplete = session.inlineComplete ?? true;
   state.split = typeof session.split === "number" ? session.split : 0.5;
   state.sidebar = session.sidebar ?? true;
   state.panel = session.panel ?? true;

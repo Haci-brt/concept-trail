@@ -4,8 +4,8 @@
 
 export const clientId = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
 
-async function request(method, url, body) {
-  const opts = { method, headers: { "X-Fikir": "1", "X-Client-Id": clientId } };
+async function request(method, url, body, signal) {
+  const opts = { method, headers: { "X-Fikir": "1", "X-Client-Id": clientId }, signal };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -23,7 +23,7 @@ async function request(method, url, body) {
 
 export const api = {
   get: (url, params) => request("GET", params ? `${url}?${new URLSearchParams(params)}` : url),
-  post: (url, body = {}) => request("POST", url, body),
+  post: (url, body = {}, { signal } = {}) => request("POST", url, body, signal),
   put: (url, body = {}) => request("PUT", url, body),
 };
 

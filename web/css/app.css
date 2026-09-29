@@ -369,6 +369,12 @@ body {
 .md-input::placeholder { color: var(--text-faint); }
 
 .ln { position: relative; min-height: var(--lh); padding-left: var(--gutter); }
+/* a suggested rest of the line: faint, with the key that takes it */
+.md-mirror .ghost { color: var(--text-faint); opacity: .85; }
+.md-mirror .ghost::after {
+  content: "Tab"; margin-left: 8px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 4px;
+  font: 600 10px/16px var(--font-ui); vertical-align: 1px; opacity: .8;
+}
 .ln::before {
   content: attr(data-n);
   position: absolute;

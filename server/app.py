@@ -157,6 +157,12 @@ class PreferencesBody(BaseModel):
     assistant_language: str | None = None
 
 
+class CompleteBody(BaseModel):
+    path: str
+    before: str
+    after: str = ""
+
+
 class SetupBody(BaseModel):
     preset: str
     model: str | None = None
@@ -400,6 +406,22 @@ def create_app(settings: Settings) -> FastAPI:
         broker.publish("providers", result)
         broker.publish("status", assistant.status())
         return result
+
+    # ---- the rest of the line, while writing ----
+    @app.post("/api/complete")
+    async def complete_line(body: CompleteBody):
+        """A quiet feature: without a model, over budget or on any failure the
+        editor simply shows no suggestion, never an error."""
+        try:
+            provider = assistant.provider_for("complete", body.path)
+        except ApiError:
+            return {"text": ""}
+        try:
+            text = await asyncio.to_thread(llm_client.inline_completion, body.before[-4000:], body.after[:1000],
+                                           provider, assistant.budget.record)
+        except Exception:
+            return {"text": ""}
+        return {"text": text}
 
     # ---- first start: connecting a model ----
     @app.get("/api/setup")

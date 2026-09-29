@@ -1051,6 +1051,108 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     return parse_ladder(reply, open_decisions, grounded_text) if mode == "yazilim" else parse_response(reply)
 
 
+# ---------------------------------------------------------------- inline completion
+# Like a code editor's: the writer pauses at the end of a line, the rest of
+# the line appears in faint text, Tab takes it. The prompt is in English and
+# asks for the writer's own language — it continues their words, it does not
+# talk to them. The model writes the words before the cursor out again and
+# finishes them; the continuation is what it added. Asked for the
+# continuation alone (measured on Qwen3-4B), it glued words together —
+# "work" + "smoothly" — and opened with "..."; repeating the words, it spaces
+# and joins them the way the language does, mid-word too.
+INLINE_PROMPT = (
+    "/no_think\n"
+    "You are the autocomplete of a notebook where someone plans a software idea. You get the note with the "
+    "cursor marked <cursor/>, and the words just before the cursor. Reply with ONLY those words, finished: "
+    "write them out again exactly as they are, then add what naturally comes next — the rest of the sentence "
+    "or list item, at most about 15 more words. Use the writer's own language, voice and markdown; never "
+    "translate. One line, no quotes, no explanations. If nothing natural follows, write the words unchanged."
+)
+INLINE_MAX_TOKENS = 96
+INLINE_TIMEOUT_S = 10.0
+INLINE_MAX_CHARS = 160
+INLINE_ECHO_CHARS = 120      # a longer line: only its last sentence is written out again
+_ECHO_TAGS = re.compile(r"</?(?:before|after|cursor)\s*/?>", re.IGNORECASE)
+_LINE_MARKERS = re.compile(r"^\s*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+|#{1,6}\s+|>\s?)")
+
+
+def words_before_cursor(before: str) -> str:
+    """What the model writes out again: the line up to the cursor — or, for a
+    long line, its last sentence (a paragraph repeated would be slow and dear)."""
+    line = before[before.rfind("\n") + 1:]
+    if len(line) <= INLINE_ECHO_CHARS:
+        return line
+    cut = max(line.rfind(". "), line.rfind("! "), line.rfind("? "), line.rfind("; "))
+    if cut != -1 and len(line) - cut - 2 <= INLINE_ECHO_CHARS:
+        return line[cut + 2:]
+    return line[-INLINE_ECHO_CHARS:]
+
+
+def _continuation(out: str, words: str) -> str:
+    """What the model added after the words it was given."""
+    if not words.strip():
+        return out
+    if out.startswith(words):
+        return out[len(words):]
+    squeeze = lambda s: " ".join(s.split())
+    target = squeeze(words)
+    for i in range(len(target), min(len(out), len(target) * 2 + 8) + 1):
+        if squeeze(out[:i]) == target and (i == len(out) or out[i - 1] != " " or not target.endswith(" ")):
+            return out[i:]
+    core = _LINE_MARKERS.sub("", words)                  # it left out the "- " of a list item
+    if core.strip() and out.startswith(core):
+        return out[len(core):]
+    anchor = words.rstrip()[-12:]
+    if len(anchor) >= 6 and anchor in out:              # it rewrote the start, kept the end
+        return out[out.rindex(anchor) + len(anchor):]
+    # it wrote only the continuation after all: a separate word needs a space
+    if words[-1:].isalnum() and out[:1].isalnum():
+        return " " + out
+    return out
+
+
+def clean_completion(text: str, before: str, after: str = "") -> str:
+    """What the model wrote, made into something that can follow the cursor:
+    one line, only what it added, no wrapping quotes, cut at a word. Empty when
+    nothing useful is left."""
+    text = _ECHO_TAGS.sub("", text or "")
+    if THINK_OPEN.search(text):
+        text = _strip_think(text)            # it trims: only when there is a block to cut
+    text = text.lstrip("\r\n").split("\n", 1)[0].rstrip()
+    stripped = text.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in "\"'`«»":
+        lead = text[: len(text) - len(text.lstrip())]
+        text = lead + stripped[1:-1]
+    text = _continuation(text, words_before_cursor(before))
+    text = re.sub(r"^(\s*)(?:\.\.\.|…)\s*", r"\1", text)     # an opening ellipsis is filler
+    # it finishes the sentence being written, it does not start the next one
+    end = re.search(r"[.!?…](?=\s+\S)", text)
+    if end:
+        text = text[: end.end()]
+    # a space already before the cursor needs none after it
+    if before.endswith((" ", "\t")):
+        text = text.lstrip()
+    if not text.strip() or not any(ch.isalnum() for ch in text):
+        return ""
+    if after.strip() and after.lstrip().startswith(text.strip()):
+        return ""                                   # already written right after the cursor
+    if len(text) > INLINE_MAX_CHARS:
+        cut = text[:INLINE_MAX_CHARS]
+        text = cut[: cut.rfind(" ")] if " " in cut.strip() else cut
+    return text
+
+
+def inline_completion(before: str, after: str, provider=None, on_usage=None) -> str:
+    words = words_before_cursor(before)
+    messages = [{"role": "system", "content": INLINE_PROMPT},
+                {"role": "user", "content": f"<before>{before[-1500:]}</before><cursor/><after>{after[:300]}</after>"
+                                            f"\n\nWords before the cursor: {words}"}]
+    # one try: a pause that has passed is not worth a retry
+    raw = _complete_once(messages, temperature=0.2, max_tokens=INLINE_MAX_TOKENS, provider=provider,
+                         timeout=INLINE_TIMEOUT_S, on_usage=on_usage)
+    return clean_completion(raw, before, after)
+
+
 def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=None, on_usage=None,
                asked: int = 0) -> str:
     """Multi-turn conversation about a question the assistant raised. asked:
