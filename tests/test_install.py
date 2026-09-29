@@ -1,4 +1,5 @@
 """The one-command install and the desktop launcher."""
+import os
 import shutil
 import subprocess
 import sys
@@ -70,3 +71,17 @@ def test_without_a_desktop_window_the_app_opens_in_the_browser(monkeypatch):
     opened = []
     assert main.open_window("http://127.0.0.1:8765/", hud=False, opener=opened.append) is None
     assert opened == ["http://127.0.0.1:8765/"]
+
+
+def test_a_turkish_message_does_not_fail_on_an_english_windows(tmp_path):
+    """What GitHub's Windows runner hit: stdout a pipe in cp1252, and "Kısayol"."""
+    script = ("import sys; sys.path.insert(0, sys.argv[1]); import make_shortcut; "
+              "make_shortcut.tolerant_output(); print('Kısayol: ı ş ğ İ')")
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    env.pop("PYTHONUTF8", None)
+    done = subprocess.run([sys.executable, "-c", script, str(ROOT / "scripts")], env=env, capture_output=True)
+    assert done.returncode == 0, done.stderr.decode("cp1252", "replace")
+    assert done.stdout.decode("cp1252").startswith("K?sayol")
+    # and without it, the very failure
+    bare = subprocess.run([sys.executable, "-c", "print('Kısayol')"], env=env, capture_output=True)
+    assert bare.returncode != 0 and b"UnicodeEncodeError" in bare.stderr

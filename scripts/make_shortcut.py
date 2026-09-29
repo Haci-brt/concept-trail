@@ -105,7 +105,20 @@ def macos(vault: Path | None, _start_menu: bool) -> list[str]:
     return [str(path)]
 
 
+def tolerant_output() -> None:
+    """Printing Turkish must never fail. Into a pipe (the installer's, a CI
+    runner's) Python writes in the system code page, and on an English Windows
+    cp1252 has no "ı": the shortcuts were made, then one print crashed the
+    script and failed the whole install (GitHub Actions, 2026-09-29)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main() -> None:
+    tolerant_output()
     parser = argparse.ArgumentParser(description="Concept Trail kısayolu oluşturur")
     parser.add_argument("--vault", type=Path, help="notların klasörü (verilmezse main.py'nin varsayılanı: ./notes)")
     parser.add_argument("--no-start-menu", action="store_true", help="yalnız masaüstüne koy")

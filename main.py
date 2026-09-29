@@ -111,6 +111,13 @@ def main():
     from server.providers import config_dir
 
     attach_log_when_windowless(config_dir() / "concept-trail.log")
+    # its messages are Turkish; redirected on an English Windows, the code page
+    # cannot write them, and a print must not stop the app (see make_shortcut)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     args = parse_args()
     server = None
     port = args.port
