@@ -153,9 +153,9 @@ export class Palette {
       }
       const folder = it.path.includes("/") ? it.path.slice(0, it.path.lastIndexOf("/")) : "";
       return `<div class="pal-item${on}" data-i="${i}" role="option">${icon("file", 16)}
-        <div class="main"><div class="name">${highlight(`${it.name}.md`, it.kind === "note" ? q : "")}</div>
+        <div class="main" translate="no"><div class="name">${highlight(`${it.name}.md`, it.kind === "note" ? q : "")}</div>
           ${it.snippet ? `<div class="snippet">${esc(it.snippet)}</div>` : ""}</div>
-        <span class="path">${esc(folder ? `${folder} / ${it.name}.md` : `${it.name}.md`)}</span>${enter}</div>`;
+        <span class="path" translate="no">${esc(folder ? `${folder} / ${it.name}.md` : `${it.name}.md`)}</span>${enter}</div>`;
     }).join("");
     this.list.querySelector(".on")?.scrollIntoView({ block: "nearest" });
   }

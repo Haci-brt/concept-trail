@@ -139,9 +139,12 @@ assets/icon/  app icon: the concept-trail.png master; build_icons.py makes every
 scripts/      make_shortcut.py: desktop / Start menu shortcut
 docs/         the introduction, with a worked example (INTRODUCTION.md, TANITIM.md)
 install.ps1   one-command install for Windows; install.sh for macOS / Linux
-tests/        pytest; tests/manual_research_benchmark.py measures live research
+tests/        pytest; tests/e2e runs the real app in a real browser
+testkit/      the test environment (python -m testkit): a stand-in model and sample notes
 ```
 
 ```bash
 python -m pytest tests
 ```
+
+**Testing it yourself:** `python -m testkit` opens a separate Concept Trail with sample notes and a stand-in model — no key, no bill, your own notes untouched. [docs/TEST.md](docs/TEST.md) has the options, the automated browser tests and a step-by-step checklist.

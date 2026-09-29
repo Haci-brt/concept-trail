@@ -127,9 +127,12 @@ assets/icon/  uygulama logosu: ana görsel concept-trail.png; build_icons.py bü
 scripts/      make_shortcut.py: masaüstü / Başlat menüsü kısayolu
 docs/         tanıtım, baştan sona bir örnekle (TANITIM.md, INTRODUCTION.md)
 install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
-tests/        pytest; tests/manual_research_benchmark.py canlı araştırma ölçümü
+tests/        pytest; tests/e2e gerçek tarayıcıda uçtan uca testler
+testkit/      test ortamı (python -m testkit): sahte model ve örnek notlar
 ```
 
 ```bash
 python -m pytest tests
 ```
+
+**Kendin denemek için:** `python -m testkit`, örnek notlarla ve sahte bir modelle ayrı bir Concept Trail açar — anahtar ve ücret gerekmez, kendi notlarına dokunulmaz. Seçenekler, otomatik tarayıcı testleri ve adım adım kontrol listesi: [docs/TEST.md](docs/TEST.md).

@@ -74,9 +74,10 @@ jobs:
           cat "$RUNNER_TEMP/gui.log"
           xwininfo -root -tree | grep '"Concept Trail"'
 
-      - name: Testler
+      - name: Testler (tarayıcı testleri Ubuntu'da)
         run: |
           python -m pip install --quiet -r requirements.txt pytest anyio
+          if [ "$RUNNER_OS" = "Linux" ]; then python -m playwright install --with-deps chromium; fi
           python -m pytest tests -q
 
   windows:
@@ -119,7 +120,8 @@ jobs:
           if (Test-Path $config) { Get-Content $config -Tail 40 }
           Get-ChildItem (Join-Path $env:LOCALAPPDATA "Programs\ConceptTrail") -ErrorAction SilentlyContinue | Select-Object Name
 
-      - name: Testler
+      - name: Testler (tarayıcı testleri dahil)
         run: |
           python -m pip install --quiet -r requirements.txt pytest anyio
+          python -m playwright install chromium
           python -m pytest tests -q

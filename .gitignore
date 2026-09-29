@@ -9,3 +9,6 @@ projects/
 
 # the notes vault (private notes, assistant history, trash)
 notes/
+
+# the test environment (python -m testkit)
+.sandbox/

@@ -104,7 +104,7 @@ export class Sidebar {
         const pad = 6 + depth * 14;
         if (item.type === "dir") {
           const open = this.expanded.has(item.path);
-          rows.push(`<div class="vt-row${open ? " open" : ""}" role="treeitem" aria-expanded="${open}" draggable="true"
+          rows.push(`<div class="vt-row${open ? " open" : ""}" role="treeitem" aria-expanded="${open}" draggable="true" translate="no"
               data-kind="dir" data-path="${esc(item.path)}" data-drop="${esc(item.path)}" style="padding-left:${pad}px">
             <span class="caret">${icon("chevronRight", 13)}</span>${icon(open ? "folder" : "folder", 16, "kind")}
             <span class="name">${esc(item.name)}</span></div>`);
@@ -113,7 +113,7 @@ export class Sidebar {
             else rows.push(`<div class="vt-empty" style="padding-left:${pad + 36}px">Boş klasör</div>`);
           }
         } else {
-          rows.push(`<div class="vt-row${item.path === this.active ? " active" : ""}" role="treeitem" draggable="true"
+          rows.push(`<div class="vt-row${item.path === this.active ? " active" : ""}" role="treeitem" draggable="true" translate="no"
               data-kind="note" data-path="${esc(item.path)}" title="${esc(item.path)}" style="padding-left:${pad + 16}px">
             ${icon("file", 15, "kind")}<span class="name">${esc(item.name)}<span class="ext">.md</span></span></div>`);
         }

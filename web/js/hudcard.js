@@ -78,7 +78,7 @@ export class HudCard {
   }
 
   _note(ev) {
-    return `<div class="hud-note">${icon("file", 12)}${esc(ev.note)}</div>`;
+    return `<div class="hud-note" translate="no">${icon("file", 12)}${esc(ev.note)}</div>`;
   }
 
   _question(ev) {
@@ -89,8 +89,8 @@ export class HudCard {
         <div class="hud-glyph">${icon(kind.icon, 18)}</div>
         <div class="hud-text">
           <div class="hud-eyebrow">${kind.label} <span class="spark">✦</span>${this._count()}</div>
-          <div class="hud-title">${esc(title)}</div>
-          ${sub ? `<div class="hud-sub">${esc(sub)}</div>` : ""}
+          <div class="hud-title" translate="no">${esc(title)}</div>
+          ${sub ? `<div class="hud-sub" translate="no">${esc(sub)}</div>` : ""}
           ${this._note(ev)}
         </div>
       </div>
@@ -109,7 +109,7 @@ export class HudCard {
         <div class="hud-glyph">${icon("lightbulb", 17)}</div>
         <div class="hud-text">
           <div class="hud-eyebrow">Nota eklensin mi?${this._count()}</div>
-          <div class="hud-sub">${esc(ev.text)}</div>
+          <div class="hud-sub" translate="no">${esc(ev.text)}</div>
           ${this._note(ev)}
         </div>
       </div>
@@ -128,8 +128,8 @@ export class HudCard {
         <div class="hud-glyph">${icon("pencil", 17)}</div>
         <div class="hud-text">
           <div class="hud-eyebrow">Düzenleme önerisi${this._count()}</div>
-          <div class="hud-diff"><del><span>${esc(ev.original)}</span></del><ins>${esc(ev.replacement)}</ins></div>
-          ${ev.reason ? `<div class="hud-sub">${esc(ev.reason)}</div>` : ""}
+          <div class="hud-diff" translate="no"><del><span>${esc(ev.original)}</span></del><ins>${esc(ev.replacement)}</ins></div>
+          ${ev.reason ? `<div class="hud-sub" translate="no">${esc(ev.reason)}</div>` : ""}
           ${this._note(ev)}
         </div>
       </div>
@@ -150,8 +150,8 @@ export class HudCard {
         <div class="hud-glyph">${icon("sparkle", 16)}</div>
         <div class="hud-text">
           <div class="hud-eyebrow"><span class="lbl">${writing ? "Asistan yazıyor" : "Asistan düşünüyor"}</span><span class="dots"></span></div>
-          <div class="hud-thought">${esc(this.thinking?.text || "Not inceleniyor")}</div>
-          ${note ? `<div class="hud-note">${icon("file", 12)}${esc(note)}</div>` : ""}
+          <div class="hud-thought"${this.thinking?.text ? ' translate="no"' : ""}>${esc(this.thinking?.text || "Not inceleniyor")}</div>
+          ${note ? `<div class="hud-note" translate="no">${icon("file", 12)}${esc(note)}</div>` : ""}
         </div>
       </div>
       <div class="hud-progress"></div>

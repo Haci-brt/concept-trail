@@ -469,7 +469,7 @@ function renderWelcome() {
       <button class="btn" data-act="search">${icon("search", 15)}Not ara <kbd>Ctrl P</kbd></button>
     </div>
     ${recent.length ? `<div class="recent"><h3>Son notlar</h3>${recent.map((n) => `
-      <button data-path="${esc(n.path)}">${icon("file", 15)}<span>${esc(n.name)}</span><span class="path">${esc(n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "")}</span></button>`).join("")}</div>` : ""}
+      <button data-path="${esc(n.path)}">${icon("file", 15)}<span translate="no">${esc(n.name)}</span><span class="path" translate="no">${esc(n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "")}</span></button>`).join("")}</div>` : ""}
   </div>`;
 }
 
