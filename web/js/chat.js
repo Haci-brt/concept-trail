@@ -22,6 +22,7 @@ const TOOL_LABELS = {
 };
 
 const toolLabel = (name) => TOOL_LABELS[name] || name;
+const threadKey = (path, nodeId) => `${path}\n${nodeId}`;
 
 export class ChatDrawer {
   constructor({ beforeSend }) {
@@ -29,6 +30,8 @@ export class ChatDrawer {
     this.path = null;
     this.nodeId = null;
     this.sending = false;
+    this.opens = 0;
+    this.drafts = new Map();    // unsent text per thread, so it never leaks into another
 
     this.el = html(`<aside class="chat" aria-label="Asistanla sohbet">
       <div class="chat-head">
@@ -79,42 +82,74 @@ export class ChatDrawer {
   get isOpen() { return this.el.classList.contains("open"); }
 
   async open(path, nodeId) {
+    this._stash();
     this.path = path;
     this.nodeId = nodeId;
+    // a later open (or a close) wins over this one's late answers
+    const seq = ++this.opens;
+    const current = () => seq === this.opens && this.path === path;
     this.el.querySelector(".note").textContent = path.split("/").pop();
     this.log.innerHTML = "";
+    this.input.value = this.drafts.get(threadKey(path, nodeId)) || "";
     this.el.classList.add("open");
+    this._autosize();
     this.input.focus();
     try {
       const { nodes } = await api.get("/api/assistant/nodes", { path });
+      if (!current()) return;
       const question = nodes.find((n) => n.id === nodeId);
       if (!question) throw new Error("Soru bulunamadı.");
       this._showLineage(nodes, question);
       this._setQuestion(question);
-      const thread = nodes.filter((n) => n.parentId === nodeId && n.type.startsWith("chat-"));
+      const thread = nodes.filter((n) => n.parentId === nodeId
+        && (n.type.startsWith("chat-") || n.type === "summary"));
+      // approving takes the proposal's history event, not its node
+      const events = thread.some((n) => n.type === "summary" && n.status === "pending")
+        ? await api.get("/api/assistant/history").catch(() => []) : [];
+      if (!current()) return;
       for (const n of thread) {
+        if (n.type === "summary") {
+          const event = events.find((e) => e.type === "summary" && e.path === path && e.node_id === n.id);
+          this._proposal({ id: event?.id, node_id: n.id, text: n.text }, n.status);
+          continue;
+        }
         if (n.tools?.length) this._provenance(n.tools);
         this._bubble(n.type === "chat-user" ? "user" : "assistant", n.text);
       }
       if (!thread.length) {
-        this.log.append(html('<div class="chat-empty">Soruya cevabını yaz. Asistan anlamadıysa tek bir soruyla netleştirir; anladığında notuna ne ekleyeceğini önerir — eklemeden önce senin onayını ister.</div>'));
+        this.log.append(html('<div class="chat-empty">Soruya cevabını yaz. Bilmiyorsan ya da fikir istersen seçenekler sunar; anlamadıysa bir soruyla netleştirir; bir karar verdiğinde notuna ne ekleyeceğini önerir — eklemeden önce senin onayını ister.</div>'));
       }
       this._scroll();
     } catch (err) {
+      if (!current()) return;
       toast(err.message, "error");
       this.close();
     }
   }
 
   close() {
+    this._stash();
     this.el.classList.remove("open");
     this.path = null;
     this.nodeId = null;
   }
 
+  /** Keep what was typed but not sent with the thread it was typed in. */
+  _stash() {
+    if (!this.path) return;
+    const key = threadKey(this.path, this.nodeId);
+    if (this.input.value) this.drafts.set(key, this.input.value);
+    else this.drafts.delete(key);
+  }
+
   /** Called when the server reports a node change (e.g. the model resolved this question). */
   nodeUpdated(path, node) {
-    if (path === this.path && node.id === this.nodeId) this._setQuestion(node);
+    if (path !== this.path) return;
+    if (node.id === this.nodeId) this._setQuestion(node);
+    // decided elsewhere (the side panel, the assistant card): no live buttons left behind
+    const card = node.type === "summary" && node.status !== "pending"
+      && this.log.querySelector(`.proposal[data-node="${CSS.escape(node.id)}"]`);
+    if (card && !card.matches(".done, .dropped")) this._settle(card, node.status === "approved");
   }
 
   _showLineage(nodes, question) {
@@ -163,9 +198,10 @@ export class ChatDrawer {
     return el;
   }
 
-  /** Nothing goes into the note until this is approved. */
-  _proposal(event) {
-    const card = html(`<div class="msg proposal" data-id="${esc(event.id)}">
+  /** Nothing goes into the note until this is approved. A settled one comes
+   *  back as it was left; one whose event is gone comes back without buttons. */
+  _proposal(event, status = "pending") {
+    const card = html(`<div class="msg proposal" data-id="${esc(event.id)}" data-node="${esc(event.node_id || "")}">
       <div class="p-head">${icon("lightbulb", 13)}Nota eklensin mi?</div>
       <div class="p-text"></div>
       <div class="p-actions">
@@ -174,15 +210,16 @@ export class ChatDrawer {
       </div>
     </div>`);
     card.querySelector(".p-text").textContent = event.text;
+    const settle = (approved) => this._settle(card, approved);
+    if (status !== "pending") settle(status === "approved");
+    else if (!event.id) card.querySelector(".p-actions").remove();
     card.addEventListener("click", async (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (!act) return;
       card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       try {
         await api.post("/api/assistant/hud", { event_id: event.id, action: act });
-        card.classList.add(act === "approve" ? "done" : "dropped");
-        card.querySelector(".p-actions").innerHTML =
-          act === "approve" ? "Nota eklendi." : "Nota eklenmedi.";
+        settle(act === "approve");
       } catch (err) {
         toast(err.message, "error");
         card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
@@ -190,6 +227,12 @@ export class ChatDrawer {
     });
     this.log.append(card);
     this._scroll();
+  }
+
+  _settle(card, approved) {
+    card.classList.add(approved ? "done" : "dropped");
+    const actions = card.querySelector(".p-actions") || card.appendChild(html('<div class="p-actions"></div>'));
+    actions.textContent = approved ? "Nota eklendi." : "Nota eklenmedi.";
   }
 
   /** Where a saved answer came from, shown when the thread is reopened. */
@@ -218,6 +261,7 @@ export class ChatDrawer {
     this.input.value = "";
     this._autosize();
     const { path, nodeId } = this;
+    this.drafts.delete(threadKey(path, nodeId));
     this._bubble("user", message);
     const pending = html(`<div class="msg assistant thinking"><div class="label">${icon("sparkle", 12)}<span class="txt">Asistan düşünüyor</span><span class="dots"></span></div><div class="body"></div></div>`);
     this.log.append(pending);
@@ -228,7 +272,9 @@ export class ChatDrawer {
     try {
       await this.beforeSend?.(path);
       await streamPost("/api/assistant/chat", { path, node_id: nodeId, message }, (u) => {
-        if (path !== this.path) return;
+        // another thread is showing, or this one was redrawn: the reply is saved
+        // on the server and comes back with the thread
+        if (path !== this.path || nodeId !== this.nodeId || !pending.isConnected) return;
         if (u.type === "tool") {
           // the writing branch replaces pending's contents, so .txt may be gone
           const label = pending.querySelector(".txt");
@@ -278,7 +324,7 @@ export class ChatDrawer {
     btn.innerHTML = `${icon("sparkle", 14)}Yazılıyor<span class="dots"></span>`;
     try {
       const { proposal } = await api.post("/api/assistant/summarize", { path, node_id: nodeId });
-      if (path === this.path && proposal) this._proposal(proposal);
+      if (path === this.path && nodeId === this.nodeId && proposal) this._proposal(proposal);
     } catch (err) {
       toast(err.message, "error");
     } finally {

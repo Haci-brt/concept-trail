@@ -281,7 +281,10 @@ kbd {
   line-height: 1.35;
   text-wrap: pretty;
 }
-.hud-sub { margin-top: 4px; color: var(--text-muted); font-size: 12.5px; line-height: 1.45; text-wrap: pretty; }
+.hud-sub { margin-top: 4px; color: var(--text-muted); font-size: 12.5px; line-height: 1.45; text-wrap: pretty; white-space: pre-line; }
+/* a long proposal scrolls inside the card, so its buttons stay in reach
+   (the desktop card's window stops growing at 640px) */
+.hud-sub, .hud-diff { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; }
 .hud-note {
   display: inline-flex;
   align-items: center;
@@ -313,6 +316,7 @@ kbd {
   border-radius: 6px;
   text-decoration: none;
   line-height: 1.4;
+  white-space: pre-line;
 }
 .hud-diff del { background: var(--red-soft); color: #fecaca; }
 .hud-diff del span { text-decoration: line-through; text-decoration-color: rgba(252, 165, 165, 0.6); }

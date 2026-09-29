@@ -47,8 +47,10 @@ def test_explicit_parent_is_persisted_and_invalid_parent_is_ignored(assistant):
 
 def test_fallback_uses_conversation_terms_but_section_alone_does_not_link(assistant):
     rel = note(assistant)
+    # still being talked about: the guess never hangs a question under an
+    # answered one (tests/test_question_scope.py)
     parent = assistant.notes.add_node(rel, "question", "GitHub depolarını nasıl araştıracağız?",
-                                      section="Araştırma", status="resolved")
+                                      section="Araştırma", status="open")
     assistant.notes.add_node(rel, "chat-user", "Lisans ve bakım durumuna bakacağım.",
                              parent_id=parent["id"])
     content = assistant.vault.read_note(rel)["content"]

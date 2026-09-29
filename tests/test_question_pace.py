@@ -115,7 +115,7 @@ async def test_a_chat_keeps_asking_past_three_while_the_model_wants_to(assistant
         assistant.notes.add_node(rel, "chat-assistant", f"netleştirme {i}?", parent_id=question["id"], mode="question")
     seen = {}
 
-    def reply(history, note, on_chunk=None, provider=None, on_usage=None, asked=0):
+    def reply(history, note, on_chunk=None, provider=None, on_usage=None, asked=0, wants_ideas=False):
         seen["asked"] = asked
         return "SORU: Rafı kim açıp kapatacak?"
 

@@ -122,7 +122,41 @@ def test_ids_the_model_made_up_are_ignored():
     raw = '{"ozet": "Kapsam daraldı.", "kararlar": ["platform", "hayali"], "sorular": ["q9"], "oneriler": []}'
     plan = llm_client.parse_direction_plan(raw, {"platform": "Platform"}, {"q1": "soru"}, {})
     assert plan == {"summary": "Kapsam daraldı.", "update": {}, "reopen": ["platform"],
-                    "drop_questions": [], "drop_proposals": []}
+                    "drop_questions": [], "drop_proposals": [], "ask": []}
+
+
+def test_the_questions_a_new_course_raises_are_read_once_and_briefly():
+    raw = ('{"ozet": "Araçlar abonelikle, ekrandan yönetilecek.", "yeni_sorular": ['
+           '"Hangi abonelikli araçları yöneteceksin", "Hangi abonelikli araçları yöneteceksin?", '
+           '"Veriler nerede duracak?", "kısa", {"soru": "Araçlar aynı dosyaya yazarsa ne olacak?"}]}')
+    plan = llm_client.parse_direction_plan(raw, {}, {"q4": "[veri] Veriler nerede duracak?"}, {})
+    # the question already waiting is not asked twice; at most two, each a question
+    assert plan["ask"] == ["Hangi abonelikli araçları yöneteceksin?", "Araçlar aynı dosyaya yazarsa ne olacak?"]
+
+
+@pytest.mark.anyio
+async def test_a_correction_that_stales_nothing_still_asks_about_the_new_course(writer, monkeypatch):
+    """Seen by the writer: a correction left every question standing, the
+    ladder let no pass ask about the new course, and nothing changed at all."""
+    assistant, rel = writer
+    keep = assistant.notes.add_node(rel, "question", "Projeyi kim kullanacak?", status="open", kind="kullanici")
+    monkeypatch.setattr(llm_client, "plan_direction", lambda *a, **k: llm_client.parse_direction_plan(
+        '{"ozet": "İki aracı ekrandan yöneteceğiz.", "guncelle": {}, "kararlar": [], "sorular": [], '
+        '"oneriler": [], "yeni_sorular": ["Hangi abonelikli araçları yöneteceksin?", '
+        '"Araçlar aynı dosyaya yazarsa ne olacak?"]}', {}, {keep["id"]: keep["text"]}, {}))
+    preview = await assistant.preview_direction(rel, "diger", "Araçları computer use ile yönetsin.")
+    assert [q["id"] for q in preview["ask"]] == ["yeni1", "yeni2"]
+    assert preview["items"]["yeni1"] == "Hangi abonelikli araçları yöneteceksin?"
+    assert not [n for n in assistant.notes.load(rel)["nodes"] if n.get("kind") == "yon"]  # not before approval
+
+    # the writer unticked the second one
+    plan = {**preview, "ask": [preview["ask"][0]["text"]]}
+    result = assistant.set_direction(rel, "diger", "Araçları computer use ile yönetsin.", plan)
+    asked = [n for n in assistant.notes.load(rel)["nodes"] if n.get("kind") == "yon"]
+    assert result["asked"] == 1 and [n["text"] for n in asked] == ["Hangi abonelikli araçları yöneteceksin?"]
+    assert asked[0]["status"] == "open" and assistant.notes.find_node(rel, keep["id"])["status"] == "open"
+    assert any(kind == "node" and data["node"]["id"] == asked[0]["id"] for kind, data in assistant.broker.events)
+    assert any(e["type"] == "question" and e.get("node_id") == asked[0]["id"] for e in assistant.history.items)
 
 
 @pytest.mark.anyio

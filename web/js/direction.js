@@ -114,7 +114,8 @@ export class DirectionDialog {
       ${group("Yeniden sorulacak kararlar", this.plan.reopen)}
       ${group("Kapanacak sorular", this.plan.drop_questions)}
       ${group("Kaldırılacak öneriler", this.plan.drop_proposals)}
-      ${!Object.keys(this.plan.update || {}).length && !this.plan.reopen.length && !this.plan.drop_questions.length && !this.plan.drop_proposals.length
+      ${group("Hemen sorulacak yeni sorular", (this.plan.ask || []).map((q) => q.id))}
+      ${!Object.keys(this.plan.update || {}).length && !this.plan.reopen.length && !this.plan.drop_questions.length && !this.plan.drop_proposals.length && !(this.plan.ask || []).length
         ? "<p class=\"direction-none\">Verilmiş kararlar ve bekleyen sorular bu yönle çelişmiyor; hepsi korunacak.</p>" : ""}
       <p class="direction-hint">İşaretini kaldırdığın kalem olduğu gibi kalır. Sonraki sorular bu yöne göre gelecek.</p>`;
     review.hidden = false;
@@ -156,6 +157,7 @@ export class DirectionDialog {
       reopen: this.plan.reopen.filter((id) => kept.has(id)),
       drop_questions: this.plan.drop_questions.filter((id) => kept.has(id)),
       drop_proposals: this.plan.drop_proposals.filter((id) => kept.has(id)),
+      ask: (this.plan.ask || []).filter((q) => kept.has(q.id)).map((q) => q.text),
     };
     try {
       const result = await api.post("/api/assistant/direction", {

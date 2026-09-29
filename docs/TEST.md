@@ -84,6 +84,10 @@ Test ortamında sırayla dene. Her maddede **ne yapacağın → ne görmen gerek
 **Karar merdiveni**
 - [ ] Bitki hatırlatıcı: sorular Kapsam basamağından (kullanıcı, platform, çalışma ortamı).
 - [ ] Bir soruya panelde tek satırla cevap ver → "Nota eklensin mi?" → Onayla → cümle notta; Vazgeç → notta hiçbir şey değişmez.
+- [ ] Aynısını Fikir ağacı görünümünde, sohbet kutusuna tıklıyken yap → cümle nota girer, sohbet kutusu boş kalır.
+- [ ] Sohbette "bilmiyorum" ya da "fikrin var mı" yaz → asistan artıları/eksileriyle seçenekler sunar, notuna hiçbir şey önermez; birini seçince ("ilkini yapalım") onu karar olarak önerir.
+- [ ] Bir soruda yazıp göndermeden başka bir sorunun sohbetine geç → kutu boş; geri dön → yazdığın duruyor.
+- [ ] Bir öneriyi onaylamadan sohbeti kapat, yeniden aç → "Nota eklensin mi?" kartı hâlâ orada.
 - [ ] Yol haritası kartında karar çipleri dolar.
 - [ ] Harcama takibi: notta yazan kararlar sorulmaz; sorular Mimari basamağından.
 
@@ -99,6 +103,7 @@ Test ortamında sırayla dene. Her maddede **ne yapacağın → ne görmen gerek
 
 **Rotayı düzelt**
 - [ ] Bir notta "Rotayı düzelt" → bir düzeltme yaz → değişecekleri gösteren özet → onaylamadan hiçbir şey değişmez.
+- [ ] Özette "Hemen sorulacak yeni sorular" var; onaylayınca bu sorular panelde "Yeni yön" etiketiyle hemen belirir.
 
 **Fikir ağacı** (Büyük ağaç → Fikir ağacı)
 - [ ] Yıldızlar merkezden dışa doğru tutuşur, ipler çizilerek uzar.

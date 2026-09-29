@@ -568,6 +568,8 @@ body {
 /* ---------- right panel ---------- */
 .rightpanel { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; overflow: hidden; }
 .hud-slot:empty { display: none; }
+/* the list under it shows the whole text too: the card leaves it room */
+.hud-slot .hud-sub, .hud-slot .hud-diff { max-height: 150px; }
 .history { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 .history-head { display: flex; align-items: center; gap: 9px; height: 52px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--border-soft); }
 .history-head .title { flex: 1; font-size: 13px; font-weight: 600; }
@@ -638,7 +640,16 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.h-item.open .h-text { -webkit-line-clamp: 4; color: var(--text); }
+.h-item.open .h-text { color: var(--text); }
+/* what waits on you is read in full — a proposal goes into the note word for word */
+.h-item.open .h-text, .h-item:has(> .h-actions) .h-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 18em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-line;
+}
 .h-meta { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .h-meta .note { color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-item .h-actions { display: none; gap: 4px; margin-left: auto; }

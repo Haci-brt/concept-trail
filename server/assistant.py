@@ -28,7 +28,7 @@ from server.budget import Budget
 from server.providers import ProviderRegistry
 from server.settings import LAUNCH_SCRIPTS
 from server.store import MAX_ASSISTANT_TEXTS, now_iso
-from server.vault import fold, split_frontmatter
+from server.vault import fold, plain, split_frontmatter
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 
@@ -98,9 +98,19 @@ def _same_topic(new: set[str], old: set[str]) -> bool:
     return shared >= 2 and shared / min(len(new), len(old)) >= 0.5
 
 
+# "yoksa" and "olacak" are in every either-or question: codlaud.md's data
+# question hung under "Projeyi kim kullanacak?" on "yoksa" and "kullan" alone
 _QUESTION_FILLER = {"hangi", "nasil", "neden", "niye", "olara", "olarak", "icin",
                     "bunun", "bunla", "bunu", "daha", "sonra", "neden", "fikri",
-                    "fikir", "proje", "baska", "hangi", "sence", "olmal", "yapar"}
+                    "fikir", "proje", "baska", "hangi", "sence", "olmal", "yapar",
+                    "yoksa", "olaca"}
+
+# How far below a question a follow-up may go: one step. A question may be
+# followed up once; a follow-up of a follow-up is the narrowing itself — each
+# new question about a smaller detail of the last answer (kaan.md: four
+# questions, one after another, under q7, itself a follow-up of q1, all about
+# the same notification screen).
+MAX_FOLLOWUP_DEPTH = 1
 
 
 def _topic_stems(text: str) -> set[str]:
@@ -109,18 +119,72 @@ def _topic_stems(text: str) -> set[str]:
             if word[:5] not in _QUESTION_FILLER}
 
 
+def question_depth(node_id: str, nodes: list[dict]) -> int:
+    """How many questions this one hangs under. A damaged tree (a missing
+    parent, a cycle) ends the count instead of hanging it."""
+    by_id = {n["id"]: n for n in nodes}
+    depth, seen = 0, {node_id}
+    current = by_id.get((by_id.get(node_id) or {}).get("parentId"))
+    while current and current.get("type") == "question" and current["id"] not in seen:
+        seen.add(current["id"])
+        depth += 1
+        current = by_id.get(current.get("parentId"))
+    return depth
+
+
+def may_follow_up(question: dict, nodes: list[dict]) -> bool:
+    """May a new question hang under this one? Not under a follow-up, and not
+    under a question that already has one (a dismissed one does not count):
+    a second, third, fourth follow-up of the same answer is circling it
+    instead of moving on, even if each waits for the last to be answered."""
+    if question.get("type") != "question" or question.get("status") == "dismissed":
+        return False
+    if question_depth(question["id"], nodes) >= MAX_FOLLOWUP_DEPTH:
+        return False
+    return not any(n.get("type") == "question" and n.get("parentId") == question["id"]
+                   and n.get("status") != "dismissed" for n in nodes)
+
+
+def question_parent(item: dict, text: str, section: str, nodes: list[dict],
+                    climbing: bool) -> tuple[str | None, bool]:
+    """Where a new question hangs, and whether it is asked at all.
+
+    A software note's question asks for a decision of its own, so it never
+    hangs under another decision's answer (codlaud.md: the data and the
+    external-services questions went under "who" and "online?"). On an idea
+    note the model may name the question it follows up — a genuinely needed
+    follow-up is its call — but only where may_follow_up allows: one that
+    would go deeper is the narrowing, and is not asked. Without a name the
+    guess below decides, and it never picks an answered question.
+    """
+    if climbing:
+        return None, True
+    requested = item.get("parent_id") or item.get("related_to")
+    named = next((n for n in nodes if n.get("type") == "question" and n.get("id") == requested
+                  and n.get("status") != "dismissed"), None)
+    if named is not None:
+        return (named["id"], True) if may_follow_up(named, nodes) else (None, False)
+    return related_question_parent(text, section, nodes), True
+
+
 def related_question_parent(text: str, section: str, nodes: list[dict]) -> str | None:
     """Conservative fallback when the analysis model did not supply a parent id.
 
     Use earlier question and answer terms, not merely the shared section. The
     latter would turn every independent question in a section into one chain.
+    Only a question still waiting for its answer is a candidate: one already
+    answered is settled, and a new question that shares its answer's words is
+    usually about the write-up of that answer in the note — hung under it,
+    every pass drilled one level deeper into what the writer had just said.
     """
     terms = _topic_stems(text)
     if len(terms) < 2:
         return None
     best_id, best_score = None, 0.0
     for node in nodes:
-        if node.get("type") != "question" or node.get("status") == "dismissed":
+        if node.get("type") != "question" or node.get("status") != "open":
+            continue
+        if not may_follow_up(node, nodes):
             continue
         question_terms = _topic_stems(node.get("text", ""))
         messages = [m.get("text", "") for m in nodes
@@ -179,10 +243,30 @@ QUESTION_STARTS = ("neden", "niye", "nasil", "nasıl", "hangi", "kim", "kac", "k
                    "nerede", "nereye", "ne ", "peki", "sence", "sen ne")
 
 
+# the question particle, written apart ("var mı") or, often, glued on ("varmı")
+QUESTION_PARTICLE = re.compile(r"\bm[iu](s[iu]n|s[iu]n[iu]z|y[iu]m|y[iu]z|d[iu]r)?\b"
+                               r"|\b(var|yok|olur|olmaz|mumkun|dogru|iyi|lazim|gerek)m[iu]\b")
+# "I don't know" and "what would you suggest": the writer wants ideas, not to
+# have their not knowing written down as a decision
+WANTS_IDEAS = re.compile(r"\b(bilmiyorum|bilmiyor olmam|bilemedim|bilmem\b|fikrim yok|hic fikrim|emin degilim|"
+                         r"karar veremedim|karar veremiyorum|fikir ver|fikrin|fikirlerin|onerin|onerilerin|"
+                         r"ne onerirsin|sen oner|onerir misin|ne yapilabilir|ne yapabiliriz|yardim et)")
+# a write-up that files the not knowing itself ("has no technical knowledge,
+# needs guidance", "not settled yet, looking for ideas") — measured on
+# DeepSeek V4 Flash — is not a decision
+UNDECIDED_NOTE = re.compile(r"bilmiyor|bilmedig|emin degil|bilgisi yok|bilgiye sahip degil|sahip olmadig|"
+                            r"rehberlig|fikir ariyor|netlesmedi|karar vermedi|karar veremedi")
+
+
 def looks_like_question(text: str) -> bool:
     """A message that asks something must not be swallowed as an answer."""
     stripped = fold(text.strip())
-    return stripped.endswith("?") or stripped.startswith(QUESTION_STARTS)
+    return (stripped.endswith("?") or stripped.startswith(QUESTION_STARTS)
+            or bool(QUESTION_PARTICLE.search(plain(stripped))))
+
+
+def asks_for_ideas(text: str) -> bool:
+    return bool(WANTS_IDEAS.search(plain(text)))
 
 
 def under_path(path: str, prefix: str) -> bool:
@@ -241,7 +325,70 @@ def find_bash() -> Path | None:
     return None
 
 
-def diff_new_text(old: str, new: str) -> tuple[str, int, list[int] | None]:
+# shorter than this, a write-up cannot be told apart from anything else; the
+# editor draws the same line (assistantRanges in web/js/editor.js)
+WRITTEN_MIN_CHARS = 12
+# the latest write-ups an idea note's pass is told are settled; a long note
+# holds dozens, and the most recent are the ones a pass would dig into
+SETTLED_SHOWN = 6
+
+
+def written_ranges(text: str, written) -> list[tuple[int, int]]:
+    """Where the sentences the assistant put in the note with the writer's
+    approval (state["assistant_text"]) sit — found by their exact wording, as
+    the editor finds them: a sentence the writer has since edited is theirs."""
+    found = []
+    for snippet in written or ():
+        needle = (snippet or "").strip()
+        if len(needle) < WRITTEN_MIN_CHARS:
+            continue
+        at = text.find(needle)
+        while at != -1:
+            found.append((at, at + len(needle)))
+            at = text.find(needle, at + len(needle))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(found):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _outside(text: str, start: int, end: int, ranges) -> str:
+    """text[start:end] less whatever of it falls inside `ranges`."""
+    kept, at = [], start
+    for r_start, r_end in ranges:
+        if r_end <= at or r_start >= end:
+            continue
+        if r_start > at:
+            kept.append(text[at:r_start])
+        at = r_end
+    if at < end:
+        kept.append(text[at:end])
+    return "".join(kept)
+
+
+def _writers_lines(text: str, start: int, end: int, ranges) -> tuple[str, list[int] | None]:
+    """The whole lines text[start:end] less those that are nothing but an
+    approved write-up, and the span of what the writer wrote among them.
+    Blank lines stay: they keep the writer's paragraphs apart."""
+    if not ranges:
+        return text[start:end], [start, end]
+    kept, first, last, at = [], None, None, start
+    for line in text[start:end].splitlines(keepends=True):
+        line_end = at + len(line)
+        own = _outside(text, at, line_end, ranges)
+        if own.strip():
+            first = at if first is None else first
+            last = line_end
+        if own.strip() or not line.strip():
+            kept.append(line)
+        at = line_end
+    return re.sub(r"\n{3,}", "\n\n", "".join(kept)), ([first, last] if first is not None else None)
+
+
+def diff_new_text(old: str, new: str, written=()) -> tuple[str, int, list[int] | None]:
     """What changed since the last analysis.
 
     Returns (new_part, changed_chars, [start, end]). new_part is whole changed
@@ -249,13 +396,26 @@ def diff_new_text(old: str, new: str) -> tuple[str, int, list[int] | None]:
     characters actually typed, so fixing one typo in a long paragraph doesn't
     look like 300 new characters. The old PyQt app only looked at text past
     the previous length, so anything written above the end was never seen.
+
+    written: what the assistant put in the note with the writer's approval.
+    It is the writer's answer in the assistant's words, and the decisions
+    already record it: it stays in the note as context but is not new
+    material. Counted, every approval woke a pass that asked about the
+    details of the answer just given, and the scope narrowed pass by pass
+    (kaan.md, 2026-09-26: eight of its ten paragraphs were the assistant's,
+    each followed within a minute by a question about itself).
     """
     if old == new:
         return "", 0, None
+    mine = written_ranges(new, written)
     if new.startswith(old):
         added = new[len(old):]
+        own = _outside(new, len(old), len(new), mine)
+        if added.strip() and not own.strip():
+            return "", 0, None                  # only a write-up came in
         line_start = new.rfind("\n", 0, len(old)) + 1
-        return new[line_start:].strip(), len(added.strip()), [line_start, len(new)]
+        part, span = _writers_lines(new, line_start, len(new), mine)
+        return part.strip(), len(own.strip()), span
 
     before_lines = old.splitlines(keepends=True)
     after_lines = new.splitlines(keepends=True)
@@ -268,22 +428,54 @@ def diff_new_text(old: str, new: str) -> tuple[str, int, list[int] | None]:
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag not in ("insert", "replace"):
             continue
-        segment = "".join(after_lines[j1:j2])
-        parts.append(segment.strip("\n"))
-        start = offsets[j1] if start is None else min(start, offsets[j1])
-        end = offsets[j2] if end is None else max(end, offsets[j2])
-        if tag == "insert":
-            changed += len(segment.strip())
-            continue
+        at, stop = offsets[j1], offsets[j2]
+        segment = new[at:stop]
         replaced = "".join(before_lines[i1:i2])
-        if len(replaced) * len(segment) > 4_000_000:
-            changed += len(segment.strip())
-            continue
-        inner = difflib.SequenceMatcher(None, replaced, segment, autojunk=False)
-        changed += sum(k2 - k1 for op, _, _, k1, k2 in inner.get_opcodes() if op in ("insert", "replace"))
+        if tag == "insert" or len(replaced) * len(segment) > 4_000_000:
+            typed, own = segment, _outside(new, at, stop, mine)
+            by_writer = len(own.strip())
+        else:
+            inner = difflib.SequenceMatcher(None, replaced, segment, autojunk=False)
+            spans = [(at + k1, at + k2) for op, _, _, k1, k2 in inner.get_opcodes() if op in ("insert", "replace")]
+            typed = "".join(new[a:b] for a, b in spans)
+            own = "".join(_outside(new, a, b, mine) for a, b in spans)
+            by_writer = len(own)
+        if typed.strip() and not own.strip():
+            continue                            # nothing here but a write-up
+        changed += by_writer
+        part, part_span = _writers_lines(new, at, stop, mine)
+        parts.append(part.strip("\n"))
+        if part_span:
+            start = part_span[0] if start is None else min(start, part_span[0])
+            end = part_span[1] if end is None else max(end, part_span[1])
 
     new_part = "\n".join(p for p in parts if p.strip()).strip()
     return new_part, changed, ([start, end] if start is not None else None)
+
+
+def writers_tail(content: str, written, limit: int = 800) -> tuple[str, list[int]]:
+    """What a pass you asked for looks at when nothing is new: the end of what
+    you wrote yourself. The note's own end is, after a few approvals, the
+    assistant's write-ups."""
+    mine = written_ranges(content, written)
+    if not mine:
+        return content[-limit:], [max(0, len(content) - limit), len(content)]
+    pieces, at = [], 0
+    for start, end in [*mine, (len(content), len(content))]:
+        if content[at:start].strip():           # the blank lines between write-ups are no one's
+            pieces.append((at, start))
+        at = max(at, end)
+    taken, size = [], 0
+    for start, end in reversed(pieces):
+        if size >= limit:
+            break
+        start = max(start, end - (limit - size))
+        taken.insert(0, (start, end))
+        size += end - start
+    text = re.sub(r"\n{3,}", "\n\n", "".join(content[s:e] for s, e in taken)).strip()
+    if not text:                                # a note of write-ups only
+        return content[-limit:], [max(0, len(content) - limit), len(content)]
+    return text, [taken[0][0], taken[-1][1]]
 
 
 def _tail(text: str, limit: int | None) -> str:
@@ -477,7 +669,16 @@ class Assistant:
         self.history.add(event)
         self.broker.publish("history", event)
         if hud:
-            self.queue.append(event)
+            # the proposal an answer led to takes its question's place: the
+            # card should not keep asking what was just answered
+            asked = event.get("question_id")
+            at = next((i for i, e in enumerate(self.queue)
+                       if asked and e["type"] == "question" and e.get("path") == event.get("path")
+                       and e.get("node_id") == asked), None)
+            if at is None:
+                self.queue.append(event)
+            else:
+                self.queue[at] = event
             self._publish_hud()
 
     def _drop_from_queue(self, predicate) -> None:
@@ -607,16 +808,20 @@ class Assistant:
             return {"status": "skipped"}
 
         state = self.notes.load(rel)
-        new_part, changed, span = diff_new_text(state.get("analyzed_text", ""), content)
+        # what the assistant wrote in with your approval is context, not news:
+        # it neither wakes the watch nor becomes what the questions are about
+        written = state.get("assistant_text") or []
+        new_part, changed, span = diff_new_text(state.get("analyzed_text", ""), content, written)
         if not force and changed < MIN_NEW_CHARS:
             if not new_part:
-                with self.notes.lock:  # only deletions — resync silently, like the old app did
+                # only deletions, or only a write-up you approved — resync
+                # silently, like the old app did
+                with self.notes.lock:
                     state["analyzed_text"] = content
                     self.notes.save(rel)
             return {"status": "skipped"}
         if not new_part:
-            new_part = content[-800:]
-            span = [max(0, len(content) - 800), len(content)]
+            new_part, span = writers_tail(content, written)
 
         self.busy = rel
         self._busy_content = content
@@ -642,6 +847,13 @@ class Assistant:
         branches = self._question_branches(rel, nodes)
         if branches:
             coverage += "\n\n[MEVCUT SORU DALLARI]\n" + branches
+        # the write-ups you approved, named as settled: in the note they read
+        # like anything else you wrote, and an idea note's questions went on
+        # to dig into them. A software note's roadmap already says what is
+        # decided, and the server drops any question about it.
+        settled = [] if mode == "yazilim" else [
+            text.strip()[:200] for text in (note_state.get("assistant_text") or [])
+            if len(text.strip()) >= WRITTEN_MIN_CHARS and text.strip() in content][-SETTLED_SHOWN:]
         last_emit = 0.0
         cancelled = lambda: run_id in self._cancelled
 
@@ -665,7 +877,7 @@ class Assistant:
                     on_chunk, provider, span, cancelled, self.budget.record,
                     "" if climbing else coverage,
                     roadmap, mode, self.ladder_for(rel)["open"],
-                    direction, tempo=self._tempo(rel),
+                    direction, tempo=self._tempo(rel), settled=settled,
                 )
             except llm_client.Cancelled:
                 return
@@ -746,7 +958,9 @@ class Assistant:
                 "line": f"{line}. Son 30 dakikada sonuçlanan soru: {settled}."}
 
     def _question_branches(self, rel: str, nodes: list[dict]) -> str:
-        """Give the analysis model real ids and settled details from earlier turns."""
+        """Give the analysis model real ids and settled details from earlier
+        turns — marked answered or waiting, and closed to follow-ups where the
+        server would drop one (may_follow_up): the rule said, not just kept."""
         lines = []
         for question in (n for n in nodes if n.get("type") == "question"
                          and n.get("status") != "dismissed"):
@@ -754,7 +968,10 @@ class Assistant:
             line = f"- {question['id']}"
             if parent:
                 line += f" (üst soru: {parent})"
-            line += f": {question.get('text', '')[:150]}"
+            status = "cevaplandı, kapandı" if question.get("status") == "resolved" else "cevap bekliyor"
+            if not may_follow_up(question, nodes):
+                status += "; altına soru açılmaz"
+            line += f" [{status}]: {question.get('text', '')[:150]}"
             thread = self.notes.thread(rel, question["id"])
             answers = [n.get("text", "") for n in thread if n.get("type") == "chat-user"]
             if answers:
@@ -857,15 +1074,13 @@ class Assistant:
                        and not self.notes.thread(rel, n["id"])
                        for n in previous_questions):
                     continue
+                section = section_for(content, text, span)
+                parent, keep = question_parent(item, text, section, state["nodes"], climbing)
+                if not keep:
+                    continue    # a follow-up one level too deep: the narrowing itself
                 asked.add(folded)
                 with self.notes.lock:
                     state["last_question"] = text
-                section = section_for(content, text, span)
-                requested_parent = item.get("parent_id") or item.get("related_to")
-                parent = next((n["id"] for n in previous_questions
-                               if n["id"] == requested_parent), None)
-                if parent is None:
-                    parent = related_question_parent(text, section, state["nodes"])
                 node = self.notes.add_node(rel, "question", text, parent_id=parent, status="open",
                                            kind=item.get("kind", "soru"), section=section)
                 previous_questions.append(node)
@@ -1034,17 +1249,19 @@ class Assistant:
         if plan is None:
             plan = self._fallback_direction_plan(category, decisions, questions, proposals)
         plan.setdefault("update", {})
+        plan["ask"] = [{"id": f"yeni{i}", "text": text} for i, text in enumerate(plan.get("ask") or [], start=1)]
         # a correction of the goal or the audience is about that very decision,
         # even when the model does not say so (measured: it closed the team
         # question but kept "Kullanıcı = ekipteki herkes")
         if category in decisions and category not in plan["update"] and category not in plan["reopen"]:
             plan["reopen"] = [category, *plan["reopen"]]
-        labels = {**decisions, **questions, **proposals}
+        labels = {**decisions, **questions, **proposals, **{q["id"]: q["text"] for q in plan["ask"]}}
         for decision, value in plan["update"].items():
             labels[decision] = f"{ladder.DECISIONS[decision][1]}: {value}"
         return {**plan, "category": category, "text": text,
                 "items": {key: labels[key] for key in
-                          [*plan["update"], *plan["reopen"], *plan["drop_questions"], *plan["drop_proposals"]]}}
+                          [*plan["update"], *plan["reopen"], *plan["drop_questions"], *plan["drop_proposals"],
+                           *(q["id"] for q in plan["ask"])]}}
 
     def set_direction(self, rel: str, category: str, text: str, plan: dict | None = None) -> dict:
         """The writer's latest correction supersedes stale assistant work.
@@ -1066,6 +1283,9 @@ class Assistant:
                    for key, value in (plan.get("update") or {}).items()
                    if str(key) in ladder.DECISIONS and str(value).strip()}
         drop = {str(item) for item in [*(plan.get("drop_questions") or []), *(plan.get("drop_proposals") or [])]}
+        ask = [" ".join(str(q.get("text", "") if isinstance(q, dict) else q).split())[:220]
+               for q in (plan.get("ask") or [])[:2]]
+        ask = [q for q in ask if q]
         summary = " ".join(str(plan.get("summary") or "").split())[:500]
         entry = {"category": category, "text": text, "created": now_iso(),
                  **({"summary": summary} if summary else {})}
@@ -1107,6 +1327,13 @@ class Assistant:
                 self.broker.publish("history_update", event)
         affected = {n["id"] for n in closed + discarded}
         self._drop_from_queue(lambda e: e.get("path") == rel and e.get("node_id") in affected)
+        for text in ask:
+            # the new course's own questions, there as soon as it is approved;
+            # "yon" is no rung's decision, so the ladder never holds them back
+            node = self.notes.add_node(rel, "question", text, status="open", kind="yon", section="")
+            self._publish_node(rel, node)
+            self._record(self._event("question", rel, text=text, node_id=node["id"], status="open",
+                                     kind="yon", section="", parent_id=None))
         rung = self.ladder_for(rel)
         change = ladder.transition(before, after)
         self.broker.publish("ladder", {"path": rel, "ladder": rung, "transition": change})
@@ -1114,7 +1341,7 @@ class Assistant:
             self._record(self._event("phase", rel, text=change["body"], title=change["title"],
                                      phase=change["phase"]), hud=False)
         return {"direction": entry, "closed_questions": len(closed),
-                "discarded_proposals": len(discarded), "ladder": rung}
+                "discarded_proposals": len(discarded), "asked": len(ask), "ladder": rung}
 
     def set_decisions(self, rel: str, changes: dict, by: str, question: str | None = None,
                       values: dict | None = None, quiet: bool = False) -> dict:
@@ -1222,7 +1449,9 @@ class Assistant:
         if action == "dismiss":
             self.queue.clear()
         elif action == "next":
-            self._drop_from_queue(lambda e: e["id"] == event_id)
+            # passed over, not settled: it waits at the back of the line
+            passed = [e for e in self.queue if e["id"] == event_id]
+            self.queue = [e for e in self.queue if e["id"] != event_id] + passed
         elif action == "chat":
             if event["type"] != "question":
                 raise ApiError(400, "Sadece sorular için sohbet açılabilir.")
@@ -1351,7 +1580,10 @@ class Assistant:
         # to stop; answering the user's own questions never counts
         asked_before = sum(1 for n in self.notes.thread(rel, node_id)
                            if n["type"] == "chat-assistant" and n.get("mode") == "question")
-        user_asked = looks_like_question(message)
+        # "I don't know" and "any ideas?" get options to choose from — not a
+        # three-sentence answer, and never the not knowing written up
+        wants_ideas = asks_for_ideas(message)
+        user_asked = looks_like_question(message) and not wants_ideas
 
         def on_step(record: dict):
             """A tool finished on the worker thread — show it while the rest runs."""
@@ -1386,12 +1618,15 @@ class Assistant:
                 if raw is not None and not raw.strip():
                     raw = None
 
-            if raw is None:
+            async def reply(ideas: bool):
                 call = llm_client.chat_answer if user_asked else functools.partial(
-                    llm_client.chat_reply, asked=asked_before)
+                    llm_client.chat_reply, asked=asked_before, wants_ideas=ideas)
+                return await asyncio.to_thread(call, messages, note_text, on_chunk,
+                                               provider, self.budget.record)
+
+            if raw is None:
                 try:
-                    raw = await asyncio.to_thread(call, messages, note_text, on_chunk,
-                                                  provider, self.budget.record)
+                    raw = await reply(wants_ideas)
                 except Exception:
                     self.check_now()
                     await updates.put(("error", "Model yanıt vermedi, model çalışıyor mu kontrol et."))
@@ -1411,6 +1646,22 @@ class Assistant:
                 return
 
             result = llm_client.parse_chat_reply(raw)
+            if result["type"] == "understood" and UNDECIDED_NOTE.search(plain(result["note"])):
+                # it filed the writer's not knowing: ask once more, for options
+                try:
+                    if not wants_ideas:
+                        result = llm_client.parse_chat_reply(await reply(True))
+                except Exception:
+                    pass
+                if result["type"] == "understood" and UNDECIDED_NOTE.search(plain(result["note"])):
+                    result = {"type": "ideas", "text": ""}
+            if result["type"] == "ideas":
+                # options offered: nothing for the note until one is chosen
+                text = result["text"] or "Birkaç seçenek düşünelim: hangi yöne daha yakınsın?"
+                node = self.notes.add_node(rel, "chat-assistant", text, parent_id=node_id, mode="ideas")
+                self._publish_node(rel, node)
+                await updates.put(("done", {"node": node, "understood": False, "answered": True}))
+                return
             # it keeps asking while it judges the answer unclear; the fuse only
             # stops a model that never judges it clear
             if result["type"] == "question" and asked_before < FOLLOWUP_FUSE:

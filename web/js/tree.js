@@ -52,6 +52,7 @@ export const QUESTION_KINDS = {
   kenar: { label: "Detay · Uç durumlar", tone: "idea", icon: "wand" },
   test: { label: "Detay · Doğrulama", tone: "idea", icon: "wand" },
   dagitim: { label: "Detay · Dağıtım", tone: "idea", icon: "wand" },
+  yon: { label: "Yeni yön", tone: "inspire", icon: "sparkles" },     // asked by a course correction
   soru: { label: "Soru", tone: "question", icon: "questionSquare" },
 };
 
@@ -592,6 +593,9 @@ export class IdeaTree {
 
     for (const [id, star] of this.stars) if (!wanted.has(id)) { star.leaving = true; star.leftAt ??= now; }
     for (const [id, string] of this.strings) if (!wanted.has(id)) { string.leaving = true; }
+    // with nothing waiting for an answer (or the filter hiding it) the button would do nothing
+    this.host.querySelector(".cv-next").disabled =
+      ![...this.stars.values()].some((s) => !s.leaving && s.item.kind === "question");
 
     if (this._celebrate) {
       const star = this.stars.get(this._celebrate);

@@ -500,8 +500,10 @@ export class MarkdownEditor {
   replaceRange(start, end, text, selStart = start + text.length, selEnd = selStart) {
     const el = this.input;
     let ok = false;
-    if (this.isVisible) {
-      el.focus({ preventScroll: true });
+    if (this.isVisible) el.focus({ preventScroll: true });
+    // an editor hidden behind the idea tree cannot take focus, and execCommand
+    // would then type into whatever has it — the chat box, say
+    if (document.activeElement === el) {
       el.setSelectionRange(start, end);
       ok = text === "" ? (start === end || document.execCommand("delete")) : document.execCommand("insertText", false, text);
     }
@@ -631,6 +633,14 @@ export class MarkdownEditor {
     this._replaceLines((ls) => ls.map((l) => (direction > 0 ? `  ${l}` : l.replace(/^( {1,2}|\t)/, ""))));
   }
 
+  /** A change the writer approved elsewhere: undoable like typing, while the
+   *  box they are writing in (the chat, say) keeps its focus. */
+  _fromOutside(change) {
+    const had = document.activeElement;
+    change();
+    if (had !== this.input && had?.isConnected && had.matches("textarea, input")) had.focus({ preventScroll: true });
+  }
+
   applyEdit(original, replacement) {
     const v = this.input.value;
     const at = v.indexOf(original);
@@ -638,7 +648,7 @@ export class MarkdownEditor {
     const { selectionStart: s, selectionEnd: e } = this.input;
     const delta = replacement.length - original.length;
     const shift = (p) => (p >= at + original.length ? p + delta : Math.min(p, at + replacement.length));
-    this.replaceRange(at, at + original.length, replacement, shift(s), shift(e));
+    this._fromOutside(() => this.replaceRange(at, at + original.length, replacement, shift(s), shift(e)));
     this.flash([at, at + replacement.length], { reveal: true });
     return true;
   }
@@ -648,7 +658,7 @@ export class MarkdownEditor {
     const prefix = !v || v.endsWith("\n\n") ? "" : v.endsWith("\n") ? "\n" : "\n\n";
     const start = v.length + prefix.length;
     const insert = `${prefix}${text.trim()}\n`;
-    this.replaceRange(v.length, v.length, insert, v.length + insert.length);
+    this._fromOutside(() => this.replaceRange(v.length, v.length, insert, v.length + insert.length));
     this.flash([start, start + text.trim().length], { reveal: true });
   }
 

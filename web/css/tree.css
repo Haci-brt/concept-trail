@@ -179,6 +179,8 @@
 .tn-body .lead { color: var(--text); font-weight: 550; }
 .tn-body .rest { color: var(--text-muted); }
 .tn-body.full, .tn-diff.full, .tn-thread.full { display: block; -webkit-line-clamp: unset; }
+/* a bulleted proposal or answer keeps its lines */
+.tn-body.full, .tn-msg span { white-space: pre-line; }
 .tn-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .tn-foot .btn:first-of-type { margin-left: auto; }
 .tn-foot:empty { display: none; }

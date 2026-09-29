@@ -98,16 +98,33 @@ def ladder_reply(user: str, lang: str) -> str:
     return "\n".join(lines)
 
 
+# a line of [MEVCUT SORU DALLARI] about a question the writer has answered:
+# its id, and the rest of the line (the question, then the answer)
+ANSWERED_BRANCH = re.compile(r"^- ([A-Za-z0-9_-]+)(?: \(üst soru: [^)]*\))? \[cevaplandı[^\]]*\]: (.*)$", re.M)
+
+
 def idea_reply(user: str, lang: str) -> str:
-    """Two curiosity questions about words the writer just wrote."""
+    """Two curiosity questions about words the writer just wrote — and, as the
+    real models did (kaan.md), a third that digs into the latest answer,
+    naming the question it follows up. Whether that one is asked is the
+    server's call: once per question, never below a follow-up."""
     part = user.split("[YENİ EKLENEN]", 1)[-1]
     words = sorted({w.strip(".,;:!?()«»\"'") for w in part.split() if len(w) >= 5} - FILLER, key=len, reverse=True)
     first, second = (words + ["bu fikir", "bu fikir"])[:2]
+    answered = ANSWERED_BRANCH.findall(user.split("[YENİ EKLENEN]", 1)[0])
+    follow = ""
+    if answered:
+        branch, rest = answered[-1]
+        said = rest.split("Kullanıcının son yanıtı:", 1)[-1].split(" | ", 1)[0]
+        detail = max((w.strip(".,;:!?()«»\"'") for w in said.split()), key=len, default="") or "bu"
+        follow = (f"\nSORU[derinlestirme][{branch}]: «{detail}» dediğin şeyin ayrıntısı tam olarak ne olacak?"
+                  if lang == "tr" else
+                  f"\nSORU[derinlestirme][{branch}]: When you said “{detail}”, what exactly would the detail be?")
     if lang == "tr":
         return (f"SORU[derinlestirme]: «{first}» dediğin şeyi bir adım öteye taşısan ilk neyi değiştirirdin?\n"
-                f"SORU[alternatif]: «{second}» yerine bambaşka bir yol seçseydin ne olurdu?")
+                f"SORU[alternatif]: «{second}» yerine bambaşka bir yol seçseydin ne olurdu?{follow}")
     return (f"SORU[derinlestirme]: If you took “{first}” one step further, what would change first?\n"
-            f"SORU[alternatif]: What if you chose a different path instead of “{second}”?")
+            f"SORU[alternatif]: What if you chose a different path instead of “{second}”?{follow}")
 
 
 def master_reply(user: str) -> str:
@@ -159,6 +176,10 @@ def answer(messages: list[dict]) -> str:
         return idea_reply(user, lang)
     if "İki şey arıyorsun" in system:
         return "YOK"
+    if "TEK bir soru sordun" in system and "[BU TUR]" in system:
+        return ("FİKİR:\n- Ortak bir klasör: kolay kurulur, ama aynı dosyaya iki araç birden yazabilir.\n"
+                "- Bir görev listesi: herkes kendi işini alır, ama listeyi biri güncel tutmalı.\n"
+                "Bu proje için görev listesini seçerdim, çünkü iki araç aynı anda çalışacak. Hangisi sana uyar?")
     if "TEK bir soru sordun" in system:
         return f"ANLADIM\nNOT: {user.strip()}" if len(user.split()) >= 3 else \
             "SORU: Bunu biraz daha açar mısın? Bir örnek verebilir misin?"
@@ -169,7 +190,8 @@ def answer(messages: list[dict]) -> str:
         return f"- {said[-1]}" if said else "- Konuşulan karar nota eklendi."
     if "yeni yön düzeltmesi" in system:
         return json.dumps({"ozet": "Yeni yöne göre devam ediyoruz; mevcut kararlar korunuyor.", "guncelle": {},
-                           "kararlar": [], "sorular": [], "oneriler": []}, ensure_ascii=False)
+                           "kararlar": [], "sorular": [], "oneriler": [],
+                           "yeni_sorular": ["Bu yeni yönde ilk hangi adımı atacaksın?"]}, ensure_ascii=False)
     if "MASTER PROMPT yazmak" in system:
         return master_reply(user)
     if "numaralı satırlar" in system:
