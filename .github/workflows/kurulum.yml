@@ -1,0 +1,114 @@
+# Tek komutla kurulum, gerçek makinelerde: her push'ta install.sh Ubuntu ve
+# macOS'ta, install.ps1 Windows'ta çalışır — indirmek yerine bu commit'in
+# arşivinden. Sonra kısayol, sunucu, ilk açılış sihirbazı, (Linux'ta sanal
+# ekranda) masaüstü penceresi ve test takımı denetlenir.
+name: Kurulum
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unix:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bu commit'in arşivi (betiğin indireceği gibi)
+        run: git archive --format=tar.gz --prefix=concept-trail-main/ HEAD -o "$RUNNER_TEMP/ct.tar.gz"
+
+      - name: Tek komutla kurulum
+        env:
+          CT_SOURCE: ${{ runner.temp }}/ct.tar.gz
+          CT_NO_LAUNCH: "1"
+        run: bash install.sh
+
+      - name: Kısayol
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            desktop="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+            test -x "$desktop/concept-trail.desktop"
+            test -f "$HOME/.local/share/applications/concept-trail.desktop"
+            grep '^Exec=' "$desktop/concept-trail.desktop"
+          else
+            test -x "$HOME/Desktop/Concept Trail.command"
+            cat "$HOME/Desktop/Concept Trail.command"
+          fi
+
+      - name: Sunucu ve ilk açılış sihirbazı
+        run: |
+          APP="$HOME/.local/share/concept-trail"
+          (cd "$APP" && nohup .venv/bin/python main.py --server --port 8765 --vault "$HOME/Documents/Concept Trail" > "$RUNNER_TEMP/server.log" 2>&1 &)
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8765/api/state >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8765/api/state
+          curl -fsS http://127.0.0.1:8765/api/setup | python -c "import json,sys; d=json.load(sys.stdin); assert d['needed'] is True, d; print('sihirbaz açılacak:', d['needed'])"
+
+      - name: Masaüstü penceresi (sanal ekran)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          for p in xvfb x11-utils libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+                   libxcb-image0 libxcb-render-util0 libxcb-xinerama0 libxcb-randr0 libnss3 libxcomposite1 libxdamage1 \
+                   libxtst6 libegl1 libgl1 libxkbfile1 libgssapi-krb5-2 libxfixes3 libxss1 libasound2t64; do
+            sudo apt-get install -y -qq --no-install-recommends "$p" >/dev/null 2>&1 || echo "kurulamadı: $p"
+          done
+          desktop="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+          EXEC="$(grep '^Exec=' "$desktop/concept-trail.desktop" | cut -d= -f2-)"
+          Xvfb :99 -screen 0 1400x900x24 >/dev/null 2>&1 &
+          export DISPLAY=:99
+          sleep 2
+          (cd "$HOME/.local/share/concept-trail" && eval "nohup $EXEC > $RUNNER_TEMP/gui.log 2>&1 &")
+          sleep 30
+          cat "$RUNNER_TEMP/gui.log"
+          xwininfo -root -tree | grep '"Concept Trail"'
+
+      - name: Testler
+        run: |
+          python -m pip install --quiet -r requirements.txt pytest anyio
+          python -m pytest tests -q
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bu commit'in arşivi
+        run: git archive --format=zip --prefix=concept-trail-main/ HEAD -o "$env:RUNNER_TEMP\ct.zip"
+
+      - name: Tek komutla kurulum
+        env:
+          CT_SOURCE: ${{ runner.temp }}\ct.zip
+          CT_NO_LAUNCH: "1"
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
+
+      - name: Kısayol, sunucu ve ilk açılış sihirbazı
+        run: |
+          $desktop = [Environment]::GetFolderPath("Desktop")
+          if (-not (Test-Path (Join-Path $desktop "Concept Trail.lnk"))) { throw "masaüstü kısayolu yok" }
+          $app = Join-Path $env:LOCALAPPDATA "Programs\ConceptTrail"
+          $vault = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Concept Trail"
+          Start-Process -FilePath (Join-Path $app ".venv\Scripts\python.exe") -ArgumentList @("main.py", "--server", "--port", "8765", "--vault", "`"$vault`"") -WorkingDirectory $app -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/api/state | Out-Null; $ok = $true } catch { Start-Sleep 1 } }
+          if (-not $ok) { throw "sunucu cevap vermedi" }
+          $setup = Invoke-RestMethod http://127.0.0.1:8765/api/setup
+          if (-not $setup.needed) { throw "ilk açılış sihirbazı açılmayacak" }
+          "sihirbaz açılacak: $($setup.needed)"
+
+      - name: Testler
+        run: |
+          python -m pip install --quiet -r requirements.txt pytest anyio
+          python -m pytest tests -q

@@ -19,6 +19,7 @@ this module exists to honour:
 import asyncio
 import json
 import os
+import shutil
 import re
 import threading
 from contextlib import AsyncExitStack
@@ -298,8 +299,12 @@ class ToolHub:
 
     async def _connect(self, name: str, settings: dict, stack: AsyncExitStack) -> None:
         command = settings.get("command") or ""
-        # a path that does not exist should say so, not surface as a WinError
-        if os.path.isabs(command) and not Path(command).is_file():
+        # a path that does not exist should say so, not surface as a WinError.
+        # "D:/…" is a path even where it is not absolute (on Linux, measured),
+        # and a bare name has to be on PATH
+        looks_like_path = os.path.isabs(command) or "/" in command or "\\" in command
+        missing = not Path(command).is_file() if looks_like_path else shutil.which(command) is None
+        if command and missing:
             raise FileNotFoundError(
                 f"{command} bulunamadı. Araç takımı başka bir yerdeyse FIKIR_TOOLS_ROOT "
                 f"ortam değişkenini ayarla ya da {USER_CONFIG_PATH} dosyasına kendi yolunu yaz.")

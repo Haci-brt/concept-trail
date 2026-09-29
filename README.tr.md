@@ -95,7 +95,7 @@ curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install
 
 Komut uygulamayı indirir (Windows'ta `%LOCALAPPDATA%\Programs\ConceptTrail`, diğerlerinde `~/.local/share/concept-trail`), kendine ait bir Python ortamı kurar, **masaüstüne ve Başlat menüsüne logolu bir Concept Trail kısayolu** koyar ve uygulamayı açar. Python 3.10+ gerekir; Windows'ta yoksa winget ile kurmayı önerir. Notların **Belgeler\Concept Trail** klasöründe durur. Güncellemek için aynı komutu yeniden çalıştır — kod yenilenir, notlar ve ortam korunur. Kaldırmak için uygulama klasörünü ve kısayolları silmek yeter; notlar yerinde kalır.
 
-> Windows'ta denendi. macOS ve Linux betiği aynı adımları izler ama bu platformlarda henüz denenmedi; web araması ve masaüstü kartının Windows'a özgü kısımları orada çalışmayabilir.
+> Windows'ta ve Linux'ta uçtan uca denendi (temiz bir Debian: kurulum, kısayollar, sunucu, sanal ekranda masaüstü penceresi). Her push'ta kurulum betikleri gerçek Ubuntu, macOS ve Windows makinelerinde çalışır (`.github/workflows/kurulum.yml`). Qt'nin web görünümünün istediği sistem kütüphaneleri olmayan bir Linux'ta uygulama kendi penceresi yerine tarayıcıda açılır. Web araması her yerde çalışır: varsa Chromium ailesinden bir tarayıcıyla, yoksa tarayıcısız.
 
 ### Elle (geliştirme için)
 

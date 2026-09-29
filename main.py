@@ -131,21 +131,43 @@ def main():
         if args.browser:
             webbrowser.open(url)
         print(f"Concept Trail: {url}  (durdurmak için Ctrl+C)")
-        if server is None:
-            return
-        try:
-            while server.is_alive():
-                server.join(0.5)
-        except KeyboardInterrupt:
-            server.stop()
+        serve_until_stopped(server)
         return
 
-    from desktop.shell import run_desktop
-
-    code = run_desktop(url, hud=not args.no_hud)
+    code = open_window(url, hud=not args.no_hud)
+    if code is None:                 # no desktop window here: the browser has it
+        serve_until_stopped(server)
+        return
     if server is not None:
         server.stop()
     sys.exit(code)
+
+
+def serve_until_stopped(server) -> None:
+    if server is None:
+        return
+    try:
+        while server.is_alive():
+            server.join(0.5)
+    except KeyboardInterrupt:
+        server.stop()
+
+
+def open_window(url: str, hud: bool, opener=webbrowser.open) -> int | None:
+    """The desktop window — or, where it cannot start, the default browser.
+
+    The window needs Qt WebEngine and the system libraries under it. A machine
+    without them used to get nothing at all from its shortcut (measured: a
+    minimal Linux lacks libgssapi_krb5, so importing Qt's web channel fails);
+    now it gets the app in its browser. Returns the window's exit code, or
+    None when the browser took over."""
+    try:
+        from desktop.shell import run_desktop
+    except (ImportError, OSError) as exc:
+        print(f"Masaüstü penceresi açılamadı ({exc}); uygulama tarayıcıda açılıyor: {url}", file=sys.stderr)
+        opener(url)
+        return None
+    return run_desktop(url, hud=hud)
 
 
 if __name__ == "__main__":

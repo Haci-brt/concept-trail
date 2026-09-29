@@ -97,6 +97,7 @@ def linux(vault: Path | None, start_menu: bool) -> list[str]:
 def macos(vault: Path | None, _start_menu: bool) -> list[str]:
     command = " ".join(shlex.quote(part) for part in [str(launcher_python()), *main_args(vault)])
     path = Path.home() / "Desktop" / f"{NAME}.command"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"#!/bin/sh\ncd {shlex.quote(str(ROOT))}\nexec {command}\n", encoding="utf-8")
     path.chmod(0o755)
     return [str(path)]

@@ -60,3 +60,13 @@ def test_a_linux_launcher_is_a_desktop_entry_with_the_icon(tmp_path, monkeypatch
     entry = Path(written[0]).read_text(encoding="utf-8")
     assert "Name=Concept Trail" in entry and f"Icon={make_shortcut.ICON_PNG}" in entry
     assert "--vault" in entry and "Terminal=false" in entry
+
+
+def test_without_a_desktop_window_the_app_opens_in_the_browser(monkeypatch):
+    """A machine that cannot start the Qt window still gets the app."""
+    sys.path.insert(0, str(ROOT))
+    import main
+    monkeypatch.setitem(sys.modules, "desktop.shell", None)          # the import fails, as without the libraries
+    opened = []
+    assert main.open_window("http://127.0.0.1:8765/", hud=False, opener=opened.append) is None
+    assert opened == ["http://127.0.0.1:8765/"]

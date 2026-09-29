@@ -107,7 +107,7 @@ curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install
 
 The command downloads the app (to `%LOCALAPPDATA%\Programs\ConceptTrail` on Windows, `~/.local/share/concept-trail` elsewhere), sets up its own Python environment, puts **a Concept Trail shortcut with the app icon on the desktop and in the Start menu**, and opens the app. It needs Python 3.10+; on Windows it offers to install it with winget if it is missing. Your notes live in **Documents\Concept Trail**. To update, run the same command again — the code is replaced, your notes and the environment are kept. To uninstall, delete the app folder and the shortcuts; your notes stay where they are.
 
-> Tested on Windows. The macOS and Linux script follows the same steps but has not been tried on those platforms yet; the Windows-specific parts of web search and the desktop card may not work there.
+> Tested on Windows, and on Linux end to end (a clean Debian: install, shortcuts, server, the desktop window on a virtual screen). Every push runs the installers on real Ubuntu, macOS and Windows machines (`.github/workflows/kurulum.yml`). On a Linux without the system libraries Qt's web view needs, the app opens in your browser instead of its own window. Web search works everywhere: with a Chromium-family browser if there is one, without a browser if not.
 
 ### By hand (for development)
 
