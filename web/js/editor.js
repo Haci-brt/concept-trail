@@ -90,6 +90,22 @@ function blockLine(line, addClass) {
   return inline(line);
 }
 
+// A line's markup depends only on its own text (outside front matter and code
+// fences), so it is worked out once and remembered: every keystroke used to
+// run the inline patterns over every line (843 lines: 14 ms a keystroke).
+const LINE_CACHE = new Map();
+function cachedBlock(line) {
+  let hit = LINE_CACHE.get(line);
+  if (hit === undefined) {
+    let cls = "";
+    const body = blockLine(line, (c) => { cls += c; });
+    hit = [cls, body];
+    if (LINE_CACHE.size > 20000) LINE_CACHE.clear();
+    LINE_CACHE.set(line, hit);
+  }
+  return hit;
+}
+
 /** Ranges of `text` that the assistant wrote (and you approved). Recomputed
  *  from the exact wording: edit the sentence and it becomes yours again. */
 export function assistantRanges(text, written) {
@@ -138,7 +154,9 @@ export function renderLines(text, flash, written) {
         cls += " code";
         body = esc(line);
       } else {
-        body = blockLine(line, (c) => { cls += c; });
+        const [extra, markup] = cachedBlock(line);
+        cls += extra;
+        body = markup;
       }
     }
     const start = offset, end = offset + line.length;
@@ -241,6 +259,11 @@ export class MarkdownEditor {
       if (ref) ref.insertAdjacentHTML("beforebegin", chunk);
       else this.mirror.insertAdjacentHTML("beforeend", chunk);
     }
+    // line numbers are an attribute, written only where they changed: as a
+    // CSS counter, every keystroke renumbered — and laid out again — every
+    // line after it (95k characters: a third of a keystroke's layout)
+    const renumberTo = prev.length === next.length ? endNext : next.length;
+    for (let i = start; i < renumberTo; i++) kids[i].dataset.n = i + 1;
     this._lines = next;
     this._curLine = -1;
     this._markCurrentLine();
@@ -274,10 +297,16 @@ export class MarkdownEditor {
     if (text !== this._headingSource) {
       this._headingSource = text;
       this._headings = headingsOf(text);
-      this.chapterSelect.replaceChildren(new Option("Başlangıç", "start"));
-      this._headings.forEach((heading, index) => {
-        this.chapterSelect.add(new Option(`${"  ".repeat(heading.level - 1)}${heading.text}`, String(index)));
-      });
+      // the list is rebuilt only when the headings themselves changed, not at
+      // every keystroke (a long note: 480 options rebuilt per letter typed)
+      const names = this._headings.map((h) => `${h.level} ${h.text}`).join("|");
+      if (names !== this._headingNames) {
+        this._headingNames = names;
+        this.chapterSelect.replaceChildren(new Option("Başlangıç", "start"));
+        this._headings.forEach((heading, index) => {
+          this.chapterSelect.add(new Option(`${"  ".repeat(heading.level - 1)}${heading.text}`, String(index)));
+        });
+      }
     }
     this._updateChapter();
   }

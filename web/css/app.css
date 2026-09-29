@@ -368,10 +368,9 @@ body {
 .md-input::selection { background: rgba(139, 92, 246, 0.34); color: transparent; }
 .md-input::placeholder { color: var(--text-faint); }
 
-.md-mirror { counter-reset: ln; }
-.ln { position: relative; min-height: var(--lh); padding-left: var(--gutter); counter-increment: ln; }
+.ln { position: relative; min-height: var(--lh); padding-left: var(--gutter); }
 .ln::before {
-  content: counter(ln);
+  content: attr(data-n);
   position: absolute;
   left: 0;
   width: calc(var(--gutter) - 16px);

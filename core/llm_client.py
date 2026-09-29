@@ -61,8 +61,9 @@ SYSTEM_PROMPT = (
     "gözle bakmasını sağlamak. KAÇ soru soracağına sen karar ver: notta şu an gerçekten "
     "düşünülmeye değer kaç nokta varsa o kadar — bazen bir, bazen beş altı. Sayı doldurmak için "
     "soru uydurma. [TEMPO] yazarın sorularla nasıl ilerlediğini gösterir: soruları cevaplıyor ve "
-    "konuşulacak çok şey varsa cömert ol, merakını kısma; cevapsız sorular birikmişse yalnızca "
-    "gerçekten önemli olanı sor. Her soruyu türüyle etiketle:\n"
+    "konuşulacak çok şey varsa cömert ol, merakını kısma. Ama 5 ya da daha fazla soru cevapsız "
+    "bekliyor ve son 30 dakikada hiçbiri sonuçlanmadıysa yazar yetişemiyor demektir: en fazla BİR, "
+    "en önemli soruyu sor. Her soruyu türüyle etiketle:\n"
     "SORU[derinlestirme]: <notta yazan somut bir noktayı bir adım öteye taşıyan soru>\n"
     "SORU[alternatif]: <'ya şöyle olsaydı' diye başka bir yol düşündüren soru>\n"
     "SORU[sonuc]: <bu fikir gerçek olsa ne değişirdi, kim ne hissederdi>\n"
@@ -331,6 +332,58 @@ def set_output_language(code: str) -> None:
 
 def output_language() -> str:
     return _output_language
+
+
+# Said first, in the writer's own language. Measured on Qwen3-4B (2026-09-29):
+# with only the Turkish line at the end, English notes had 1 of 11 decisions
+# found and every question came back in Turkish.
+# Measured on Qwen3-4B, each wording in turn: naming the protocol tags here
+# made it put one in front of every ladder line; "keep the labels and ids"
+# made it answer in JSON. So this says only: your words in this language,
+# the plain-text lines exactly as the instructions show them.
+LANGUAGE_LEADS = {
+    "en": ("LANGUAGE: the writer works in English. Everything you write for them — questions, answers, values, "
+           "text for the note — is in English, never in Turkish, even though the instructions below are in "
+           "Turkish. Answer in exactly the plain-text lines the instructions ask for — no JSON, no headings; "
+           "only your own words are in English."),
+    "de": ("SPRACHE: Die schreibende Person arbeitet auf Deutsch. Alles, was du für sie schreibst — Fragen, "
+           "Antworten, Werte, Text für die Notiz —, ist auf Deutsch, niemals auf Türkisch, auch wenn die "
+           "Anweisungen unten türkisch sind. Antworte genau in den Klartextzeilen, die die Anweisungen verlangen "
+           "— kein JSON, keine Überschriften; nur deine eigenen Worte sind auf Deutsch."),
+    "es": ("IDIOMA: quien escribe trabaja en español. Todo lo que escribas para esa persona — preguntas, "
+           "respuestas, valores, texto para la nota — va en español, nunca en turco, aunque las instrucciones de "
+           "abajo estén en turco. Responde exactamente con las líneas de texto plano que piden las instrucciones "
+           "— sin JSON, sin encabezados; solo tus propias palabras van en español."),
+    "fr": ("LANGUE : la personne qui écrit travaille en français. Tout ce que tu écris pour elle — questions, "
+           "réponses, valeurs, texte pour la note — est en français, jamais en turc, même si les instructions "
+           "ci-dessous sont en turc. Réponds exactement avec les lignes de texte brut que demandent les "
+           "instructions — pas de JSON, pas de titres ; seuls tes propres mots sont en français."),
+}
+
+
+LANGUAGE_REMINDERS = {
+    "en": "(Reminder: take each value from the note in its own English words; write every question in English.)",
+    "de": "(Erinnerung: Übernimm jeden Wert mit den eigenen deutschen Worten der Notiz; schreibe jede Frage auf Deutsch.)",
+    "es": "(Recuerda: toma cada valor de la nota con sus propias palabras en español; escribe cada pregunta en español.)",
+    "fr": "(Rappel : reprends chaque valeur de la note avec ses propres mots en français ; écris chaque question en français.)",
+}
+
+
+def language_reminder() -> str:
+    """The last line of the user message for the note passes; nothing for Turkish."""
+    return LANGUAGE_REMINDERS.get(_output_language, "")
+
+
+def localized(system: str) -> str:
+    """A system prompt in the writer's language: the rule said first, in that
+    language, and again at the end. Nothing changes for Turkish."""
+    if _output_language == "tr":
+        return system
+    lead = LANGUAGE_LEADS.get(_output_language, "")
+    head, marker = "", "/no_think\n"
+    if system.startswith(marker):          # the model's switch stays the very first line
+        head, system = marker, system[len(marker):]
+    return f"{head}{lead}\n\n{system}{language_rule()}"
 
 
 def language_rule() -> str:
@@ -731,6 +784,8 @@ def _parse_move(raw: str) -> dict:
 
 
 KNOWN_WORDS = ("notta", "not'ta", "biliniyor", "zaten", "belli")
+TAGGED_LADDER_LINE = re.compile(r"^[\s>*•\-]*\**(?:SORU|B[İI]L[İI]N[İI]YOR|[ÖO]NER[İI]|ARA[ŞS]TIR|KARAR|QUESTION|"
+                                r"KNOWN)\**\s*:\s*\**([A-Za-zçğıöşü]+)\s*:", re.IGNORECASE)
 LADDER_LINE = re.compile(
     r"^[\s>*•\-0-9.)]*[<\[(]?\s*([A-Za-zÇĞİÖŞÜçğıöşü ]{2,30}?)\s*[>\])]?\s*[:=]\s*(.+?)\s*$")
 # "tek bir geliştirici ya da bir ekip": the options, not a decision
@@ -823,7 +878,7 @@ def offer_extras(full_text: str, roadmap: str = "", provider=None, on_usage=None
     if roadmap:
         parts.append(roadmap)
     content = _complete_thinking_capped(
-        [{"role": "system", "content": EXTRAS_PROMPT + language_rule()},
+        [{"role": "system", "content": localized(EXTRAS_PROMPT)},
          {"role": "user", "content": "\n\n".join(parts)}],
         temperature=0.3, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
     return parse_extras(_strip_think(content), full_text)
@@ -833,6 +888,39 @@ def asks(value: str) -> bool:
     """A line that asks, as opposed to one that states: a question mark, or
     the Turkish question particle standing on its own ("web mi masaüstü mü")."""
     return value.rstrip().endswith("?") or bool(QUESTION_PARTICLE.search(fold(value)))
+
+
+def _json_ladder(raw: str) -> str | None:
+    """A reply that came as JSON — {"amac": "…"} or a list of {"id", "deger"} —
+    as the `<id>: <value>` lines it should have been. None when it is not JSON."""
+    text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw or "").strip()
+    if not text or text[0] not in "{[":
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    rows = []
+
+    def walk(item):
+        if isinstance(item, list):
+            for x in item:
+                walk(x)
+        elif isinstance(item, dict):
+            ident = item.get("id") or item.get("karar") or item.get("decision")
+            value = next((item[k] for k in ("deger", "değer", "value", "soru", "question", "text", "metin")
+                          if isinstance(item.get(k), str)), None)
+            if isinstance(ident, str) and value:
+                rows.append(f"{ident}: {value}")
+                return
+            for key, val in item.items():
+                if isinstance(val, str) and normalize_decision(key):
+                    rows.append(f"{key}: {val}")
+                elif isinstance(val, (list, dict)):
+                    walk(val)
+
+    walk(data)
+    return "\n".join(rows) or None
 
 
 def parse_ladder(raw: str, open_decisions=None, note: str | None = None) -> dict:
@@ -846,8 +934,17 @@ def parse_ladder(raw: str, open_decisions=None, note: str | None = None) -> dict
     known: list[str] = []
     values: dict[str, str] = {}
     questions: list[dict] = []
-    extras = parse_extras(raw)
-    for line in (raw or "").splitlines():
+    # "SORU: amac: …", "BİLİNİYOR: kullanici: …", even "ÖNERİ: platform: …":
+    # a tag in front of a decision's own line is dropped, and the line read as
+    # that decision's (measured on Qwen3-4B writing in English)
+    lines = []
+    for line in (_json_ladder(raw) or raw or "").splitlines():
+        tagged = TAGGED_LADDER_LINE.match(line)
+        if tagged and normalize_decision(tagged.group(1)):
+            line = line[tagged.start(1):]
+        lines.append(line)
+    extras = parse_extras("\n".join(lines))
+    for line in lines:
         if EXTRA_LINE.match(line):
             continue
         match = LADDER_LINE.match(line)
@@ -891,12 +988,13 @@ def parse_chat_reply(raw: str) -> dict:
     if not text:
         return {"type": "question", "text": "Bunu biraz daha açar mısın?"}
 
-    note_match = re.search(r"^\s*NOT\s*:\s*", text, re.IGNORECASE | re.MULTILINE)
-    if re.match(r"^\s*ANLADIM", text, re.IGNORECASE) or note_match:
+    # a tag may come in markdown — "**NOT:**" (measured on Qwen3-4B) — and is still the tag
+    note_match = re.search(r"^[\s>*_#-]*NOT[\s*_]*:[\s*_]*", text, re.IGNORECASE | re.MULTILINE)
+    if re.match(r"^[\s>*_#-]*ANLADIM", text, re.IGNORECASE) or note_match:
         note = text[note_match.end():].strip() if note_match else ""
         return {"type": "understood", "note": note}
 
-    question_match = re.match(r"^\s*SORU\s*:?\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+    question_match = re.match(r"^[\s>*_#-]*SORU[\s*_]*:?[\s*_]*(.+)", text, re.IGNORECASE | re.DOTALL)
     if question_match:
         return {"type": "question", "text": question_match.group(1).strip()}
 
@@ -932,11 +1030,12 @@ def ask_about_note(full_text: str, new_part: str, open_questions: list[str],
     if tempo and mode != "yazilim":
         parts.append(f"[TEMPO]\n{tempo}")
     parts.append(f"[YENİ EKLENEN]\n{new_part}")
+    if language_reminder():
+        parts.append(language_reminder())
 
     content = _complete_thinking_capped(
         [
-            {"role": "system", "content": (LADDER_SYSTEM_PROMPT if mode == "yazilim" else SYSTEM_PROMPT)
-             + language_rule()},
+            {"role": "system", "content": localized(LADDER_SYSTEM_PROMPT if mode == "yazilim" else SYSTEM_PROMPT)},
             {"role": "user", "content": "\n\n".join(parts)},
         ],
         temperature=0.3, max_tokens=ANALYZE_MAX_TOKENS, on_chunk=on_chunk,
@@ -957,7 +1056,7 @@ def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=N
     """Multi-turn conversation about a question the assistant raised. asked:
     the follow-up questions it has put in this thread so far — it decides by
     them when to stop asking."""
-    system = (f"{CHAT_SYSTEM_PROMPT}{language_rule()}\n\n[SOHBET TEMPOSU] Bu sohbette şimdiye kadar "
+    system = (f"{localized(CHAT_SYSTEM_PROMPT)}\n\n[SOHBET TEMPOSU] Bu sohbette şimdiye kadar "
               f"{asked} netleştirme sorusu sordun.\n\nNot bağlamı:\n{note_excerpt[-2000:]}")
     content = _complete(
         [{"role": "system", "content": system}] + history,
@@ -970,7 +1069,7 @@ def chat_reply(history: list[dict], note_excerpt: str, on_chunk=None, provider=N
 def chat_answer(history: list[dict], note_excerpt: str, on_chunk=None, provider=None,
                 on_usage=None) -> str:
     """The user asked something back — answer it, don't treat it as an answer."""
-    system = f"{CHAT_ANSWER_PROMPT}{language_rule()}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    system = f"{localized(CHAT_ANSWER_PROMPT)}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
     content = _complete(
         [{"role": "system", "content": system}] + history,
         temperature=0.5, max_tokens=CHAT_MAX_TOKENS, on_chunk=on_chunk, provider=provider,
@@ -991,7 +1090,7 @@ def chat_answer_with_tools(history: list[dict], note_excerpt: str, provider, hub
 
     Returns complete_with_tools' {"content", "messages", "calls"}.
     """
-    system = f"{CHAT_ANSWER_PROMPT}{TOOL_GUIDANCE}{language_rule()}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
+    system = f"{localized(CHAT_ANSWER_PROMPT + TOOL_GUIDANCE)}\n\nNot bağlamı:\n{note_excerpt[-2000:]}"
     return complete_with_tools(
         [{"role": "system", "content": system}] + history,
         hub=hub, temperature=0.5, max_tokens=CHAT_MAX_TOKENS, provider=provider,
@@ -1006,7 +1105,7 @@ def summarize_for_note(history: list[dict], provider=None, on_usage=None, direct
     )
     content = _complete(
         [
-            {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT + language_rule() +
+            {"role": "system", "content": localized(SUMMARIZE_SYSTEM_PROMPT) +
              (f"\n\nKullanıcının son yönü (eski kararlardan öncelikli): {direction}" if direction else "")},
             {"role": "user", "content": convo},
         ],
@@ -1281,7 +1380,7 @@ def judge_prior_art(note_text: str, candidates: list[dict], provider=None, on_us
         for s in (sources or []) if s.get("verified") and
         (s.get("url") in candidate_urls or s.get("kind") == "prior"))
     content = _complete_thinking_capped(
-        [{"role": "system", "content": PRIOR_ART_PROMPT + language_rule()},
+        [{"role": "system", "content": localized(PRIOR_ART_PROMPT)},
          {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n"
           f"[BULUNAN PROJELER]\n{listed}\n\n[OKUNMUŞ KAYNAK KANITI]\n"
           f"{evidence[:6000] or '(okunmuş kaynak yok)'}"}],
@@ -1404,7 +1503,7 @@ def recommend_research(note_text: str, candidates: list[dict], sources: list[dic
         f"- {s['url']} | {str(s.get('title') or '')[:120]} | "
         f"{str(s.get('excerpt') or '')[:900]}"
         for s in selected_sources[:12]) or "(okunmus web kaynagi yok)"
-    messages = [{"role": "system", "content": RESEARCH_RECOMMEND_PROMPT + language_rule()},
+    messages = [{"role": "system", "content": localized(RESEARCH_RECOMMEND_PROMPT)},
                  {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n"
                   f"[GITHUB ADAYLARI]\n{listed}\n\n[OKUNMUŞ KAYNAKLAR]\n{evidence}"}]
     result = {"tools": [], "opportunities": []}
@@ -1508,7 +1607,7 @@ def plan_direction(note_text: str, category: str, text: str, decisions: dict, qu
         parts.append(f"[ÖNCEKİ YÖN]\n{previous}")
     parts.append(f"[YENİ YÖN — alan: {category}]\n{text}")
     content = _complete_thinking_capped(
-        [{"role": "system", "content": DIRECTION_PROMPT + language_rule()},
+        [{"role": "system", "content": localized(DIRECTION_PROMPT)},
          {"role": "user", "content": "\n\n".join(parts)}],
         temperature=0.2, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
     return parse_direction_plan(content, decisions, questions, proposals, category)
@@ -1728,7 +1827,7 @@ def classify_competitors(note_text: str, candidates: list[dict], provider=None, 
                      f"{' '.join(str(item.get('description') or '').split())[:220]}"
                      + (f" [etiketler: {topics}]" if topics else ""))
     content = _complete_thinking_capped(
-        [{"role": "system", "content": COMPETITOR_KIND_PROMPT + language_rule()},
+        [{"role": "system", "content": localized(COMPETITOR_KIND_PROMPT)},
          {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n[ADAYLAR]\n" + "\n".join(lines)}],
         temperature=0.1, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
     return parse_competitor_kinds(content, [item["repo"] for item in candidates])
@@ -1753,7 +1852,7 @@ def compare_projects(note_text: str, components: list[str], projects: list[dict]
             f"Site: {str(item.get('site') or '(yok)')[:900]}\n"
             f"Son issue başlıkları: {issues[:700]}")
     content = _complete_thinking_capped(
-        [{"role": "system", "content": COMPARE_PROMPT + language_rule()},
+        [{"role": "system", "content": localized(COMPARE_PROMPT)},
          {"role": "user", "content": f"[FİKİR]\n{note_context(note_text)}\n\n"
           + (f"{decisions}\n\n" if decisions else "")
           + f"[BİLEŞENLER]\n{', '.join(components) or '(yok)'}\n\n[PROJELER]\n" + "\n\n".join(blocks)}],

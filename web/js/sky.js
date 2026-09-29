@@ -413,16 +413,38 @@ export class Sky {
     }
   }
 
+  /** The far specks for this size and mood, painted once. */
+  _farTile(w, h, palette, dpr) {
+    const key = `${w}x${h}@${dpr}:${this.look.mood}`;
+    if (this._far?.key === key) return this._far.canvas;
+    const scale = Math.min(2, dpr || 1);
+    const c = canvas(w * scale, h * scale), g = c.getContext("2d");
+    g.scale(scale, scale);
+    for (const s of this.stars.far) {
+      g.globalAlpha = s.a * 0.8;
+      g.fillStyle = palette.stars[s.tint];
+      g.fillRect(s.x * w - s.r, s.y * h - s.r, s.r * 2, s.r * 2);
+    }
+    this._far = { key, canvas: c };
+    return c;
+  }
+
   _starfield(ctx, w, h, t, view, palette) {
     const { k, still } = view;
     const dim = 1 - view.focus * 0.25;
-    // far: specks, drawn as tiny squares — hundreds of them, so cheaply
+    // far: hundreds of specks, painted once into a tile the size of the view
+    // and only moved and scaled — one to four image draws instead of 420
     let z = Math.pow(k, 0.03);
-    for (const s of this.stars.far) {
-      ctx.globalAlpha = s.a * (still ? 0.8 : 0.55 + 0.45 * Math.sin(t * s.speed + s.phase)) * dim;
-      ctx.fillStyle = palette.stars[s.tint];
-      const d = s.r * 2;
-      this._eachPlace(s, w, h, view, t, z, (x, y) => ctx.fillRect(x - s.r, y - s.r, d, d));
+    {
+      const tile = this._farTile(w, h, palette, view.dpr);
+      const depth = 0.0275, tw = w * z, th = h * z;
+      const ox = ((view.pan.x * depth + t * depth * 18) % w + w) % w;
+      const oy = ((view.pan.y * depth) % h + h) % h;
+      const sx = w / 2 + (ox - w / 2) * z, sy = h / 2 + (oy - h / 2) * z;
+      ctx.globalAlpha = dim * (still ? 1 : 0.9 + 0.1 * Math.sin(t * 0.5));
+      for (let x = sx - Math.ceil(sx / tw) * tw; x < w; x += tw) {
+        for (let y = sy - Math.ceil(sy / th) * th; y < h; y += th) ctx.drawImage(tile, x, y, tw, th);
+      }
     }
     // far galaxies: faint smudges, all but still
     this.galaxies.forEach((gx, i) => {

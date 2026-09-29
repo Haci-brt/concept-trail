@@ -26,6 +26,8 @@ const ROPE_SLACK = 1.07;     // a string is a little longer than the gap it span
 const FIXED_DT = 1 / 60;
 const IGNITE_STEP = 0.34;    // seconds between one ring lighting up and the next
 const DIM = 0.2;             // how bright the stars off the open card's path stay
+const REACH = 140;           // how near two stars have to be to push each other apart
+const MAX_STEPS = 3;         // physics steps a frame may catch up; a slow frame drops time, not frames
 
 export const QUESTION_KINDS = {
   derinlestirme: { label: "Derinleştirme", tone: "depth", icon: "zoomIn" },
@@ -73,6 +75,44 @@ function hexToRgb(hex) {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
 }
 const rgba = (hex, a) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},${a})`; };
+
+// Soft lights, painted once per colour and then only stamped: a gradient
+// made fresh for every star in every frame was most of a frame's drawing.
+const SPRITES = new Map();
+function sprite(key, size, paint) {
+  let c = SPRITES.get(key);
+  if (!c) {
+    c = document.createElement("canvas");
+    c.width = c.height = size;
+    paint(c.getContext("2d"), size / 2);
+    SPRITES.set(key, c);
+  }
+  return c;
+}
+// the colour at the middle, fading to nothing at the edge
+const glowOf = (tone) => sprite(`g${tone}`, 64, (g, h) => {
+  const grad = g.createRadialGradient(h, h, 0, h, h, h);
+  grad.addColorStop(0, rgba(tone, 1));
+  grad.addColorStop(1, rgba(tone, 0));
+  g.fillStyle = grad;
+  g.fillRect(0, 0, h * 2, h * 2);
+});
+// a star's core: white at the heart, its colour at the rim
+const coreOf = (tone, rim) => sprite(`c${tone}${rim}`, 128, (g, h) => {
+  const grad = g.createRadialGradient(h, h, 0, h, h, h);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.45, rgba(tone, 1));
+  grad.addColorStop(1, rgba(tone, rim));
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(h, h, h, 0, Math.PI * 2);
+  g.fill();
+});
+function stamp(ctx, image, x, y, radius, alpha) {
+  if (alpha <= 0.003) return;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(image, x - radius, y - radius, radius * 2, radius * 2);
+}
 
 export class IdeaTree {
   constructor(host, handlers) {
@@ -579,10 +619,14 @@ export class IdeaTree {
 
   // ---------- physics ----------
   _step(dt) {
-    const stars = [...this.stars.values()].filter((s) => !s.leaving);
+    // the same physics as ever, written for 600 stars: no Math.hypot (slow in
+    // V8), no array built per rope per step, numbers not strings as grid keys
+    const held = this._drag?.star || null;
+    const stars = [];
+    for (const s of this.stars.values()) if (!s.leaving) { s.order = stars.length; stars.push(s); }
     // springs to where each star belongs, and between parent and child
     for (const s of stars) {
-      if (s === this._drag?.star) continue;
+      if (s === held) continue;
       const home = s.depth === 0 ? 0.08 : 0.012;
       s.vx += (s.tx - s.x) * home;
       s.vy += (s.ty - s.y) * home;
@@ -591,27 +635,46 @@ export class IdeaTree {
       if (string.leaving) continue;
       const a = this.stars.get(string.a), b = this.stars.get(string.b);
       if (!a || !b) continue;
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
       const f = (d - string.rest) * 0.02;
       const fx = dx / d * f, fy = dy / d * f;
-      if (b !== this._drag?.star) { b.vx -= fx; b.vy -= fy; }
+      if (b !== held) { b.vx -= fx; b.vy -= fy; }
       // a parent is heavier than its child: it is pulled, but less
-      if (a !== this._drag?.star && a.depth > 0) { a.vx += fx * 0.45; a.vy += fy * 0.45; }
+      if (a !== held && a.depth > 0) { a.vx += fx * 0.45; a.vy += fy * 0.45; }
     }
-    // stars keep their distance
-    for (let i = 0; i < stars.length; i++) {
-      for (let j = i + 1; j < stars.length; j++) {
-        const a = stars[i], b = stars[j];
-        const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
-        if (d2 > 140 * 140 || d2 < 0.01) continue;
-        const d = Math.sqrt(d2), f = Math.min(3, 900 / d2);
-        const fx = dx / d * f, fy = dy / d * f;
-        if (a !== this._drag?.star && a.depth > 0) { a.vx -= fx; a.vy -= fy; }
-        if (b !== this._drag?.star && b.depth > 0) { b.vx += fx; b.vy += fy; }
+    // stars keep their distance — only stars within reach push each other,
+    // so each looks at its own cell of a grid and the ones next to it
+    // instead of at every other star
+    const cells = new Map();
+    const key = (gx, gy) => gx * 65536 + gy;
+    for (const s of stars) {
+      s.gx = Math.floor(s.x / REACH);
+      s.gy = Math.floor(s.y / REACH);
+      const k = key(s.gx, s.gy);
+      const cell = cells.get(k);
+      if (cell) cell.push(s); else cells.set(k, [s]);
+    }
+    const reach2 = REACH * REACH;
+    for (const a of stars) {
+      const pushA = a !== held && a.depth > 0;
+      for (let gx = a.gx - 1; gx <= a.gx + 1; gx++) {
+        for (let gy = a.gy - 1; gy <= a.gy + 1; gy++) {
+          const cell = cells.get(key(gx, gy));
+          if (!cell) continue;
+          for (const b of cell) {
+            if (b.order <= a.order) continue;            // each pair once
+            const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+            if (d2 > reach2 || d2 < 0.01) continue;
+            const d = Math.sqrt(d2), f = Math.min(3, 900 / d2);
+            const fx = dx / d * f, fy = dy / d * f;
+            if (pushA) { a.vx -= fx; a.vy -= fy; }
+            if (b !== held && b.depth > 0) { b.vx += fx; b.vy += fy; }
+          }
+        }
       }
     }
     for (const s of stars) {
-      if (s === this._drag?.star) continue;
+      if (s === held) continue;
       s.vx *= 0.86;
       s.vy *= 0.86;
       s.x += s.vx;
@@ -621,25 +684,29 @@ export class IdeaTree {
     // weight. Slack, a rope hangs; pulled taut, it tugs at both of its stars,
     // the smaller one more — the note in the middle and a star in the hand
     // do not give.
-    const give = (s) => (s === this._drag?.star || s.depth === 0 ? 0 : 0.9 / s.r);
+    const give = (s) => (s === held || s.depth === 0 ? 0 : 0.9 / s.r);
+    // a giant tree's ropes settle in fewer passes — a little stretchier, but
+    // the frame keeps its pace (600 stars: 5.7 ms of ropes at four, measured)
+    const passes = this.strings.size > 250 ? 2 : 4;
     for (const string of this.strings.values()) {
       const a = this.stars.get(string.a), b = this.stars.get(string.b);
       if (!a || !b) continue;
-      for (const p of string.points) {
+      const pts = string.points, n = pts.length;
+      for (const p of pts) {
         const vx = (p.x - p.px) * 0.93, vy = (p.y - p.py) * 0.93;
         p.px = p.x; p.py = p.y;
         p.x += vx;
         p.y += vy + 0.07;                       // weight: strings hang, not bars
       }
-      const chain = [a, ...string.points, b];
       const seg = string.rest * ROPE_SLACK / (ROPE_JOINTS + 1);
       const ga = string.leaving ? 0 : give(a), gb = string.leaving ? 0 : give(b);
-      for (let iter = 0; iter < 4; iter++) {
-        for (let j = 0; j < chain.length - 1; j++) {
-          const p = chain[j], q = chain[j + 1];
-          const wp = j === 0 ? ga : 1, wq = j + 1 === chain.length - 1 ? gb : 1;
+      // the chain is a, the joints, b: link j joins (j === 0 ? a : pts[j-1]) to (j === n ? b : pts[j])
+      for (let iter = 0; iter < passes; iter++) {
+        for (let j = 0; j <= n; j++) {
+          const p = j === 0 ? a : pts[j - 1], q = j === n ? b : pts[j];
+          const wp = j === 0 ? ga : 1, wq = j === n ? gb : 1;
           if (!wp && !wq) continue;
-          const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1;
+          const dx = q.x - p.x, dy = q.y - p.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
           const share = (d - seg) / d / (wp + wq);
           p.x += dx * share * wp; p.y += dy * share * wp;
           q.x -= dx * share * wq; q.y -= dy * share * wq;
@@ -708,11 +775,19 @@ export class IdeaTree {
     ctx.translate(this.cam.x, this.cam.y);
     ctx.scale(this.cam.k, this.cam.k);
     const k = this.cam.k;
+    // what the screen shows, in the sky's own units, with a margin for glows
+    const margin = 90 / Math.min(1, k);
+    const view = { x0: -this.cam.x / k - margin, y0: -this.cam.y / k - margin,
+                   x1: (w - this.cam.x) / k + margin, y1: (h - this.cam.y) / k + margin };
+    const offScreen = (x0, y0, x1, y1) => x1 < view.x0 || x0 > view.x1 || y1 < view.y0 || y0 > view.y1;
+    // a gradient per string reads nicely on a small tree; on a big one it costs a frame
+    const blend = this.strings.size <= 160;
 
     // strings
     for (const string of this.strings.values()) {
       const a = this.stars.get(string.a), b = this.stars.get(string.b);
       if (!a || !b) continue;
+      if (offScreen(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y))) continue;
       const drawn = string.drawTo > string.drawFrom ? (t - string.drawFrom) / (string.drawTo - string.drawFrom) : 1;
       const fade = string.leaving ? Math.max(0, 1 - (t - (b.leftAt ?? t)) / 0.5) : 1;
       if (drawn <= 0 || fade <= 0) continue;
@@ -721,11 +796,15 @@ export class IdeaTree {
       let chain = [a, ...string.points, b];
       // the string from the note to the open card burns brighter
       const base = onPath ? 0.9 : string.waiting ? 0.55 : 0.32;
-      const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
-      grad.addColorStop(0, rgba(a.depth === 0 ? string.tone : a.tone, 1));
-      grad.addColorStop(1, rgba(string.tone, 1));
+      if (blend) {
+        const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        grad.addColorStop(0, rgba(a.depth === 0 ? string.tone : a.tone, 1));
+        grad.addColorStop(1, rgba(string.tone, 1));
+        ctx.strokeStyle = grad;
+      } else {
+        ctx.strokeStyle = string.tone;
+      }
       ctx.globalAlpha = base * lit * fade;
-      ctx.strokeStyle = grad;
       ctx.lineWidth = (onPath ? 2.1 : string.waiting ? 1.5 : 1.1) / Math.sqrt(k);
       ctx.beginPath();
       if (drawn < 1) {
@@ -759,14 +838,8 @@ export class IdeaTree {
         const p = ((t * 0.42 + (b.phase / (Math.PI * 2))) % 1);
         const idx = p * (chain.length - 1), j = Math.floor(idx), f = idx - j;
         const x = chain[j].x + (chain[j + 1].x - chain[j].x) * f, y = chain[j].y + (chain[j + 1].y - chain[j].y) * f;
-        const glow = ctx.createRadialGradient(x, y, 0, x, y, 7);
-        glow.addColorStop(0, rgba(onPath ? "#ffffff" : string.tone, 0.9 * lit * fade));
-        glow.addColorStop(1, rgba(string.tone, 0));
+        stamp(ctx, glowOf(onPath ? "#ffffff" : string.tone), x, y, 7, 0.9 * lit * fade);
         ctx.globalAlpha = 1;
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(x, y, 7, 0, Math.PI * 2);
-        ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
@@ -778,6 +851,7 @@ export class IdeaTree {
       const fade = (s.leaving ? Math.max(0, 1 - (t - s.leftAt) / 0.5) : 1) * s.lit;
       if (grow <= 0 || fade <= 0.01) continue;
       const r = s.r * (0.3 + 0.7 * easeOutBack(grow)) * (1 + 0.22 * s.hov);
+      if (offScreen(s.x - r * 6, s.y - r * 6, s.x + r * 6, s.y + r * 6)) continue;
       // just lit: a flash and a ring thrown outward
       const age = t - s.born;
       if (!still && age >= 0 && age < 0.9) {
@@ -797,13 +871,8 @@ export class IdeaTree {
       }
       const pulse = s.waiting && !still ? 0.5 + 0.5 * Math.sin(t * 2.4 + s.phase) : 0.5;
       const glowR = r * (s.waiting ? 4.2 + pulse * 1.8 : s.depth === 0 ? 5 : 2.6);
-      const glow = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glowR);
-      glow.addColorStop(0, rgba(s.tone, (s.waiting ? 0.55 + pulse * 0.3 : s.depth === 0 ? 0.5 : 0.22) * fade));
-      glow.addColorStop(1, rgba(s.tone, 0));
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, glowR, 0, Math.PI * 2);
-      ctx.fill();
+      stamp(ctx, glowOf(s.tone), s.x, s.y, glowR, (s.waiting ? 0.55 + pulse * 0.3 : s.depth === 0 ? 0.5 : 0.22) * fade);
+      ctx.globalAlpha = 1;
       // a waiting star sends out a slow ring, like a ping
       if (s.waiting && !still) {
         const p = ((t + s.phase) % 2.6) / 2.6;
@@ -814,14 +883,8 @@ export class IdeaTree {
         ctx.stroke();
       }
       // the core: white at the heart, the star's colour at the rim
-      const core = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
-      core.addColorStop(0, `rgba(255,255,255,${fade})`);
-      core.addColorStop(0.45, rgba(s.tone, fade));
-      core.addColorStop(1, rgba(s.tone, (s.waiting || s.depth === 0 ? 0.85 : 0.55) * fade));
-      ctx.fillStyle = core;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-      ctx.fill();
+      stamp(ctx, coreOf(s.tone, s.waiting || s.depth === 0 ? 0.85 : 0.55), s.x, s.y, r, fade);
+      ctx.globalAlpha = 1;
       if (s.waiting || s.depth === 0) {
         // a four-pointed glint, turning slowly
         const len = r * (s.depth === 0 ? 3.2 : 2.4) * (0.8 + pulse * 0.4), rot = still ? 0 : t * 0.25 + s.phase;
@@ -931,6 +994,10 @@ export class IdeaTree {
       this._last = now;
       this._time += dt;
       this._acc += dt;
+      // catching up on a slow frame with more steps made the next frame
+      // slower still (measured: 76 ms frames at 600 stars); past a few steps
+      // the sky just runs a little slow for a moment
+      this._acc = Math.min(this._acc, FIXED_DT * MAX_STEPS);
       while (this._acc >= FIXED_DT) { this._step(FIXED_DT); this._acc -= FIXED_DT; }
       this._camStep(dt);
       this._inertia(this._trackCamera(), dt);

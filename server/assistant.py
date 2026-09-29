@@ -198,6 +198,12 @@ CHAT_THROTTLE_S = 0.12
 # for a model gone wrong, set well past anything a normal session reaches.
 FOLLOWUP_FUSE = 8
 OPEN_QUESTION_FUSE = 12
+# Measured on Qwen3-4B (2026-09-29): told that 8 questions had waited 45
+# minutes, it still asked 5 more each pass. So the one case where the pace is
+# not the model's alone: this many unanswered and none settled lately — the
+# writer is not keeping up — and a pass adds at most one question. A writer
+# who answers is never held back by it.
+BACKLOG = 5
 HEALTH_INTERVAL_UP_S = 15
 HEALTH_INTERVAL_DOWN_S = 5
 LAUNCH_TIMEOUT_S = 240  # a 75 GB MoE checkpoint needs ~1 min cold, more on a busy disk
@@ -716,6 +722,9 @@ class Assistant:
         """How the writer is keeping up with the questions, for the model to
         pace itself by: how many wait, how long the oldest has waited, how
         many were settled lately."""
+        return self._pace(rel)["line"]
+
+    def _pace(self, rel: str) -> dict:
         questions = [n for n in self.notes.load(rel)["nodes"] if n["type"] == "question"]
         waiting = [n for n in questions if n.get("status") == "open"]
         now = datetime.now()
@@ -733,7 +742,8 @@ class Assistant:
             oldest = max(minutes_since(n.get("created")) for n in waiting)
             if oldest != float("inf"):
                 line += f" (en eskisi {max(1, round(oldest))} dakikadır bekliyor)"
-        return f"{line}. Son 30 dakikada sonuçlanan soru: {settled}."
+        return {"waiting": len(waiting), "settled": settled,
+                "line": f"{line}. Son 30 dakikada sonuçlanan soru: {settled}."}
 
     def _question_branches(self, rel: str, nodes: list[dict]) -> str:
         """Give the analysis model real ids and settled details from earlier turns."""
@@ -825,6 +835,8 @@ class Assistant:
             ]
             open_now = self.notes.open_questions(rel)
             room = OPEN_QUESTION_FUSE - len(open_now)
+            if not climbing and len(open_now) >= BACKLOG and self._pace(rel)["settled"] == 0:
+                room = min(room, 1)      # questions pile up unanswered: only the most important one
             if room <= 0:
                 return  # the fuse: the pass can still resolve or suggest edits
             asked = {fold(n["text"]) for n in open_now}
