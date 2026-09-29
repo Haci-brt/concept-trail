@@ -16,11 +16,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # 24.04 by name: ubuntu-latest moves to 26 in October 2026, and the
+        # Qt library names the window step installs are 24.04's
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -80,8 +82,8 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -96,7 +98,9 @@ jobs:
 
       - name: Kısayol, sunucu ve ilk açılış sihirbazı
         run: |
-          $desktop = [Environment]::GetFolderPath("Desktop")
+          $desktop = [Environment]::GetFolderPath("Desktop", "Create")
+          "masaüstü: $desktop"
+          Get-ChildItem $desktop -Filter *.lnk | ForEach-Object { "  $($_.Name)" }
           if (-not (Test-Path (Join-Path $desktop "Concept Trail.lnk"))) { throw "masaüstü kısayolu yok" }
           $app = Join-Path $env:LOCALAPPDATA "Programs\ConceptTrail"
           $vault = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Concept Trail"
@@ -107,6 +111,13 @@ jobs:
           $setup = Invoke-RestMethod http://127.0.0.1:8765/api/setup
           if (-not $setup.needed) { throw "ilk açılış sihirbazı açılmayacak" }
           "sihirbaz açılacak: $($setup.needed)"
+
+      - name: Hata olursa günlükler
+        if: failure()
+        run: |
+          $config = Join-Path $env:APPDATA "ConceptTrail\concept-trail.log"
+          if (Test-Path $config) { Get-Content $config -Tail 40 }
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA "Programs\ConceptTrail") -ErrorAction SilentlyContinue | Select-Object Name
 
       - name: Testler
         run: |

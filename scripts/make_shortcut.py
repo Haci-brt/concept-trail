@@ -32,7 +32,9 @@ WINDOWS_SCRIPT = (
     "$ErrorActionPreference = 'Stop'; "
     "$shell = New-Object -ComObject WScript.Shell; "
     "foreach ($where in $env:CT_WHERE.Split(',')) { "
-    "  $dir = [Environment]::GetFolderPath($where); "
+    # 'Create': an account with no Desktop folder yet (a CI runner) gets one
+    # instead of an empty path
+    "  $dir = [Environment]::GetFolderPath($where, 'Create'); "
     "  $link = $shell.CreateShortcut((Join-Path $dir ($env:CT_NAME + '.lnk'))); "
     "  $link.TargetPath = $env:CT_TARGET; $link.Arguments = $env:CT_ARGS; "
     "  $link.WorkingDirectory = $env:CT_DIR; $link.IconLocation = $env:CT_ICON + ',0'; "

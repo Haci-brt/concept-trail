@@ -20,6 +20,17 @@ $Vault = if ($env:CT_VAULT) { $env:CT_VAULT } else { Join-Path ([Environment]::G
 $Source = if ($env:CT_SOURCE) { $env:CT_SOURCE } else { "https://github.com/$Repo/archive/refs/heads/$Branch.zip" }
 
 function Step([string]$text) { Write-Host "> $text" -ForegroundColor Cyan }
+
+# A program run from here may write a harmless warning to stderr; with
+# "Stop" in force, Windows PowerShell 5.1 turns that into a fatal error when
+# its output is redirected (as in CI). So stderr is let through, and the
+# exit code decides.
+function Invoke-Native([string]$what, [scriptblock]$command) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $command } finally { $ErrorActionPreference = $previous }
+    if ($LASTEXITCODE -ne 0) { throw "$what (çıkış kodu $LASTEXITCODE)" }
+}
 function Done([string]$text) { Write-Host "+ $text" -ForegroundColor Green }
 
 function Find-Python {
@@ -88,21 +99,20 @@ $Venv = Join-Path $AppDir ".venv"
 $VenvPython = Join-Path $Venv "Scripts\python.exe"
 if (-not (Test-Path $VenvPython)) {
     Step "Python ortamı oluşturuluyor"
-    & $Python -m venv $Venv
-    if ($LASTEXITCODE -ne 0) { throw "Python ortamı oluşturulamadı." }
+    Invoke-Native "Python ortamı oluşturulamadı." { & $Python -m venv $Venv }
 }
 Step "Bağımlılıklar kuruluyor (ilk kurulumda birkaç dakika sürebilir; PyQt6 WebEngine büyük)"
-& $VenvPython -m pip install --quiet --disable-pip-version-check --upgrade pip
-& $VenvPython -m pip install --quiet --disable-pip-version-check -r (Join-Path $AppDir "requirements.txt")
-if ($LASTEXITCODE -ne 0) { throw "Bağımlılıklar kurulamadı; yukarıdaki pip hatasına bak." }
+Invoke-Native "pip güncellenemedi." { & $VenvPython -m pip install --quiet --disable-pip-version-check --upgrade pip }
+Invoke-Native "Bağımlılıklar kurulamadı; yukarıdaki pip hatasına bak." {
+    & $VenvPython -m pip install --quiet --disable-pip-version-check -r (Join-Path $AppDir "requirements.txt")
+}
 Done "Bağımlılıklar kuruldu"
 
 # 4. Notes folder and launchers
 New-Item -ItemType Directory -Force -Path $Vault | Out-Null
 if (-not $env:CT_NO_SHORTCUT) {
     Step "Masaüstü ve Başlat menüsü kısayolu oluşturuluyor"
-    & $VenvPython (Join-Path $AppDir "scripts\make_shortcut.py") --vault $Vault
-    if ($LASTEXITCODE -ne 0) { throw "Kısayol oluşturulamadı." }
+    Invoke-Native "Kısayol oluşturulamadı." { & $VenvPython (Join-Path $AppDir "scripts\make_shortcut.py") --vault $Vault }
 }
 
 Write-Host ""
