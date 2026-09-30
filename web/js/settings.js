@@ -2,11 +2,13 @@
 // each job to one, set the remote budget. This is the UI over /api/providers.
 import { api } from "./api.js";
 import { openMenu } from "./dialogs.js";
+import { identifyKey, KEY_PROVIDERS, matchesProviderUrl } from "./key-identity.js";
 import { icon } from "./icons.js";
 import { locale } from "./i18n.js";
 import { debounce, esc, html, toast } from "./util.js";
 
 const KEY_MASK = "••••";
+const GEMINI_HINT = KEY_PROVIDERS.find((provider) => provider.id === "gemini");
 
 const ROLE_INFO = [
   ["analysis", "Not izleme ve araştırma", "15 saniye durduğunda ya da bir şey yapıştırdığında notu sessizce inceler; araştırmayı da yürütür."],
@@ -29,6 +31,10 @@ const PRESETS = [
     extras: { reasoning: { enabled: false } } },
   { key: "groq", label: "Groq", base_url: "https://api.groq.com/openai", model: "llama-3.3-70b-versatile",
     kind: "remote", health: "models", token_field: "max_tokens" },
+  { key: "xai", label: "xAI", base_url: "https://api.x.ai", model: "grok-4.7",
+    kind: "remote", health: "models", token_field: "max_tokens" },
+  { key: "gemini", label: "Google Gemini", base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.5-flash-lite", kind: "remote", health: "models", token_field: "max_tokens", tools: true },
   { key: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-chat",
     kind: "remote", health: "models", token_field: "max_tokens" },
   { key: "local", label: "Yerel llama-server", base_url: "http://127.0.0.1:8899", model: "",
@@ -127,6 +133,11 @@ export class SettingsDialog {
     this.el.addEventListener("input", (e) => {
       // only a provider card's fields change the role pickers; the token does not
       if (e.target.matches("[data-f]") && e.target.closest(".provider")) this._renderRolesSoon();
+      if (e.target.matches('.provider [data-f="api_key"]')) this._showKeyIdentity(e.target);
+      if (e.target.matches('.provider [data-f="base_url"]')) {
+        const key = e.target.closest(".provider").querySelector('[data-f="api_key"]');
+        if (key.value && key.value !== KEY_MASK) this._showKeyIdentity(key);
+      }
     });
     this.el.addEventListener("change", (e) => {
       if (e.target.matches("[data-slot]")) this.roles = this._readRoles();
@@ -160,7 +171,8 @@ export class SettingsDialog {
       <div class="p-grid">
         <label>Adres<input class="field" data-f="base_url" value="${esc(provider.base_url || "")}" spellcheck="false"></label>
         <label>Model<input class="field" data-f="model" value="${esc(provider.model || "")}" placeholder="${remote ? "ör. gpt-4o-mini" : "yerelde gerekmez"}" spellcheck="false"></label>
-        <label>API anahtarı<input class="field" data-f="api_key" type="password" value="${provider.has_key ? KEY_MASK : ""}" placeholder="${remote ? "gerekli" : "gerekmez"}" spellcheck="false" autocomplete="off"></label>
+        <div class="p-key-field"><label>API anahtarı<input class="field" data-f="api_key" type="password" value="${provider.has_key ? KEY_MASK : ""}" placeholder="${remote ? "gerekli" : "gerekmez"}" spellcheck="false" autocomplete="off"></label>
+          <span class="p-key-result" role="status" aria-live="polite"></span></div>
         <label>Sağlık kontrolü<select class="field" data-f="health">
           <option value="llama"${provider.health === "llama" ? " selected" : ""}>llama.cpp (/health)</option>
           <option value="models"${provider.health === "models" ? " selected" : ""}>OpenAI (/v1/models)</option>
@@ -204,6 +216,44 @@ export class SettingsDialog {
         enabled: !card.classList.contains("off"),
       };
     });
+  }
+
+  _showKeyIdentity(input) {
+    const card = input.closest(".provider");
+    const result = card.querySelector(".p-key-result");
+    const key = input.value.trim();
+    if (!key || key === KEY_MASK) { result.textContent = ""; return; }
+    const found = identifyKey(key);
+    if (!found) {
+      if (key.startsWith("AIza")) {
+        const matching = matchesProviderUrl(card.querySelector('[data-f="base_url"]').value, GEMINI_HINT);
+        result.innerHTML = matching
+          ? "Google API anahtarı olabilir. Gemini bağlantısını Test et ile doğrula."
+          : 'Google API anahtarı olabilir. Gemini için <button type="button" class="btn btn-sm" data-act="apply-gemini-key">Gemini olarak ayarla</button>';
+        return;
+      }
+      result.textContent = "Sağlayıcı anahtar biçiminden belirlenemedi; adresi kendin seç.";
+      return;
+    }
+    const current = card.querySelector('[data-f="base_url"]').value;
+    const matching = matchesProviderUrl(current, found);
+    result.innerHTML = matching
+      ? `${esc(found.label)} anahtarı olarak tanındı (biçimine göre).`
+      : `${esc(found.label)} anahtarı olarak tanındı. <button type="button" class="btn btn-sm" data-act="apply-key">Bu sağlayıcıyı kullan</button>`;
+  }
+
+  _applyIdentifiedKey(card, tentative = false) {
+    const found = tentative ? GEMINI_HINT : identifyKey(card.querySelector('[data-f="api_key"]').value);
+    if (!found) return;
+    card.querySelector('[data-f="label"]').value = found.label;
+    card.querySelector('[data-f="base_url"]').value = found.base_url;
+    card.querySelector('[data-f="model"]').value = found.model;
+    card.querySelector('[data-f="health"]').value = "models";
+    if (found.id === "gemini") card.querySelector('[data-f="tools"]').checked = true;
+    card.dataset.kind = "remote";
+    card.querySelector(".p-kind").textContent = "Bulut";
+    this._showKeyIdentity(card.querySelector('[data-f="api_key"]'));
+    this._renderRoles();
   }
 
   /** What the pickers currently say, so redrawing them never undoes a choice. */
@@ -362,6 +412,8 @@ export class SettingsDialog {
     }
     if (act === "restart-tools") return this._restartTools(e.target.closest("[data-act]"));
     if (!card) return;
+    if (act === "apply-key") return this._applyIdentifiedKey(card);
+    if (act === "apply-gemini-key") return this._applyIdentifiedKey(card, true);
     if (act === "remove") {
       card.remove();
       this._renderRoles();
@@ -416,6 +468,15 @@ export class SettingsDialog {
     const providers = this._readCards();
     const roles = this._readRoles();
     this.errorEl.textContent = "";
+    for (const provider of providers) {
+      const found = identifyKey(provider.api_key);
+      if (!found) continue;
+      const matching = matchesProviderUrl(provider.base_url, found);
+      if (!matching) {
+        this.errorEl.textContent = `${found.label} anahtarı tanındı. Adresi düzeltmek için “Bu sağlayıcıyı kullan” düğmesine bas.`;
+        return false;
+      }
+    }
     // saving a changed token restarts the tool servers, which takes a couple of
     // seconds — without this the dialog just sits there looking broken
     const button = silent ? null : this.el.querySelector('footer [data-act="save"]');

@@ -75,8 +75,14 @@ class Provider:
     tools: bool = False        # does this endpoint accept `tools` / return tool_calls?
 
     @property
+    def api_root(self) -> str:
+        base = self.base_url.rstrip("/")
+        # Google's OpenAI-compatible endpoint already includes its API version.
+        return base if base.endswith("/v1beta/openai") else f"{base}/v1"
+
+    @property
     def chat_url(self) -> str:
-        return f"{self.base_url.rstrip('/')}/v1/chat/completions"
+        return f"{self.api_root}/chat/completions"
 
     @property
     def health_url(self) -> str | None:
@@ -84,7 +90,7 @@ class Provider:
         if self.health == "llama":
             return f"{base}/health"
         if self.health == "models":
-            return f"{base}/v1/models"
+            return f"{self.api_root}/models"
         return None
 
     @property

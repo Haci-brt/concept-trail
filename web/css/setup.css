@@ -82,6 +82,12 @@
 .su-field > span { font-size: 12px; font-weight: 650; color: var(--text-2); }
 .su-field small { color: var(--text-faint); font-size: 11.5px; line-height: 1.45; }
 .su-field .field { width: 100%; }
+.su-key-first { padding: 12px 14px 6px; margin: 4px 0 12px; border: 1px solid var(--accent-border); border-radius: 14px; background: var(--accent-softer); }
+.su-key-first .su-field { margin-bottom: 5px; }
+.su-key-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; margin: -4px 0 10px; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
+.su-key-first .su-key-result { margin: 0 0 6px; }
+.su-key-result span { display: inline-flex; align-items: center; gap: 5px; }
+.su-key-result .btn { flex: none; }
 .su-note { display: flex; align-items: flex-start; gap: 7px; margin: 2px 0 10px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .su-note svg { flex: none; margin-top: 2px; color: var(--accent); }
 .su-error {

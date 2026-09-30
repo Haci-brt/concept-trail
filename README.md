@@ -122,7 +122,7 @@ python main.py --server     # server only
 python scripts/make_shortcut.py   # desktop and Start menu shortcut with the app icon
 ```
 
-On first start a short wizard connects the assistant to a model: **OpenRouter** with a key (recommended; a link takes you to the key page), a model **already running on this computer** (Ollama, LM Studio and llama.cpp are found on their usual ports), or **any other OpenAI-compatible service**. It makes one real call before saving anything, so a wrong key or model name is said in plain words right there. Put aside, it waits behind the model button in the title bar; Settings → Models has it too, next to the full provider editor. Notes live in `./notes` by default (change it with `--vault`).
+On first start a short wizard connects the assistant to a model: **OpenRouter** with a key (recommended), **Google Gemini** with an AI Studio key (default `gemini-3.5-flash-lite`), a model **already running on this computer** (Ollama, LM Studio and llama.cpp are found on their usual ports), or **any other OpenAI-compatible service**. Key-page links are provided for Gemini and OpenRouter. It makes one real call before saving anything, so a wrong key or model name is said in plain words right there. Put aside, it waits behind the model button in the title bar; Settings → Models has it too, next to the full provider editor. Notes live in `./notes` by default (change it with `--vault`).
 
 The research tools are built into the app and need nothing else installed:
 - **GitHub** (`server/github.py`): public repositories only, respects GitHub's rate limits, caches results for an hour. A token is optional (entered in the settings); with one, searches run 2 s apart, without one 6 s apart.

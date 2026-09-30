@@ -313,10 +313,20 @@ def supports_tools(provider, timeout: float = 4.0) -> bool | None:
 
 def probe(provider, timeout: float = 30.0) -> str:
     """Smallest possible real call — proves the address, key and model name work."""
-    return _complete(
+    # Gemini Flash models can spend output tokens on thinking before emitting
+    # text. Eight tokens can produce an HTTP 200 with an empty visible answer.
+    gemini = provider.api_root.endswith("/v1beta/openai")
+    max_tokens = 128 if gemini else 8
+    probe_provider = provider
+    if gemini and "reasoning_effort" not in provider.extras and "google" not in provider.extras:
+        probe_provider = dataclasses.replace(provider, extras={**provider.extras, "reasoning_effort": "low"})
+    answer = _complete(
         [{"role": "user", "content": "Yalnızca 'tamam' yaz."}],
-        temperature=0.0, max_tokens=8, provider=provider, timeout=timeout,
+        temperature=0.0, max_tokens=max_tokens, provider=probe_provider, timeout=timeout,
     ).strip()
+    if not answer:
+        raise ProviderError("Model boş yanıt verdi; model adını veya sağlayıcı ayarlarını kontrol et.")
+    return answer
 
 
 def note_context(full_text: str, span: list[int] | None = None) -> str:
