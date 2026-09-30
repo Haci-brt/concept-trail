@@ -2,7 +2,7 @@
 
 # Concept Trail
 
-[English](README.md) · **Türkçe** · **[Tanıtım: neyi çözer, baştan sona bir örnekle](docs/TANITIM.md)**
+[English](README.md) · **Türkçe** · **[Tanıtım: neyi çözer, baştan sona bir örnekle](docs/TANITIM.md)** · [Değişiklik günlüğü](CHANGELOG.md)
 
 *Yazılım fikirleri için bir düşünme alanı: sen yapmaya başlamadan önce açık soruları sorar, fikri daha önce kimin yaptığını araştırır ve senin onayın olmadan notuna tek kelime yazmaz.*
 
@@ -96,9 +96,30 @@ irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | 
 curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
 ```
 
-Komut uygulamayı indirir (Windows'ta `%LOCALAPPDATA%\Programs\ConceptTrail`, diğerlerinde `~/.local/share/concept-trail`), kendine ait bir Python ortamı kurar, **masaüstüne ve Başlat menüsüne logolu bir Concept Trail kısayolu** koyar ve uygulamayı açar. Python 3.10+ gerekir; Windows'ta yoksa winget ile kurmayı önerir. Notların **Belgeler\Concept Trail** klasöründe durur. Güncellemek için aynı komutu yeniden çalıştır — kod yenilenir, notlar ve ortam korunur. Kaldırmak için uygulama klasörünü ve kısayolları silmek yeter; notlar yerinde kalır.
+Komut uygulamayı indirir (Windows'ta `%LOCALAPPDATA%\Programs\ConceptTrail`, diğerlerinde `~/.local/share/concept-trail`), kendine ait bir Python ortamı kurar, **masaüstüne ve Başlat menüsüne logolu bir Concept Trail kısayolu** koyar ve uygulamayı açar. Python 3.10+ gerekir; Windows'ta yoksa winget ile kurmayı önerir. Notların **Belgeler\Concept Trail** klasöründe durur. Güncellemek için aynı komutu yeniden çalıştır — kod yenilenir, notlar ve ortam korunur; uygulama açıksa komut önce kapatmanı ister. Yeni bir sürüm çıkıp çıkmadığını uygulamanın içinden de sorabilirsin: Ayarlar → Sürüm → **Güncellemeleri denetle** (uygulama bunu kendiliğinden hiç yapmaz). Neyin değiştiği: [CHANGELOG.md](CHANGELOG.md). Kaldırmak için aşağıdaki [Kaldırma](#kaldırma) bölümüne bak.
 
 > Windows'ta ve Linux'ta uçtan uca denendi (temiz bir Debian: kurulum, kısayollar, sunucu, sanal ekranda masaüstü penceresi). Her push'ta kurulum betikleri gerçek Ubuntu, macOS ve Windows makinelerinde çalışır (`.github/workflows/kurulum.yml`). Qt'nin web görünümünün istediği sistem kütüphaneleri olmayan bir Linux'ta uygulama kendi penceresi yerine tarayıcıda açılır. Web araması her yerde çalışır: varsa Chromium ailesinden bir tarayıcıyla, yoksa tarayıcısız.
+
+### Kaldırma
+**Windows** (PowerShell'e yapıştır):
+
+```powershell
+irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/uninstall.ps1 | iex
+```
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/uninstall.sh | bash
+```
+
+Uygulama klasöründeki kopya da aynı işi yapar: `powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\ConceptTrail\uninstall.ps1"` ya da `bash ~/.local/share/concept-trail/uninstall.sh`.
+
+- Uygulama klasörünü ve kurulumun koyduğu kısayolları (masaüstü, Başlat menüsü, Linux'ta uygulama menüsü) kaldırır. Başka bir klasörü açan kısayola dokunmaz.
+- Önce uygulamayı kapat: açıksa betik hiçbir şeyi silmeden durur ve kapatmanı ister.
+- Ayar klasörünü silmeden önce sorar (varsayılan cevap "hayır"): Windows'ta `%APPDATA%\ConceptTrail`, macOS ve Linux'ta `~/.config/ConceptTrail`. Model sağlayıcıların, **API anahtarların** ve tercihlerin orada durur; bırakırsan yeniden kurduğunda kaldığın yerden devam edersin.
+- **Notlarına dokunmaz.** Belgeler\Concept Trail yerinde kalır. Notların uygulama klasörünün içindeyse (`notes`, elle `--vault` vermeden çalıştırdıysan), onları silmek için ayrıca `sil` yazman gerekir; yazmazsan notlar yerinde bırakılır.
+- Kurulumda `CT_APP_DIR` verdiysen kaldırırken de aynısını ver. Kurulum betiği gibi, Concept Trail kurulumuna benzemeyen bir klasörü silmeyi reddeder.
 
 ### Elle (geliştirme için)
 
@@ -119,16 +140,21 @@ Araştırmanın araçları uygulamanın içindedir, başka bir kurulum istemez:
 
 ## Yapı
 ```
+main.py       giriş noktası: masaüstü penceresi, --browser ya da --server
 server/       FastAPI sunucusu: asistan, karar merdiveni, araştırma, sağlayıcılar, bütçe
 core/         model istemcisi: istemler, ayrıştırıcılar, düşünme bütçesi
 web/          arayüz (derleme adımı olmayan ES modülleri); web/locales çeviri sözlükleri
 desktop/      PyQt6 masaüstü kabuğu ve asistan kartı (HUD)
+config/       search-tools-mcp.json: araştırma için isteğe bağlı ek MCP arama sunucuları
 assets/icon/  uygulama logosu: ana görsel concept-trail.png; build_icons.py bütün boyutları ve .ico'yu üretir
 scripts/      make_shortcut.py: masaüstü / Başlat menüsü kısayolu
-docs/         tanıtım, baştan sona bir örnekle (TANITIM.md, INTRODUCTION.md)
+docs/         tanıtım, baştan sona bir örnekle (TANITIM.md, INTRODUCTION.md); test etme (TEST.md)
 install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
+uninstall.ps1 kaldırma (Windows); uninstall.sh macOS / Linux için
+CHANGELOG.md  sürümler ve değişiklikler; sürümün tek kaynağı server/settings.py (VERSION)
 tests/        pytest; tests/e2e gerçek tarayıcıda uçtan uca testler
 testkit/      test ortamı (python -m testkit): sahte model ve örnek notlar
+.github/      CI: kurulum betikleri ve testler Ubuntu, macOS ve Windows'ta
 ```
 
 ```bash

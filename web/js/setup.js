@@ -13,7 +13,7 @@ import { openExternal } from "./desktop.js";
 import { icon, logo } from "./icons.js";
 import { locale } from "./i18n.js";
 import { identifyKey, matchesProviderUrl } from "./key-identity.js";
-import { esc, html, toast } from "./util.js";
+import { esc, html, toast, trapFocus } from "./util.js";
 
 const LOCAL_KINDS = [
   { id: "ollama", label: "Ollama", base_url: "http://127.0.0.1:11434", health: "models" },
@@ -61,6 +61,7 @@ export class SetupWizard {
       <footer class="su-foot"></footer>
     </section>`);
     document.body.append(this.overlay, this.el);
+    this._releaseFocus = trapFocus(this.el);
     requestAnimationFrame(() => { this.overlay.classList.add("in"); this.el.classList.add("in"); });
     this.el.addEventListener("click", (e) => this._click(e));
     this.el.addEventListener("input", (e) => this._input(e));
@@ -82,6 +83,7 @@ export class SetupWizard {
     document.removeEventListener("keydown", this._key, true);
     const el = this.el, overlay = this.overlay;
     this.el = null;
+    this._releaseFocus?.();
     el.classList.remove("in");
     overlay.classList.remove("in");
     setTimeout(() => { el.remove(); overlay.remove(); }, 260);

@@ -9,10 +9,18 @@ import json
 import os
 import shutil
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
 HISTORY_LIMIT = 400
+WAITING_LIMIT = 600      # waiting events kept past HISTORY_LIMIT, a bound all the same
+
+
+def still_waiting(event: dict) -> bool:
+    if event.get("type") == "question":
+        return event.get("status") == "open"
+    return event.get("type") in ("summary", "edit", "research") and event.get("status") == "pending"
 
 
 def now_iso() -> str:
@@ -24,6 +32,78 @@ def _atomic_write_json(path: Path, data) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, path)
+
+
+# Damaged files met this run, oldest first. Each was set aside, not overwritten;
+# the app tells the pages about them as a flash (notices_to_tell).
+RECOVERED: list[dict] = []
+_recovered_lock = threading.Lock()
+_notify = None
+
+
+def set_recovery_notifier(callback) -> None:
+    """Called after every set_aside, so a page already open hears at once."""
+    global _notify
+    _notify = callback
+
+
+def set_aside(path: Path) -> Path | None:
+    """A file that exists but cannot be parsed is renamed to
+    <name>.corrupt-<time> before the caller goes on with defaults: the next
+    save would otherwise overwrite whatever could still be rescued from it
+    (for providers.json, the API keys). A missing file never comes here."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = path.with_name(f"{path.name}.corrupt-{stamp}")
+    n = 2
+    while target.exists():
+        target = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+        n += 1
+    try:
+        os.replace(path, target)
+    except OSError:
+        try:
+            shutil.copy2(path, target)      # locked by another program: a copy still saves it
+        except OSError:
+            return None
+    with _recovered_lock:
+        RECOVERED.append({"file": str(path), "moved_to": str(target), "time": now_iso(), "told": None})
+    if _notify is not None:
+        try:
+            _notify()
+        except Exception:
+            pass
+    return target
+
+
+def notices_to_tell(window: float = 60.0) -> list[dict]:
+    """The damaged files a page connecting now should hear about: those not yet
+    told, and those first told under a minute ago — the desktop's window and
+    its HUD connect a moment apart, and only one of them shows flashes. A
+    reload later on does not bring the notice back."""
+    now = time.monotonic()
+    with _recovered_lock:
+        fresh = [notice for notice in RECOVERED if notice["told"] is None or now - notice["told"] < window]
+        for notice in fresh:
+            if notice["told"] is None:
+                notice["told"] = now
+    return fresh
+
+
+def read_json(path: Path, expect: type = dict):
+    """The parsed file, or None when it is missing or damaged — a damaged one
+    (unparseable, or not the expected shape) is set aside first."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None                         # missing, or locked right now: not damaged
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))  # a BOM from a hand edit in Notepad is fine
+    except ValueError:                      # bad JSON or bad UTF-8
+        data = None
+    if not isinstance(data, expect):
+        set_aside(path)
+        return None
+    return data
 
 
 MAX_ASSISTANT_TEXTS = 60     # a long note's worth; the oldest drop off
@@ -63,21 +143,33 @@ class NoteStore:
         self.dir = vault.meta_dir / "notes"
         self.lock = threading.RLock()
         self._cache: dict[str, dict] = {}
+        self._moved: dict[str, str] = {}   # old path -> new, for work that started before a rename
 
     def _file(self, rel: str) -> Path:
         return self.dir / f"{rel}.json"
 
+    def current(self, rel: str) -> str:
+        """Where a note is now. A pass or a chat that began before a rename
+        still holds the old path; its questions used to land there, under a
+        note that no longer existed. Followed only while nothing is at the
+        old path again — a new note of that name starts clean."""
+        with self.lock:
+            for _ in range(8):
+                if (self.vault.root / rel).exists():
+                    return rel
+                moved = next(((old, new) for old, new in self._moved.items()
+                              if rel == old or rel.startswith(old + "/")), None)
+                if moved is None:
+                    return rel
+                rel = moved[1] + rel[len(moved[0]):]
+            return rel
+
     def load(self, rel: str) -> dict:
         with self.lock:
+            rel = self.current(rel)
             if rel in self._cache:
                 return self._cache[rel]
-            state = None
-            path = self._file(rel)
-            if path.is_file():
-                try:
-                    state = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    state = None
+            state = read_json(self._file(rel))
             if state is None:
                 legacy = (self.vault.root / rel).with_suffix(".tree.json")
                 if legacy.is_file():
@@ -91,7 +183,8 @@ class NoteStore:
 
     def save(self, rel: str) -> None:
         with self.lock:
-            state = self._cache.get(rel)
+            state = self._cache.get(self.current(rel))
+            rel = self.current(rel)
             if state is None:
                 return
             try:
@@ -156,6 +249,8 @@ class NoteStore:
     def moved(self, old_rel: str, new_rel: str) -> None:
         """A note or folder was renamed/moved; carry its state along."""
         with self.lock:
+            self._moved[old_rel] = new_rel
+            self._moved.pop(new_rel, None)           # moved back: the old way round no longer holds
             for rel in list(self._cache):
                 if rel == old_rel or rel.startswith(old_rel + "/"):
                     self._cache[new_rel + rel[len(old_rel):]] = self._cache.pop(rel)
@@ -193,15 +288,17 @@ class HistoryStore:
     def __init__(self, vault):
         self.path = vault.meta_dir / "history.json"
         self.lock = threading.RLock()
-        try:
-            self.items: list[dict] = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            self.items = []
+        self.items: list[dict] = read_json(self.path, expect=list) or []
 
     def add(self, event: dict) -> None:
         with self.lock:
             self.items.insert(0, event)
-            del self.items[HISTORY_LIMIT:]
+            # only what is settled ages out: a question still waiting for its
+            # answer, or a proposal for its approval, dropped out of the panel
+            # after a few busy notes while the tree still showed it
+            if len(self.items) > HISTORY_LIMIT:
+                waiting = [e for e in self.items[HISTORY_LIMIT:] if still_waiting(e)]
+                self.items[HISTORY_LIMIT:] = waiting[:WAITING_LIMIT]
             self._save()
 
     def find(self, event_id: str) -> dict | None:

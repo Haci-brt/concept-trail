@@ -131,16 +131,19 @@ The research tools are built into the app and need nothing else installed:
 
 ## Layout
 ```
+main.py       entry point: desktop window, --browser or --server
 server/       FastAPI server: assistant, decision ladder, research, providers, budget
 core/         model client: prompts, parsers, thinking budget
 web/          interface (ES modules, no build step); web/locales holds the translations
 desktop/      PyQt6 desktop shell and the assistant card (HUD)
+config/       search-tools-mcp.json: optional extra MCP search servers for research
 assets/icon/  app icon: the concept-trail.png master; build_icons.py makes every size and the .ico
 scripts/      make_shortcut.py: desktop / Start menu shortcut
-docs/         the introduction, with a worked example (INTRODUCTION.md, TANITIM.md)
+docs/         the introduction, with a worked example (INTRODUCTION.md, TANITIM.md); testing (TEST.md)
 install.ps1   one-command install for Windows; install.sh for macOS / Linux
 tests/        pytest; tests/e2e runs the real app in a real browser
 testkit/      the test environment (python -m testkit): a stand-in model and sample notes
+.github/      CI: the installers and the tests on Ubuntu, macOS and Windows
 ```
 
 ```bash

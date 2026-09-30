@@ -52,8 +52,9 @@ def test_zooming_out_at_the_edge_does_not_fling_the_stars(page):
     assert moved["peak"] <= moved["rest"] + 8, moved
 
 
-@pytest.mark.parametrize("theme,mood", [("takimyildiz", "night"), ("dark", "forest"), ("gunbatimi", "dusk"),
-                                        ("parsomen", "sepia"), ("buzul", "polar"), ("kontrast", "black")])
+@pytest.mark.parametrize("theme,mood", [("light", "night"), ("takimyildiz", "night"), ("dark", "forest"),
+                                        ("gunbatimi", "dusk"), ("parsomen", "sepia"), ("buzul", "polar"),
+                                        ("kontrast", "black")])
 def test_each_theme_gives_the_tree_its_own_sky(page, theme, mood):
     open_tree(page, "Bitki hatırlatıcı")
     page.page.locator("#themeBtn").click()

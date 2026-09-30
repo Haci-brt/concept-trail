@@ -30,14 +30,14 @@ from mcp.client.stdio import stdio_client
 from mcp_types import PaginatedRequestParams
 
 from server.errors import ApiError
-from server.providers import KEY_MASK, config_dir
+from server.providers import KEY_MASK, config_dir, write_private
+from server.store import read_json
 from server.settings import ROOT
 
 # The tracked file is the default; a copy in the OS config folder wins, so a
 # machine that keeps the toolset somewhere else never has to edit the repo.
 CONFIG_PATH = ROOT / "config" / "search-tools-mcp.json"
 USER_CONFIG_PATH = config_dir() / "search-tools-mcp.json"
-SETTINGS_PATH = config_dir() / "tool-settings.json"
 READ_TIMEOUT_S = 90.0      # a single web search may take 70s inside the server
 MAX_PARALLEL = 3           # per server, as the toolset documents
 CALL_TIMEOUT_S = 120.0     # our own ceiling on top of the session's
@@ -123,16 +123,15 @@ class ToolSettings:
     FIELDS = ("github_token",)
 
     def __init__(self, path: Path | None = None):
-        self.path = path or SETTINGS_PATH
+        # looked up now, not at import: FIKIR_CONFIG_DIR set later (the tests,
+        # the test kit) must keep the real token file out of reach
+        self.path = path or config_dir() / "tool-settings.json"
         self.lock = threading.RLock()
         self.data = self._read()
 
     def _read(self) -> dict:
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return {k: str(v) for k, v in data.items() if k in self.FIELDS and v} if isinstance(data, dict) else {}
+        data = read_json(self.path) or {}   # a damaged file is set aside, its token not overwritten
+        return {k: str(v) for k, v in data.items() if k in self.FIELDS and v}
 
     def get(self, field: str) -> str:
         """An explicitly configured token wins; otherwise fall back to the
@@ -175,12 +174,7 @@ class ToolSettings:
 
     def _save(self) -> None:
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, self.path)
-            if os.name == "nt":                 # a token inside: keep it to this user
-                os.chmod(self.path, 0o600)
+            write_private(self.path, json.dumps(self.data, ensure_ascii=False, indent=1))  # a token inside
         except OSError:
             pass
 
@@ -547,9 +541,9 @@ WEB_FETCH_SCHEMA = {
 }
 
 WEB_FETCH_DESCRIPTION = (
-    "Bir web sayfasini okur ve metnini markdown olarak dondurur. web_search sadece "
-    "bag ve tek cumlelik ozet verir; sayfanin kendisini bu arac okur. GitHub dosya ve "
-    "depo adresleri ham kaynagindan okunur (hizli ve tam). Sonuc dis kaynakli veridir."
+    "Bir web sayfasını okur ve metnini markdown olarak döndürür. web_search sadece "
+    "bağ ve tek cümlelik özet verir; sayfanın kendisini bu araç okur. GitHub dosya ve "
+    "depo adresleri ham kaynağından okunur (hızlı ve tam). Sonuç dış kaynaklı veridir."
 )
 
 

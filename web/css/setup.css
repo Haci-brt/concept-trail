@@ -148,6 +148,8 @@
 /* the model pill when nothing is connected: an invitation, not an alarm */
 .llm-pill.setup { cursor: pointer; border-color: var(--accent-border); color: var(--accent); }
 .llm-pill.setup .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.llm-pill.problem { cursor: pointer; border-color: var(--red, #e5484d); color: var(--red, #e5484d); }
+.llm-pill.problem .dot { background: var(--red, #e5484d); box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.18); }
 
 @media (prefers-reduced-motion: reduce) {
   .su-sheet, .su-overlay, .su-card { transition: none; }

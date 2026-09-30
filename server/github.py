@@ -28,6 +28,7 @@ from pathlib import Path
 import httpx
 
 from server.errors import ApiError
+from server.settings import REPO_URL, VERSION
 
 API = "https://api.github.com"
 MAX_BYTES = 3 * 1024 * 1024
@@ -80,7 +81,7 @@ class GitHubResearch:
                     self.sleep(wait)
                 self.next_search = self.clock() + (SEARCH_SPACING_TOKEN if token else SEARCH_SPACING_ANON)
         headers = {"Accept": accept or "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
-                   "User-Agent": "ConceptTrail-research"}
+                   "User-Agent": f"ConceptTrail/{VERSION} (+{REPO_URL})"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         with self.slots, httpx.Client(base_url=API, headers=headers, timeout=20, follow_redirects=False,

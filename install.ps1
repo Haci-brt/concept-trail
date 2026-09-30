@@ -8,14 +8,21 @@
 # (aynı komutu yeniden çalıştırmak) onlara dokunmaz. Yönetici izni gerekmez.
 #
 # Ayarlanabilir (ortam değişkeni): CT_APP_DIR, CT_VAULT, CT_SOURCE (zip yolu
-# ya da adresi), CT_NO_LAUNCH=1, CT_NO_SHORTCUT=1.
+# ya da adresi), CT_NO_LAUNCH=1, CT_NO_SHORTCUT=1, CT_PORT (açık uygulamanın
+# arandığı port, varsayılan 8765).
+#
+# Kaldırmak için: uninstall.ps1 (README, "Kaldırma").
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"      # indirme ilerleme çubuğu Invoke-WebRequest'i çok yavaşlatır
 
 $Repo = "Haci-brt/concept-trail"
 $Branch = "main"
+$Marker = ".concept-trail-app"                # written into the app folder: "this one is ours to replace"
+$Port = if ($env:CT_PORT) { [int]$env:CT_PORT } else { 8765 }
 $AppDir = if ($env:CT_APP_DIR) { $env:CT_APP_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\ConceptTrail" }
+# relative to where the command runs, not to .NET's own current directory
+$AppDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($AppDir)
 $Vault = if ($env:CT_VAULT) { $env:CT_VAULT } else { Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Concept Trail" }
 $Source = if ($env:CT_SOURCE) { $env:CT_SOURCE } else { "https://github.com/$Repo/archive/refs/heads/$Branch.zip" }
 
@@ -32,6 +39,34 @@ function Invoke-Native([string]$what, [scriptblock]$command) {
     if ($LASTEXITCODE -ne 0) { throw "$what (çıkış kodu $LASTEXITCODE)" }
 }
 function Done([string]$text) { Write-Host "+ $text" -ForegroundColor Green }
+
+# Only an earlier install of this app may be emptied: the marker, or main.py
+# and server\ from before the marker existed. A CT_APP_DIR pointed at a
+# folder in use (the home folder, say) must never be wiped.
+function Test-OurInstall([string]$dir) {
+    if (Test-Path -LiteralPath (Join-Path $dir $Marker)) { return $true }
+    return (Test-Path -LiteralPath (Join-Path $dir "main.py") -PathType Leaf) -and
+           (Test-Path -LiteralPath (Join-Path $dir "server") -PathType Container)
+}
+
+# A running copy holds its Python and Qt DLLs open, and Windows will not
+# replace those; a new launch would also just reuse the old server.
+function Test-Running([string]$dir) {
+    $full = $dir.TrimEnd('\')
+    $main = Join-Path $full "main.py"
+    try {
+        $mine = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            ($_.ExecutablePath -and $_.ExecutablePath.StartsWith("$full\", [StringComparison]::OrdinalIgnoreCase)) -or
+            ($_.CommandLine -and $_.CommandLine.IndexOf($main, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+        })
+        if ($mine.Count -gt 0) { return $true }
+    } catch { }
+    try {
+        $state = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/state" -TimeoutSec 3
+        if ($state.app -eq "concept-trail") { return $true }
+    } catch { }
+    return $false
+}
 
 function Find-Python {
     # "python" may be the Microsoft Store placeholder, which prints a hint and
@@ -58,6 +93,18 @@ Write-Host "  Concept Trail kuruluyor" -ForegroundColor White
 Write-Host "  Uygulama: $AppDir"
 Write-Host "  Notlar:   $Vault"
 Write-Host ""
+
+# 0. Before anything is downloaded: may this folder be replaced, and now?
+if (@(Get-ChildItem -Force -LiteralPath $AppDir -ErrorAction SilentlyContinue).Count -gt 0) {
+    if (-not (Test-OurInstall $AppDir)) {
+        throw ("$AppDir boş değil ve bir Concept Trail kurulumuna benzemiyor. İçindekiler silinmesin diye " +
+               "kurulum durdu; hiçbir şeye dokunulmadı. CT_APP_DIR ile boş ya da yeni bir klasör ver.")
+    }
+    if (Test-Running $AppDir) {
+        throw ("Concept Trail şu an açık. Önce uygulamayı kapat (açık pencereyi ve varsa sunucuyu), " +
+               "sonra komutu yeniden çalıştır.")
+    }
+}
 
 # 1. Python
 Step "Python aranıyor"
@@ -87,8 +134,10 @@ try {
 
     New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
     # an update replaces the code, never the environment or notes kept beside it
-    Get-ChildItem -Force $AppDir | Where-Object { $_.Name -notin ".venv", "notes" } | Remove-Item -Recurse -Force
+    Get-ChildItem -Force -LiteralPath $AppDir | Where-Object { $_.Name -notin ".venv", "notes" } | Remove-Item -Recurse -Force
     Copy-Item -Path (Join-Path $Extracted.FullName "*") -Destination $AppDir -Recurse -Force
+    Set-Content -LiteralPath (Join-Path $AppDir $Marker) -Encoding ASCII -Value (
+        "Concept Trail kurulum klasoru. install.ps1 guncellerken bu klasorun icini yeniler; uninstall.ps1 kaldirir.")
 } finally {
     Remove-Item -Recurse -Force $Temp -ErrorAction SilentlyContinue
 }
@@ -119,7 +168,8 @@ Write-Host ""
 Done "Concept Trail kuruldu."
 Write-Host "  Açmak için masaüstündeki Concept Trail simgesine çift tıkla."
 Write-Host "  Güncellemek için aynı komutu yeniden çalıştır; notların korunur."
-Write-Host "  Kaldırmak için: $AppDir klasörünü ve kısayolları sil (notlar $Vault içinde kalır)."
+Write-Host "  Kaldırmak için: powershell -ExecutionPolicy Bypass -File `"$(Join-Path $AppDir 'uninstall.ps1')`""
+Write-Host "  (notların $Vault içinde kalır)."
 Write-Host ""
 
 # 5. Open it

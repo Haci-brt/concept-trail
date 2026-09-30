@@ -4,7 +4,7 @@ import { api, clientId, connectEvents } from "./api.js";
 import { ChatDrawer } from "./chat.js";
 import { desktopCall, desktopHud, desktopReady, isDesktop, openExternal } from "./desktop.js";
 import { DirectionDialog } from "./direction.js";
-import { confirmDialog, openMenu, promptDialog, shortcutsDialog } from "./dialogs.js";
+import { choiceDialog, confirmDialog, openMenu, promptDialog, shortcutsDialog } from "./dialogs.js";
 import { MarkdownEditor } from "./editor.js";
 import { HistoryPanel } from "./history.js";
 import { LadderPanel } from "./ladder.js";
@@ -27,6 +27,7 @@ await startI18n();
 syncLanguage();
 
 const SAVE_MS = 700;
+const LOCKED_RETRY_MS = 4000;   // a file another program holds: try the save again after this
 // The live watch looks at natural breaks only: a pause this long, or something
 // pasted in (once it has settled). The big model takes 30-55 s a pass, so what
 // it finds waits quietly in the panel rather than interrupting the writing.
@@ -104,12 +105,14 @@ const historyPanel = new HistoryPanel($("#history"), {
       toast(err.message, "error");
     }
   },
+  // the panel may be hidden: its toggle shows what waits in it
+  onRender: () => renderPanelBadge(),
 });
 
 const hudCard = desktopHud ? null : new HudCard($("#hudSlot"));
 const ladderPanel = new LadderPanel($("#ladder"), {
   showWaiting: () => {
-    if (!shown.panel) setPanel(true);
+    if (!panelVisible()) setPanel(true);
     $("#history .h-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
   },
   correctDirection: (path) => direction.open(path),
@@ -166,7 +169,8 @@ const tree = new IdeaTree($("#treeView"), {
     const event = historyPanel.items.find((e) => e.path === path && e.node_id === nodeId
       && (e.type === "edit" || e.type === "summary"));
     if (event) hudAction(event.id, action);
-    else toast("Bu öneriye ait kayıt bulunamadı.", "error");
+    // an old proposal whose event left the panel: decided by its node
+    else api.post("/api/assistant/decide", { path, node_id: nodeId, action }).catch((err) => toast(err.message, "error"));
   },
   ask: (path) => { const tab = tabByPath(path); if (tab) analyze(tab, true); },
   openNote: (path) => { openNote(path); setView("editor"); },
@@ -252,7 +256,8 @@ function buildChrome() {
     const glyph = name.startsWith("H") ? `<span class="txt">H<sub>${name[1]}</sub></span>` : icon(name, 17);
     return `<button class="icon-btn" data-tool="${i}" title="${esc(title)}">${glyph}</button>`;
   }).join("") +
-    `<span class="grow"></span>
+    `<button class="icon-btn tb-more" id="toolbarMore" title="Diğer araçlar" aria-haspopup="menu" hidden>${icon("more", 17)}</button>
+     <span class="grow"></span>
      <button class="icon-btn ask" id="askBtn" title="Asistana şimdi sor (Ctrl+Enter)">${icon("sparkles", 18)}</button>
      <button class="btn direction-launch" id="directionBtn" title="Asistanın yönünü düzelt">Rotayı düzelt</button>
      <button class="icon-btn" id="researchEditorBtn" title="Bu notu araştır">${icon("search", 17)}</button>
@@ -262,12 +267,14 @@ function buildChrome() {
     const btn = e.target.closest("button");
     const tab = activeTab();
     if (!btn || !tab) return;
+    if (btn.id === "toolbarMore") return openToolbarMore(btn, tools);
     if (btn.id === "askBtn") return analyze(tab, true);
     if (btn.id === "directionBtn") return direction.open(tab.path);
     if (btn.id === "researchEditorBtn") return research.open();
-    if (btn.id === "previewToggle") return setPreview(state.preview === "hidden" ? "preview" : "hidden");
+    if (btn.id === "previewToggle") return setPreview(previewMode() === "hidden" ? "preview" : "hidden");
     tools[Number(btn.dataset.tool)][2](tab.editor);
   });
+  new ResizeObserver(() => fitToolbar()).observe(bar);
 
   $("#previewHead").innerHTML = `
     <button class="pv-tab on" data-pv="preview">${icon("eye", 15)}Önizleme</button>
@@ -300,12 +307,14 @@ function buildChrome() {
 
   $("#settingsBtn").onclick = () => settings.open();
   $("#llmPill").onclick = () => {
+    const problem = state.connected && state.model.problem;
+    if (problem) { if (problem.kind === "budget" || problem.kind === "access") settings.open(); else setupWizard.open(); return; }
     if (state.setupNeeded) setupWizard.open();
     else if (!state.model.chat_up) launchModel(null, 0);
   };
   $("#fastPill").onclick = () => { if (!state.model.fast_up) launchModel(null, 1); };
   $("#toggleSidebar").onclick = () => setSidebar(!shown.sidebar);
-  $("#togglePanel").onclick = () => setPanel(!shown.panel);
+  $("#togglePanel").onclick = () => setPanel(!panelVisible());
   $("#launchBtn").onclick = (e) => launchModel(e);
   $("#addTab").onclick = () => newNote("");
   $("#viewSwitch").addEventListener("click", (e) => {
@@ -359,7 +368,7 @@ function renderViewSwitch() {
 function renderTabs() {
   $("#tabs").innerHTML = state.tabs.map((t) => `
     <div class="tab${t.id === state.activeId ? " active" : ""}${t.dirty ? " dirty" : ""}" data-id="${t.id}" role="tab" title="${esc(t.path)}">
-      ${icon("file", 14, "kind")}<span class="name">${esc(t.name)}.md</span>
+      ${icon("file", 14, "kind")}<span class="name">${esc(t.name)}</span>
       <button class="close" title="Kapat">${icon("x", 13)}</button>
     </div>`).join("");
   $("#tabs .tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -416,6 +425,11 @@ function renderStatus() {
   complete.querySelector(".lbl").textContent = state.inlineComplete ? "Tamamlama açık" : "Tamamlama kapalı";
 }
 
+const PROBLEM_LABELS = {
+  key: "Anahtar reddedildi", credit: "Kredi bitti", access: "Modele erişim yok",
+  rate: "Hız sınırı", budget: "Günlük bütçe doldu",
+};
+
 function renderModel() {
   const { chat_up: chatUp, fast_up: fastUp, endpoint, fast_endpoint: fastEndpoint, busy } = state.model;
   const short = (e) => String(e || "").replace("127.0.0.1", "localhost");
@@ -431,14 +445,25 @@ function renderModel() {
   // nothing connected yet: the pill is the way to the wizard
   const setup = state.connected && !chatUp && state.setupNeeded;
   pill.classList.toggle("setup", setup);
-  pill.querySelector(".lbl").innerHTML = !state.connected ? "Sunucu bağlantısı yok"
+  // what stops the assistant stays in sight: a dead key used to look like a working model
+  const problem = state.connected && state.model.problem;
+  pill.classList.toggle("problem", Boolean(problem));
+  if (problem) {
+    pill.querySelector(".lbl").innerHTML = `${icon("alert", 12)}${PROBLEM_LABELS[problem.kind] || "Model sorunu"}`;
+    pill.title = `${problem.provider}: ${problem.message} — düzeltmek için tıkla`;
+    if (state.problemShown !== `${problem.kind}:${problem.provider}`) {
+      state.problemShown = `${problem.kind}:${problem.provider}`;
+      toast(`${problem.provider}: ${problem.message}`, "error", 9000);
+    }
+  } else state.problemShown = null;
+  if (!problem) pill.querySelector(".lbl").innerHTML = !state.connected ? "Sunucu bağlantısı yok"
     : setup ? `${icon("sparkles", 12)}Modeli bağla`
     : chatUp ? `${chatRemote ? icon("cloud", 12) : ""}${role}: ${esc(chatName || short(endpoint))}` : `${role} kapalı`;
-  pill.title = setup ? "Asistanın düşünmesi için bir modele bağlanması gerekiyor — kurulum sihirbazını açmak için tıkla"
+  if (!problem) pill.title = setup ? "Asistanın düşünmesi için bir modele bağlanması gerekiyor — kurulum sihirbazını açmak için tıkla"
     : chatRemote
     ? `${role} bulutta: ${chatName} (${short(endpoint)}) — notların bu sağlayıcıya gönderiliyor`
     : chatUp ? `${shared ? "Sohbet, not izleme ve araştırma bu modelde" : "Sohbet modeli çalışıyor"} (${short(endpoint)})`
-             : `${role} kapalı — başlatmak için tıkla`;
+    : canLaunch() ? `${role} kapalı — başlatmak için tıkla` : `${role} kapalı — ayarları açmak için tıkla`;
 
   // the note-watch and research model, when it is a different one
   const fast = $("#fastPill");
@@ -451,9 +476,10 @@ function renderModel() {
   fast.title = fastRemote
     ? `Not izleme ve araştırma bulutta: ${fastName} (${short(fastEndpoint)})`
     : fastUp ? `Not izleme ve araştırma modeli: ${fastName || short(fastEndpoint)}`
-             : "Not izleme modeli kapalı — başlatmak için tıkla";
+    : canLaunch() ? "Not izleme modeli kapalı — başlatmak için tıkla" : "Not izleme modeli kapalı — ayarları açmak için tıkla";
 
   const allUp = chatUp && fastUp;
+  $("#launchBtn").hidden = !canLaunch();
   $("#launchBtn").title = allUp ? "Modeller çalışıyor" : "Model başlat";
   $("#launchBtn").classList.toggle("active", !allUp && state.connected);
 }
@@ -480,9 +506,9 @@ function updateLayout() {
   $("#welcome").hidden = Boolean(tab);
   $("#panes").hidden = !tab || showTree;
   if (showTree) tree.show(tab.path, tab.name); else tree.hide();
-  $("#panes").classList.toggle("editor-only", state.preview === "hidden");
+  $("#panes").classList.toggle("editor-only", previewMode() === "hidden");
   $("#panes").style.setProperty("--split", `${state.split / (1 - state.split)}fr`);
-  document.querySelectorAll("[data-pv]").forEach((b) => b.classList.toggle("on", b.dataset.pv === state.preview));
+  document.querySelectorAll("[data-pv]").forEach((b) => b.classList.toggle("on", b.dataset.pv === previewMode()));
   renderViewSwitch();
 }
 
@@ -496,7 +522,7 @@ function setView(view) {
 
 function setPreview(mode) {
   state.preview = mode;
-  fitColumnsToWindow();
+  shown.preview = true;       // asked for in so many words: the window's width does not overrule it
   updateLayout();
   renderPreview(true);
   saveSession();
@@ -527,6 +553,7 @@ function setFocusMode(next) {
   focusMode = next;
   localStorage.setItem(focusKey, String(focusMode));
   applyAppearance();
+  renderPanelBadge();
   activeTab()?.editor.focus();
 }
 
@@ -618,6 +645,27 @@ async function loadTree({ prunePinned = false } = {}) {
 const loadTags = debounce(async () => {
   try { sidebar.setTags(await api.get("/api/vault/tags")); } catch { /* tags are optional */ }
 }, 400);
+
+// Autosave runs after every pause in typing. The tag list only has to follow
+// when a save touched what tags are made of (the frontmatter or a #word), and
+// even then at most once every few seconds. A tab's first save always counts.
+const TAGS_AFTER_SAVE_MS = 3000;
+const tagSignature = (text) =>
+  `${/^---[ \t]*\r?\n[\s\S]*?\r?\n---/.exec(text)?.[0] ?? ""}\n${(text.match(/#[^\s#]+/g) || []).join(" ")}`;
+let tagsTimer = 0;
+let tagsAt = 0;
+
+function tagsAfterSave(tab, content) {
+  const sig = tagSignature(content);
+  if (sig === tab.tagSig) return;
+  tab.tagSig = sig;
+  if (tagsTimer) return;
+  tagsTimer = setTimeout(() => {
+    tagsTimer = 0;
+    tagsAt = Date.now();
+    loadTags();
+  }, Math.max(0, tagsAt + TAGS_AFTER_SAVE_MS - Date.now()));
+}
 
 function parentDir(path) {
   return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
@@ -893,28 +941,117 @@ function saveTab(tab) {
       return;
     }
     try {
-      const result = await api.put("/api/notes", { path: tab.path, content });
-      tab.saved = content;
-      tab.mtime = result.mtime;
-      tab.lastSaved = new Date();
-      const node = flatNotes().find((n) => n.path === tab.path);
-      if (node) node.mtime = result.mtime;
-      loadTags();
+      // the version this page has: a file changed elsewhere since is not overwritten blind
+      const result = await api.put("/api/notes", { path: tab.path, content, base_mtime: tab.mtime });
+      savedAs(tab, content, result);
     } catch (err) {
-      if (err.status === 409) {
-        // the file is gone (trashed or renamed elsewhere) — don't recreate it
-        tab.closed = true;
-        removeTab(tab);
-        toast(`“${tab.name}” artık yok, sekme kapatıldı.`, "error");
-        return;
-      }
-      toast(`Kaydedilemedi: ${err.message}`, "error");
+      // none of these may cost the writer what is in the editor
+      if (err.status === 410) { await rescueGone(tab); return; }
+      if (err.status === 409) await resolveConflict(tab);
+      else if (err.status === 423) {
+        if (!tab.lockNoted) toast(`“${tab.name}” başka bir program tarafından kilitli; yazdıkların duruyor, yeniden denenecek.`, "error", 6000);
+        tab.lockNoted = true;
+        clearTimeout(tab.saveTimer);
+        tab.saveTimer = setTimeout(() => saveTab(tab), LOCKED_RETRY_MS);
+      } else toast(`Kaydedilemedi: ${err.message}`, "error");
     }
     const dirty = tab.editor.value !== tab.saved;
     if (dirty !== tab.dirty) { tab.dirty = dirty; renderTabs(); }
     if (tab.id === state.activeId) renderStatus();
   });
   return tab.chain;
+}
+
+function savedAs(tab, content, result) {
+  tab.saved = content;
+  tab.mtime = result.mtime;
+  tab.lastSaved = new Date();
+  tab.lockNoted = false;
+  const node = flatNotes().find((n) => n.path === tab.path);
+  if (node) node.mtime = result.mtime;
+  tagsAfterSave(tab, content);
+}
+
+/** The note was trashed or moved elsewhere while open. Unsaved text is kept
+ *  as a note of its own instead of going down with the tab. */
+async function rescueGone(tab) {
+  const unsaved = tab.editor.value;
+  tab.closed = true;
+  removeTab(tab);
+  if (unsaved === tab.saved || !unsaved.trim()) {
+    toast(`“${tab.name}” artık yok, sekme kapatıldı.`, "error");
+    return;
+  }
+  try {
+    const dir = tab.path.includes("/") ? tab.path.slice(0, tab.path.lastIndexOf("/")) : "";
+    const make = (folder) => api.post("/api/notes/create", { dir: folder, name: `${tab.name} (kurtarılan)`, content: unsaved });
+    const { path } = await make(dir).catch(() => make(""));
+    await loadTree();
+    await openNote(path);
+    toast(`“${tab.name}” başka bir yerde silinmiş ya da taşınmış; yazdıkların “${noteName(path)}” notunda.`, "error", 8000);
+  } catch (err) {
+    toast(`“${tab.name}” artık yok ve yazdıkların kurtarılamadı: ${err.message}`, "error", 10000);
+  }
+}
+
+/** Changed elsewhere (another window, Obsidian, a sync tool) while you wrote.
+ *  Either way nothing is lost: the other text is kept as an earlier version,
+ *  or yours as a note of its own. Runs inside the tab's save chain, so no
+ *  second save races it. */
+async function resolveConflict(tab) {
+  const mine = tab.editor.value;
+  const choice = await choiceDialog({
+    title: "Not başka bir yerde değişti",
+    message: `“${tab.name}” sen yazarken başka bir pencerede ya da programda değiştirildi.`,
+    choices: [
+      { id: "mine", label: "Benimkini kaydet", hint: "Diğer sürüm Önceki sürümler'de saklanır.", accent: true },
+      { id: "theirs", label: "Diğer sürümü aç", hint: "Senin yazdıkların ayrı bir not olarak kaydedilir." },
+    ],
+    fallback: "theirs",
+  });
+  try {
+    if (choice === "mine") {
+      savedAs(tab, mine, await api.put("/api/notes", { path: tab.path, content: mine, keep_version: true }));
+      toast("Senin sürümün kaydedildi; diğeri Önceki sürümler'de.", "success");
+      return;
+    }
+    const note = await api.get("/api/notes", { path: tab.path });
+    const { path } = await api.post("/api/notes/create", {
+      dir: tab.path.includes("/") ? tab.path.slice(0, tab.path.lastIndexOf("/")) : "",
+      name: `${tab.name} (senin sürümün)`, content: mine,
+    });
+    tab.saved = note.content;
+    tab.mtime = note.mtime;
+    tab.editor.setValue(note.content);
+    loadTree();
+    toast(`Diğer sürüm açıldı; senin yazdıkların “${noteName(path)}” notunda.`, "success", 7000);
+  } catch (err) {
+    toast(`Çakışma çözülemedi: ${err.message}. Yazdıkların sayfada duruyor.`, "error", 8000);
+  }
+}
+
+/** Earlier versions of a note, kept on every overwrite now and then. One is
+ *  taken back into the editor as an ordinary, undoable change. */
+async function showVersions(tab) {
+  if (!tab) return;
+  try {
+    const versions = await api.get("/api/notes/versions", { path: tab.path });
+    if (!versions.length) { toast("Bu notun kaydedilmiş önceki bir sürümü yok henüz."); return; }
+    const label = (id) => `${id.slice(6, 8)}.${id.slice(4, 6)}.${id.slice(0, 4)} ${id.slice(9, 11)}:${id.slice(11, 13)}`;
+    const choice = await choiceDialog({
+      title: "Önceki sürümler",
+      message: `“${tab.name}” notunun bu sürümlerinden birini editöre geri al. Geri almak Ctrl+Z ile geri alınabilir.`,
+      choices: versions.slice(0, 8).map((v) => ({ id: v.id, label: label(v.id), hint: `${v.size} bayt` })),
+      fallback: null,
+    });
+    if (!choice) return;
+    const { content } = await api.get("/api/notes/version", { path: tab.path, id: choice });
+    tab.editor.replaceRange(0, tab.editor.value.length, content, 0);
+    saveTab(tab);
+    toast("Önceki sürüm geri alındı. Ctrl+Z ile vazgeçebilirsin.", "success");
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 async function saveAll() {
@@ -928,7 +1065,10 @@ async function analyze(tab) {
   await saveTab(tab);
   try {
     const { status } = await api.post("/api/assistant/analyze", { path: tab.path, content, force: true });
-    if (status === "model_down") toast("Model kapalı — önce üstteki ▷ ile modeli başlat.", "error");
+    if (status === "model_down") {
+      toast(canLaunch() ? "Model kapalı — önce üstteki ▷ ile modeli başlat."
+                        : "Model kapalı — Ayarlar → Sihirbazla bağla ile bir model bağla.", "error", 5000);
+    }
     else if (status === "busy") toast("Asistan şu an başka bir notla meşgul.");
     else if (status === "skipped") toast("İncelenecek metin yok.");
   } catch (err) {
@@ -1059,7 +1199,14 @@ async function openChat(path, nodeId) {
   }
 }
 
+/** The server lists only the launch scripts present on this disk — on most
+ *  machines none, and a model is connected in the settings instead. */
+function canLaunch() {
+  return state.scripts.length > 0;
+}
+
 async function launchModel(e, index) {
+  if (!canLaunch()) return settings.open();
   if (index !== undefined && state.scripts[index]) {
     const name = state.scripts[index];
     try {
@@ -1239,6 +1386,13 @@ function wireDesktop() {
 
 window.__requestClose = async () => {
   await Promise.race([saveAll(), new Promise((r) => setTimeout(r, 2500))]);
+  // closing used to go ahead whatever the saves said — a locked file's text went with it
+  const unsaved = state.tabs.filter((t) => !t.closed && t.editor.value !== t.saved);
+  if (unsaved.length && !(await confirmDialog({
+    title: "Kaydedilemeyen yazı var",
+    message: `${unsaved.map((t) => `“${t.name}”`).join(", ")} kaydedilemedi. Şimdi kapatırsan son yazdıkların kaybolur.`,
+    confirmText: "Yine de kapat", danger: true,
+  }))) return;
   desktopCall("closeNow");
 };
 
@@ -1248,13 +1402,14 @@ function commands() {
   const list = [
     { label: "Yeni not", icon: "filePlus", hint: "Ctrl N", action: () => newNote("") },
     { label: "Yeni klasör", icon: "folderPlus", action: () => newFolder("") },
+    { label: "Önceki sürümler", icon: "history", action: () => showVersions(tab) },
     { label: "Asistana şimdi sor", icon: "sparkles", hint: "Ctrl Enter", action: () => tab && analyze(tab, true) },
     { label: "Açık notu araştır", icon: "search", action: () => research.open() },
     { label: "Master prompt hazırla", icon: "wand", hint: "Ctrl Shift M", action: () => openMaster() },
     { label: state.liveWatch ? "Canlı izlemeyi kapat" : "Canlı izlemeyi aç", icon: state.liveWatch ? "eyeOff" : "eye", action: () => setLiveWatch(!state.liveWatch) },
     { label: state.inlineComplete ? "Yazarken tamamlamayı kapat" : "Yazarken tamamlamayı aç", icon: "sparkle", action: () => setInlineComplete(!state.inlineComplete) },
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
-    { label: "Modeli başlat", icon: "play", action: () => launchModel() },
+    ...(canLaunch() ? [{ label: "Modeli başlat", icon: "play", action: () => launchModel() }] : []),
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
     { label: state.preview === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(state.preview === "hidden" ? "preview" : "hidden") },
     { label: focusMode ? "Odak kipinden çık" : "Odak kipine geç", icon: "fit", hint: "Ctrl Shift F", action: () => setFocusMode(!focusMode) },
@@ -1321,12 +1476,30 @@ window.addEventListener("beforeunload", () => {
       method: "PUT",
       keepalive: true,
       headers: { "Content-Type": "application/json", "X-Fikir": "1", "X-Client-Id": clientId },
-      body: JSON.stringify({ path: tab.path, content: tab.editor.value }),
+      // a last chance: it may overwrite a change made elsewhere, so that one is kept as a version
+      body: JSON.stringify({ path: tab.path, content: tab.editor.value, keep_version: true }),
     });
   }
 });
 
-window.addEventListener("focus", () => { loadTree(); });
+window.addEventListener("focus", () => { loadTree(); refreshFromDisk(); });
+
+/** Coming back to the window: open notes changed by another program while
+ *  you were away are shown as they are now, unless you have unsaved text in
+ *  them (then the next save asks). */
+async function refreshFromDisk() {
+  for (const tab of state.tabs) {
+    if (tab.closed || tab.dirty || tab.editor.value !== tab.saved) continue;
+    try {
+      const note = await api.get("/api/notes", { path: tab.path });
+      if (note.mtime === tab.mtime || tab.closed || tab.editor.value !== tab.saved) continue;
+      tab.saved = note.content;
+      tab.mtime = note.mtime;
+      tab.editor.setValue(note.content);
+      if (tab.id === state.activeId) { research.contentChanged(); renderPreview(); renderStatus(); }
+    } catch { /* gone or moved: the save or the tree will say so */ }
+  }
+}
 
 // ---------------------------------------------------------------- live events
 function connect() {

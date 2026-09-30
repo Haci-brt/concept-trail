@@ -6,7 +6,7 @@ import { api, streamPost } from "./api.js";
 import { openMenu } from "./dialogs.js";
 import { icon } from "./icons.js";
 import { questionKind } from "./tree.js";
-import { esc, formatClock, toast } from "./util.js";
+import { esc, formatClock, miniMarkdown, toast } from "./util.js";
 
 export const KINDS = {
   question: { label: "Soru", icon: "questionSquare", tone: "question" },
@@ -28,10 +28,6 @@ const STATUS_CHIP = {
   approved: ["chip-done", "Onaylandı"],
   rejected: ["chip-rejected", "Reddedildi"],
 };
-
-/** Waiting on you, most pressing first: a proposal holds up the note until you
- *  decide, a question only waits. Within a rank, newest first. */
-const RANK = { summary: 0, edit: 1, research: 2, question: 3 };
 
 function waiting(e) {
   if (e.type === "summary" || e.type === "edit" || e.type === "research") return e.status === "pending";
@@ -63,6 +59,20 @@ export class HistoryPanel {
   }
 
   setItems(items) { this.items = items; this.render(); }
+
+  /** What waits for you in the panel's scope (this note, or every note). */
+  waitingItems() { return this._mine().filter(waiting); }
+
+  /** The assistant card's order: first come, first shown, and a proposal an
+   *  answer led to standing where its question stood (server _record). The
+   *  items are newest first. */
+  _cardOrder(list) {
+    const age = new Map(this.items.map((e, i) => [e.id, this.items.length - i]));
+    const asked = new Map(this.items.filter((e) => e.type === "question")
+      .map((e) => [`${e.path}\n${e.node_id}`, age.get(e.id)]));
+    const slot = (e) => (e.question_id && asked.get(`${e.path}\n${e.question_id}`)) || age.get(e.id) || 0;
+    return list.sort((a, b) => slot(a) - slot(b));
+  }
 
   add(event) {
     this.items.unshift(event);
@@ -103,8 +113,7 @@ export class HistoryPanel {
   render() {
     this.root.querySelector(".flabel").textContent = this.allNotes ? "Tüm notlar" : "Bu not";
     const mine = this._mine();
-    const open = mine.filter((e) => waiting(e) || this.leaving.has(e.id)).sort((a, b) =>
-      (RANK[a.type] ?? 9) - (RANK[b.type] ?? 9) || b.created.localeCompare(a.created));
+    const open = this._cardOrder(mine.filter((e) => waiting(e) || this.leaving.has(e.id)));
     const done = mine.filter((e) => !waiting(e) && !this.leaving.has(e.id));
 
     if (!open.length && !done.length) {
@@ -136,6 +145,7 @@ export class HistoryPanel {
     const draft = this._draft();
     this.listEl.innerHTML = parts.join("");
     this._restore(draft);
+    this.h.onRender?.();
   }
 
   /** A half-typed answer must survive the re-render another event causes. */
@@ -168,7 +178,7 @@ export class HistoryPanel {
     if ((e.type === "summary" || e.type === "edit") && e.status === "pending") {
       actions = `<div class="h-actions">
         ${e.why ? `<span class="h-why">Notta dayandığı: ${esc(e.why)}</span>` : ""}
-        <button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}${e.type === "edit" ? "Onayla" : "Nota ekle"}</button>
+        <button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}Nota ekle</button>
         <button class="btn btn-sm" data-act="reject">Vazgeç</button></div>`;
     } else if (e.type === "research" && e.status === "pending") {
       actions = `<div class="h-actions">
@@ -200,7 +210,7 @@ export class HistoryPanel {
         </span>
       </button>
       ${actions}
-      ${reply ? `<div class="h-reply${reply.kind === "answer" ? " answer" : ""}">${esc(reply.text)}</div>` : ""}
+      ${reply ? `<div class="h-reply${reply.kind === "answer" ? " answer" : ""}">${miniMarkdown(reply.text)}</div>` : ""}
       ${answer}
     </div>`;
   }

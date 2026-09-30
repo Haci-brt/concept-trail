@@ -12,6 +12,7 @@ import json
 import re
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
@@ -30,14 +31,26 @@ from server.preferences import Preferences
 from server.providers import ProviderRegistry
 from server.render import render
 from server.research import ResearchRunner
-from server.settings import APP_ID, LAUNCH_SCRIPTS, VERSION, WEB_DIR, Settings
+from server import updates
+from server.settings import APP_ID, VERSION, WEB_DIR, Settings, available_launch_scripts
+from server import store
 from server.store import HistoryStore, NoteStore, _atomic_write_json
 from server.tools import ToolHub
 from server.vault import Vault
 
+UNEXPECTED_ERROR = "Beklenmeyen bir hata oldu; işlem yapılmadı."
+
 
 class LocalOnlyGuard:
     SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+    # Added to every response that does not set its own. No other site may
+    # frame the app and trick a click through it (the desktop shell and the
+    # HUD load their pages top-level, which framing rules do not touch).
+    DEFAULT_HEADERS = (
+        (b"cache-control", b"no-cache"),
+        (b"x-frame-options", b"DENY"),
+        (b"content-security-policy", b"frame-ancestors 'none'"),
+    )
 
     def __init__(self, app, port: int):
         self.app = app
@@ -53,14 +66,14 @@ class LocalOnlyGuard:
         if scope["method"] not in self.SAFE_METHODS and headers.get(b"x-fikir") != b"1":
             return await self._deny(send, "Missing X-Fikir header")
 
-        async def send_no_cache(message):
+        async def send_with_headers(message):
             if message["type"] == "http.response.start":
-                names = {name.lower() for name, _ in message.get("headers", [])}
-                if b"cache-control" not in names:
-                    message["headers"] = [*message.get("headers", []), (b"cache-control", b"no-cache")]
+                headers = list(message.get("headers", []))
+                names = {name.lower() for name, _ in headers}
+                message["headers"] = headers + [pair for pair in self.DEFAULT_HEADERS if pair[0] not in names]
             await send(message)
 
-        await self.app(scope, receive, send_no_cache)
+        await self.app(scope, receive, send_with_headers)
 
     @staticmethod
     async def _deny(send, reason: str):
@@ -74,6 +87,8 @@ class LocalOnlyGuard:
 class NoteWrite(BaseModel):
     path: str
     content: str
+    base_mtime: float | None = None   # the version the page has; None overwrites (the writer chose so)
+    keep_version: bool = False        # overwriting a changed file: keep what is there first
 
 
 class CreateNote(BaseModel):
@@ -145,6 +160,12 @@ class DirectionBody(BaseModel):
     category: str
     text: str
     plan: dict | None = None     # what the writer approved from the preview
+
+
+class DecideBody(BaseModel):
+    path: str
+    node_id: str
+    action: str
 
 
 class NodeBody(BaseModel):
@@ -342,6 +363,29 @@ def create_app(settings: Settings) -> FastAPI:
     async def api_error(_request: Request, exc: ApiError):
         return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
+    @app.exception_handler(Exception)
+    async def unexpected_error(_request: Request, _exc: Exception):
+        # the traceback still reaches the server log; the page gets a sentence
+        return JSONResponse({"detail": UNEXPECTED_ERROR}, status_code=500)
+
+    def recovery_flash() -> dict | None:
+        """Damaged settings or state files that were set aside (store.set_aside)."""
+        fresh = store.notices_to_tell()
+        if not fresh:
+            return None
+        body = " · ".join(f"{Path(n['file']).name} okunamadı; {Path(n['moved_to']).name} adıyla saklandı, "
+                          "varsayılanlarla devam ediliyor." for n in fresh)
+        return {"kind": "error", "title": "Bozuk dosya kenara alındı", "body": body}
+
+    def tell_recovered():
+        # only when a page listens; otherwise the next page to connect is told
+        if broker.listening:
+            flash = recovery_flash()
+            if flash:
+                broker.publish("flash", flash)
+
+    store.set_recovery_notifier(tell_recovered)
+
     def client_of(request: Request) -> str | None:
         return request.headers.get("x-client-id")
 
@@ -349,8 +393,18 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/api/state")
     async def state():
         return {"app": APP_ID, "version": VERSION, "vault": vault.name,
-                "scripts": list(LAUNCH_SCRIPTS), **assistant.snapshot(),
+                "scripts": available_launch_scripts(), **assistant.snapshot(),
                 "providers": providers.public()}
+
+    @app.get("/api/version")
+    async def version():
+        return {"app": "Concept Trail", "version": VERSION}
+
+    @app.post("/api/update/check")
+    async def update_check():
+        """Only on the writer's click, never in the background. A POST, so only
+        this app's own page (X-Fikir) can make it ask GitHub."""
+        return await asyncio.to_thread(updates.check)
 
     # ---- research tools (two MCP stdio servers) ----
     @app.get("/api/tools")
@@ -485,6 +539,9 @@ def create_app(settings: Settings) -> FastAPI:
             try:
                 yield "retry: 1500\n\n"
                 yield Broker.format("snapshot", assistant.snapshot())
+                flash = recovery_flash()
+                if flash:
+                    yield Broker.format("flash", flash)
                 while True:
                     try:
                         message = await asyncio.wait_for(queue.get(), timeout=15)
@@ -558,7 +615,13 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/vault-file/{rel:path}")
     def vault_file(rel: str):
-        return FileResponse(vault.asset_path(rel))
+        # A vault file is anyone's content on the app's origin: an SVG opened
+        # directly could run script with the app's rights. Sandboxed it is an
+        # origin of its own; as an <img> in the preview it renders the same.
+        return FileResponse(vault.asset_path(rel), headers={
+            "Content-Security-Policy": "sandbox; frame-ancestors 'none'",
+            "X-Content-Type-Options": "nosniff",
+        })
 
     # ---- notes ----
     @app.get("/api/notes")
@@ -567,9 +630,20 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.put("/api/notes")
     def write_note(body: NoteWrite, request: Request):
-        result = vault.write_note(body.path, body.content)
+        result = vault.write_note(body.path, body.content, base_mtime=body.base_mtime,
+                                  keep_version=body.keep_version)
         broker.publish("note_changed", {**result, "client": client_of(request)})
         return result
+
+    @app.get("/api/notes/versions")
+    def note_versions(path: str):
+        vault.note_path(path)
+        return vault.versions(path)
+
+    @app.get("/api/notes/version")
+    def note_version(path: str, id: str):
+        vault.note_path(path)
+        return {"content": vault.read_version(path, id)}
 
     @app.post("/api/notes/create")
     def create_note(body: CreateNote):
@@ -648,6 +722,10 @@ def create_app(settings: Settings) -> FastAPI:
     async def hud_action(body: HudBody):
         return assistant.hud_action(body.event_id, body.action)
 
+    @app.post("/api/assistant/decide")
+    async def decide(body: DecideBody):
+        return assistant.decide_node(body.path, body.node_id, body.action)
+
     @app.post("/api/assistant/claim")
     async def claim(body: EventBody):
         return {"ok": assistant.claim(body.event_id)}
@@ -718,7 +796,7 @@ def create_app(settings: Settings) -> FastAPI:
         vault.note_path(body.path)
         content = body.content if body.content is not None else vault.read_note(body.path)["content"]
         if not content.strip():
-            raise ApiError(400, "Bos not arastirilamaz.")
+            raise ApiError(400, "Boş not araştırılamaz.")
         return await research.start(body.path, content, focus=body.focus, web=body.web)
 
     @app.post("/api/research/propose")
@@ -730,7 +808,10 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/model/launch")
     async def launch_model(body: LaunchBody):
-        assistant.launch_model(body.name or next(iter(LAUNCH_SCRIPTS)))
+        available = available_launch_scripts()
+        if not available:
+            raise ApiError(404, "Bu bilgisayarda başlatma scripti yok; modeli Ayarlar → Sihirbazla bağla ile bağla.")
+        assistant.launch_model(body.name or available[0])
         return {"ok": True}
 
     @app.post("/api/model/check")

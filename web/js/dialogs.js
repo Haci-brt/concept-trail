@@ -1,15 +1,29 @@
 // Small modal prompt/confirm dialogs and a context menu.
+import { api } from "./api.js";
 import { icon } from "./icons.js";
-import { esc, html } from "./util.js";
+import { esc, html, trapFocus } from "./util.js";
+
+let versionAsked = null;
+
+/** "0.3.0", as the server has it (server/settings.py is the one source); "" if unknown. */
+export function appVersion() {
+  versionAsked ??= api.get("/api/version").then((v) => v.version || "").catch(() => {
+    versionAsked = null;              // a server that was not up yet is asked again next time
+    return "";
+  });
+  return versionAsked;
+}
 
 function modal(markup, { onKey } = {}) {
   const overlay = html('<div class="overlay"></div>');
   const dialog = html(markup);
   document.body.append(overlay, dialog);
+  const releaseFocus = trapFocus(dialog);
   const close = () => {
     overlay.remove();
     dialog.remove();
     document.removeEventListener("keydown", keyHandler, true);
+    releaseFocus();
   };
   const keyHandler = (e) => onKey?.(e, close);
   document.addEventListener("keydown", keyHandler, true);
@@ -92,6 +106,39 @@ export function confirmDialog({ title, message, confirmText = "Onayla", danger =
   });
 }
 
+/** One of several named ways out; Escape and a click outside give `fallback`. */
+export function choiceDialog({ title, message, choices, fallback }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result, close) => {
+      if (done) return;
+      done = true;
+      close();
+      resolve(result);
+    };
+    const { dialog, close } = modal(
+      `<div class="dialog choice-dialog" role="alertdialog" aria-modal="true">
+        <h2>${esc(title)}</h2>
+        <p>${esc(message)}</p>
+        <div class="choices">
+          ${choices.map((c) => `<button class="btn ${c.accent ? "btn-accent" : ""}" data-choice="${esc(c.id)}">
+            <span>${esc(c.label)}</span>${c.hint ? `<small>${esc(c.hint)}</small>` : ""}</button>`).join("")}
+        </div>
+      </div>`,
+      {
+        onKey: (e, closeFn) => {
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(fallback, closeFn); }
+        },
+      },
+    );
+    dialog.addEventListener("click", (e) => {
+      const id = e.target.closest("[data-choice]")?.dataset.choice;
+      if (id) finish(id, close);
+    });
+    dialog.querySelector("[data-choice]").focus();
+  });
+}
+
 const SHORTCUTS = [
   ["Not ara / komutlar", "Ctrl P"],
   ["Yeni not", "Ctrl N · Ctrl Alt N"],
@@ -120,11 +167,14 @@ export function shortcutsDialog() {
       <h2>Klavye kısayolları</h2>
       <p>Tarayıcıda Ctrl N / Ctrl W tarayıcıya gider — orada Ctrl Alt ile kullan.</p>
       <div class="shortcut-grid">${rows}</div>
-      <div class="actions"><button class="btn" data-act="ok">Kapat</button></div>
+      <div class="actions"><span class="app-version" translate="no"></span><button class="btn" data-act="ok">Kapat</button></div>
     </div>`,
     { onKey: (e, closeFn) => { if (e.key === "Escape" || e.key === "Enter") { e.preventDefault(); closeFn(); } } },
   );
   dialog.querySelector('[data-act="ok"]').onclick = close;
+  appVersion().then((version) => {
+    if (version) dialog.querySelector(".app-version").textContent = `Concept Trail ${version}`;
+  });
 }
 
 let openMenuEl = null;

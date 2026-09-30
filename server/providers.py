@@ -13,6 +13,7 @@ Keys are kept in the OS config folder, never in the vault (which the user may
 sync or put in git), and are masked on their way to the UI.
 """
 import json
+import math
 import os
 import shutil
 import threading
@@ -20,8 +21,9 @@ from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 
 from server.errors import ApiError
+from server.store import read_json
 
-ROLES = ("analysis", "chat", "summary", "compare", "master", "complete")
+ROLES =("analysis", "chat", "summary", "compare", "master", "complete")
 # A role nobody bound follows another: the competitor analysis ("compare")
 # is one call per research, where a stronger model than the watch's pays off
 # (measured: GPT-4o-mini paraphrased competitors, DeepSeek V4 Flash turned
@@ -59,13 +61,30 @@ def config_dir() -> Path:
     return target
 
 
+def write_private(path: Path, text: str) -> None:
+    """Atomically write a file that holds a secret, readable by this user only.
+
+    The temp file is created 0600 before a byte of the key goes in, so there is
+    no moment when it is readable by others. On Windows the mode is ignored and
+    the file inherits the user's profile ACL, which is already private."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)     # a leftover could carry wider permissions
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    if os.name != "nt":
+        os.chmod(tmp, 0o600)        # O_CREAT's mode is masked by the umask; this is exact
+    os.replace(tmp, path)
+
+
 @dataclass
 class Provider:
     id: str
     label: str
     base_url: str
     model: str | None = None
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)   # kept out of logs and tracebacks
     kind: str = "local"        # "remote" means notes leave this machine
     health: str = "llama"      # llama: GET /health · models: GET /v1/models · none
     extras: dict = field(default_factory=dict)   # e.g. {"cache_prompt": true} for llama.cpp
@@ -171,11 +190,9 @@ class ProviderRegistry:
 
     # ---- persistence ----
     def _read(self) -> dict:
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return _default_config()
-        if not isinstance(data, dict) or not data.get("providers"):
+        # a damaged file is set aside first: the next save would lose its keys
+        data = read_json(self.path)
+        if not data or not data.get("providers"):
             return _default_config()
         return data
 
@@ -188,12 +205,7 @@ class ProviderRegistry:
                 "roles": self.roles,
             }
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, self.path)
-            if os.name == "nt":  # keys inside: keep it to this user
-                os.chmod(self.path, 0o600)
+            write_private(self.path, json.dumps(data, ensure_ascii=False, indent=1))   # keys inside
         except OSError:
             pass
 
@@ -293,6 +305,12 @@ class ProviderRegistry:
                 raise ApiError(400, f"“{pid}” uzak bir sağlayıcı: API anahtarı gerekli.")
             if kind == "remote" and not str(raw.get("model") or "").strip():
                 raise ApiError(400, f"“{pid}” uzak bir sağlayıcı: model adı gerekli.")
+            try:
+                timeout = float(raw.get("timeout") or 120.0)
+            except (TypeError, ValueError):
+                timeout = -1.0
+            if not (math.isfinite(timeout) and timeout > 0):
+                raise ApiError(400, f"“{pid}” için zaman aşımı sıfırdan büyük bir sayı (saniye) olmalı.")
 
             seen.add(pid)
             cleaned.append({
@@ -305,7 +323,7 @@ class ProviderRegistry:
                 "health": health,
                 "extras": raw.get("extras") if isinstance(raw.get("extras"), dict) else {},
                 "token_field": raw.get("token_field") or "max_tokens",
-                "timeout": float(raw.get("timeout") or 120.0),
+                "timeout": timeout,
                 "enabled": bool(raw.get("enabled", True)),
                 "tools": bool(raw.get("tools", False)),
             })

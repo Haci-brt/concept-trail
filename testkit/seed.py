@@ -118,14 +118,25 @@ def seed_vault(vault: Path) -> list[str]:
     return written
 
 
-def bind_fake_model(config_base: Path, base_url: str) -> Path:
+def bind_fake_model(config_base: Path, base_url: str, remote: bool = False, local: bool = True) -> Path:
     """Point every job of the app at the stand-in model (under
-    FIKIR_CONFIG_DIR=config_base); return the providers file."""
+    FIKIR_CONFIG_DIR=config_base); return the providers file.
+
+    remote: the same stand-in also as a remote provider, first in every job's
+    chain — a `gizli: true` note must pass it by. local: keep the local entry
+    behind it (without one, a private note has no model at all). Its requests
+    carry REMOTE_MODEL_ID, so the stand-in's /calls tells which way each went."""
     from server.providers import ROLES
+    from testkit.fake_model import MODEL_ID, REMOTE_MODEL_ID
     path = Path(config_base) / "ConceptTrail" / "providers.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"providers": [{"id": "sahte", "label": "Sahte model (test)", "base_url": base_url, "model": "sahte-model",
-                           "kind": "local", "health": "models", "timeout": 30.0}],
-            "roles": {role: ["sahte"] for role in ROLES}}
+    providers = []
+    if remote:
+        providers.append({"id": "sahte-uzak", "label": "Sahte uzak model (test)", "base_url": base_url,
+                          "model": REMOTE_MODEL_ID, "kind": "remote", "health": "models", "timeout": 30.0})
+    if local or not remote:
+        providers.append({"id": "sahte", "label": "Sahte model (test)", "base_url": base_url, "model": MODEL_ID,
+                          "kind": "local", "health": "models", "timeout": 30.0})
+    data = {"providers": providers, "roles": {role: [p["id"] for p in providers] for role in ROLES}}
     path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return path

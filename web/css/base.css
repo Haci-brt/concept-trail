@@ -18,8 +18,8 @@
 
   --text: #ece9f3;
   --text-2: #c7c2d3;
-  --text-muted: #8f89a0;
-  --text-faint: #5d5870;
+  --text-muted: #948ea4;
+  --text-faint: #857f9b;
 
   --accent: #8b5cf6;
   --accent-strong: #a78bfa;
@@ -396,6 +396,9 @@ kbd {
 @keyframes dialog-in { from { opacity: 0; transform: translate(-50%, 6px) scale(0.98); } to { opacity: 1; transform: translateX(-50%); } }
 .dialog h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 .dialog p { margin: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
+.choice-dialog .choices { display: flex; flex-direction: column; gap: 8px; }
+.choice-dialog .choices .btn { flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 9px 12px; text-align: left; }
+.choice-dialog .choices small { font-size: 11.5px; font-weight: 400; opacity: 0.8; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .dialog.wide { width: min(560px, calc(100vw - 32px)); top: 14%; }
 

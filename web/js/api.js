@@ -4,6 +4,14 @@
 
 export const clientId = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
 
+/** The server's own sentence when it sent one; otherwise a Turkish one, never
+ *  a bare "Internal Server Error" or a validation error's list of objects. */
+function errorText(status, data) {
+  if (data && typeof data.detail === "string" && data.detail) return data.detail;
+  if (status >= 500) return "Beklenmeyen bir hata oldu; işlem yapılmadı.";
+  return "İstek başarısız";
+}
+
 async function request(method, url, body, signal) {
   const opts = { method, headers: { "X-Fikir": "1", "X-Client-Id": clientId }, signal };
   if (body !== undefined) {
@@ -14,7 +22,7 @@ async function request(method, url, body, signal) {
   const isJson = (res.headers.get("content-type") || "").includes("application/json");
   const data = isJson ? await res.json() : await res.text();
   if (!res.ok) {
-    const err = new Error((data && data.detail) || res.statusText || "İstek başarısız");
+    const err = new Error(errorText(res.status, data));
     err.status = res.status;
     throw err;
   }
@@ -35,9 +43,11 @@ export async function streamPost(url, body, onUpdate) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-    throw new Error(detail);
+    let data = null;
+    try { data = await res.json(); } catch { /* not json */ }
+    const err = new Error(errorText(res.status, data));
+    err.status = res.status;
+    throw err;
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

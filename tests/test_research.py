@@ -782,7 +782,7 @@ async def test_failed_searches_never_become_a_no_match_verdict(runner, monkeypat
     await runner._run(rel, "bir fikir")
     state = runner.state(rel)
     assert state["status"] == "error"
-    assert "eslesme yok sonucu cikarilamaz" in state["error"]
+    assert "eşleşme yok sonucu çıkarılamaz" in state["error"]
     assert state.get("verdict") is None
 
 

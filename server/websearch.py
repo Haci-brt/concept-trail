@@ -38,6 +38,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 from server.errors import ApiError
+from server.settings import VERSION
 
 SEARCH_PROVIDERS = (
     ("yahoo", "https://search.yahoo.com/search?p={query}"),
@@ -526,7 +527,7 @@ class HiddenBrowserSearch:
         on this system — and who is asking, as server/fetch.py does."""
         system = "Macintosh; Intel Mac OS X 10_15_7" if sys.platform == "darwin" else "X11; Linux x86_64"
         return (f"Mozilla/5.0 ({system}) AppleWebKit/537.36 (KHTML, like Gecko) "
-                f"Chrome/{browser.version} Safari/537.36 ConceptTrail/0.3")
+                f"Chrome/{browser.version} Safari/537.36 ConceptTrail/{VERSION}")
 
     @staticmethod
     async def _browser_pid(browser) -> int | None:

@@ -176,7 +176,7 @@ flowchart LR
 
 **Do my notes go to the cloud?** The app runs on your computer. For the assistant to think, your note is sent to the model you chose in the settings — to OpenRouter if you chose a cloud model, nowhere if you chose a local one. Notes with `private: true` at the top never go to remote models.
 
-**Does it cost anything?** The app is free; its source code is on GitHub. With a cloud model you pay the provider; with GPT-4o-mini a round costs about $0.0002, and a daily spending limit (default $0.50) can be changed in the settings. A local model costs nothing.
+**Does it cost anything?** The app itself costs nothing to use. With a cloud model you pay the provider; with GPT-4o-mini a round costs about $0.0002, and a daily spending limit (default $0.50) can be changed in the settings. A local model costs nothing.
 
 **Which languages does it speak?** The interface and the assistant speak English, Deutsch, Español, Français and Türkçe; the assistant's language can be set separately from the interface. The master prompt can be written in any of the five.
 

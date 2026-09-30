@@ -56,7 +56,7 @@ Tarayıcı testleri için bir kez `python -m playwright install chromium` gereki
 - asistanın sorusu → cevap → "Nota eklensin mi?" → onay ve ancak o zaman notta görünmesi
 - kurulum sihirbazı: kendiliğinden açılma, geçme, hatalı adresin anlaşılır sözle söylenmesi, bağlanma
 - fikir ağacı: 100+ yıldız, akan animasyon, kenardan uzaklaşınca yıldızların savrulmaması
-- altı tema ve her birinin gökyüzü
+- yedi tema ve her birinin gökyüzü
 - İngilizce arayüzde Türkçe kalmış arayüz metni olmaması (not adları ve model metni hariç)
 - master prompt: 19 bölüm ve modelin verdiği kararlar
 - `tur: fikir` notunda karar merdiveni yerine merak soruları

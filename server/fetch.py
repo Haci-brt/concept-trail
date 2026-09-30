@@ -28,11 +28,11 @@ from urllib.robotparser import RobotFileParser
 import httpx
 
 from server.errors import ApiError
+from server.settings import REPO_URL, VERSION
 
-USER_AGENT = ("ConceptTrail/0.2 (kisisel arastirma araci; "
-              "https://github.com/modelcontextprotocol)")
+USER_AGENT = f"ConceptTrail/{VERSION} (kisisel arastirma araci; {REPO_URL})"
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 ConceptTrail/0.2")
+              f"(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 ConceptTrail/{VERSION}")
 HTTP_TIMEOUT = 20.0
 BROWSER_TIMEOUT_MS = 30000
 MAX_CHARS = 8000            # what a model can actually use; pages run to 75k
@@ -56,28 +56,28 @@ def validate_public_url(url: str, resolve: bool = True) -> str:
     """The model picks this URL and its input is untrusted page text, so a
     fetched page must never be able to aim us at 127.0.0.1 or the LAN."""
     if not isinstance(url, str) or not url.strip():
-        raise ApiError(400, "Adres bos olamaz.")
+        raise ApiError(400, "Adres boş olamaz.")
     parsed = urlsplit(url.strip())
     if parsed.scheme not in {"http", "https"}:
-        raise ApiError(400, "Yalniz http ve https adresleri acilabilir.")
+        raise ApiError(400, "Yalnız http ve https adresleri açılabilir.")
     if parsed.username or parsed.password:
-        raise ApiError(400, "Kimlik bilgisi iceren adres kullanilamaz.")
+        raise ApiError(400, "Kimlik bilgisi içeren adres kullanılamaz.")
     host = (parsed.hostname or "").rstrip(".").lower()
     if not host or host in {"localhost", "localhost.localdomain"}:
-        raise ApiError(400, "Yerel adresler acilamaz.")
+        raise ApiError(400, "Yerel adresler açılamaz.")
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
         literal = None
     if literal is not None and not _is_public_address(str(literal)):
-        raise ApiError(400, "Ozel, loopback ya da link-local adres acilamaz.")
+        raise ApiError(400, "Özel, loopback ya da link-local adres açılamaz.")
     if resolve and literal is None:
         try:
             addresses = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         except OSError:
-            raise ApiError(400, "Alan adi cozumlenemedi: " + host)
+            raise ApiError(400, "Alan adı çözümlenemedi: " + host)
         if not addresses or any(not _is_public_address(item[4][0]) for item in addresses):
-            raise ApiError(400, "Alan adi herkese acik olmayan bir adrese cozumlendi.")
+            raise ApiError(400, "Alan adı herkese açık olmayan bir adrese çözümlendi.")
     return parsed.geturl()
 
 
@@ -183,7 +183,7 @@ def _http_get(url: str, timeout: float = HTTP_TIMEOUT, check_robots: bool = Fals
     """Follow redirects only after validating every destination as public."""
     current = validate_public_url(url)
     if check_robots and not robots_allows(current):
-        raise ApiError(403, "Sitenin robots.txt dosyasi bu adresi kapatmis.")
+        raise ApiError(403, "Sitenin robots.txt dosyası bu adresi kapatmış.")
     with httpx.Client(follow_redirects=False, timeout=timeout,
                       headers={"User-Agent": USER_AGENT}) as client:
         for _ in range(MAX_REDIRECTS + 1):
@@ -191,7 +191,7 @@ def _http_get(url: str, timeout: float = HTTP_TIMEOUT, check_robots: bool = Fals
             if reply.status_code in {301, 302, 303, 307, 308} and reply.headers.get("location"):
                 current = validate_public_url(urljoin(str(reply.url), reply.headers["location"]))
                 if check_robots and not robots_allows(current):
-                    raise ApiError(403, "Sitenin robots.txt dosyasi bu adresi kapatmis.")
+                    raise ApiError(403, "Sitenin robots.txt dosyası bu adresi kapatmış.")
                 continue
             return reply.status_code, reply.text, str(reply.url)
     raise ApiError(502, "Sayfa çok fazla yönlendirme yaptı.")
@@ -246,7 +246,7 @@ def fetch_page(url: str, query: str | None = None, limit: int = MAX_CHARS,
             return _result(url, final, "kaynak", status, text, truncated, attempts)
 
     if not robots_allows(url):
-        raise ApiError(403, "Sitenin robots.txt dosyasi bu adresi kapatmis.")
+        raise ApiError(403, "Sitenin robots.txt dosyası bu adresi kapatmış.")
 
     try:
         status, body, final = _http_get(url, check_robots=True)
@@ -271,7 +271,7 @@ def fetch_page(url: str, query: str | None = None, limit: int = MAX_CHARS,
                     return _result(url, final, "tarayici", status, text, truncated, attempts)
 
     last = attempts[-1]["status"] if attempts else 0
-    raise ApiError(502, "Sayfa okunamadi (son durum " + str(last) + "). Denenenler: "
+    raise ApiError(502, "Sayfa okunamadı (son durum " + str(last) + "). Denenenler: "
                    + ", ".join(a["tier"] + "=" + str(a["status"]) for a in attempts))
 
 

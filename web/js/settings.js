@@ -1,11 +1,12 @@
 // "Modeller ve anahtarlar": add providers (local servers or API keys), bind
 // each job to one, set the remote budget. This is the UI over /api/providers.
 import { api } from "./api.js";
-import { openMenu } from "./dialogs.js";
-import { identifyKey, KEY_PROVIDERS, matchesProviderUrl } from "./key-identity.js";
+import { openExternal } from "./desktop.js";
+import { appVersion, openMenu } from "./dialogs.js";
 import { icon } from "./icons.js";
 import { locale } from "./i18n.js";
-import { debounce, esc, html, toast } from "./util.js";
+import { identifyKey, KEY_PROVIDERS, matchesProviderUrl } from "./key-identity.js";
+import { debounce, esc, html, toast, trapFocus } from "./util.js";
 
 const KEY_MASK = "••••";
 const GEMINI_HINT = KEY_PROVIDERS.find((provider) => provider.id === "gemini");
@@ -43,6 +44,23 @@ const PRESETS = [
 
 const numberOr = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
 
+/** What the update check found (server/updates.py), one translatable sentence per element. */
+function updateMessage(r) {
+  if (r.status === "update") {
+    return `<b>Yeni sürüm çıktı: ${esc(r.latest)} (sende ${esc(r.current)}).</b>
+      <span>Güncellemek için kurulum komutunu yeniden çalıştır; notların ve ayarların korunur:</span>
+      <code translate="no">${esc(r.command || "")}</code>
+      ${r.url ? `<button class="btn btn-sm" data-act="release-notes" data-url="${esc(r.url)}">${icon("arrowRight", 13)}Sürüm notları</button>` : ""}`;
+  }
+  if (r.status === "current") return `<span>Güncelsin. GitHub'daki en yeni sürüm: ${esc(r.latest)}.</span>`;
+  // a private repository and one with nothing published yet both answer 404
+  if (r.status === "none") return "<span>GitHub'da henüz yayımlanmış bir sürüm yok; sonra yeniden bakabilirsin.</span>";
+  if (r.reason === "limit") return "<span>GitHub şu an daha fazla soruya cevap vermiyor (saatlik sınır). Biraz sonra yeniden dene.</span>";
+  if (r.reason === "network") return "<span>GitHub'a ulaşılamadı. İnternet bağlantını denetleyip yeniden dene.</span>";
+  if (r.reason === "app") return `<span>${esc(r.detail || "")}</span>`;
+  return "<span>GitHub'dan beklenmedik bir cevap geldi. Biraz sonra yeniden dene.</span>";
+}
+
 export class SettingsDialog {
   constructor() {
     this.el = null;
@@ -52,9 +70,9 @@ export class SettingsDialog {
 
   async open() {
     if (this.el) return;
-    let data, usage;
+    let data, usage, version;
     try {
-      [data, usage] = await Promise.all([api.get("/api/providers"), api.get("/api/usage")]);
+      [data, usage, version] = await Promise.all([api.get("/api/providers"), api.get("/api/usage"), appVersion()]);
     } catch (err) {
       toast(err.message, "error");
       return;
@@ -100,6 +118,15 @@ export class SettingsDialog {
           </div>
           <div class="tools-box"></div>
         </section>
+        <section class="update-section">
+          <div class="set-section-head">
+            <h3>${icon("download", 15)}Sürüm</h3>
+            ${version ? `<span class="app-version" translate="no">Concept Trail ${esc(version)}</span>` : ""}
+            <button class="btn btn-sm" data-act="check-update">${icon("refresh", 14)}Güncellemeleri denetle</button>
+          </div>
+          <p class="hint">Uygulama kendiliğinden güncelleme aramaz; GitHub'a yalnız bu düğmeye bastığında sorulur.</p>
+          <div class="update-result" hidden></div>
+        </section>
         <section class="privacy-note">
           ${icon("eye", 15)}
           <div>Bir notun başına <code>gizli: true</code> yazarsan o not asla uzak sağlayıcıya gönderilmez;
@@ -113,6 +140,7 @@ export class SettingsDialog {
       </footer>
     </div>`);
     document.body.append(this.overlay, this.el);
+    this._releaseFocus = trapFocus(this.el);
 
     this.listEl = this.el.querySelector(".provider-list");
     this.rolesEl = this.el.querySelector(".role-list");
@@ -155,6 +183,7 @@ export class SettingsDialog {
     this.el.remove();
     this.overlay.remove();
     this.el = null;
+    this._releaseFocus?.();
   }
 
   // ---------- provider cards ----------
@@ -379,6 +408,29 @@ export class SettingsDialog {
     }
   }
 
+  /** One question to GitHub, only because the button was pressed. */
+  async _checkUpdate(button) {
+    const box = this.el.querySelector(".update-result");
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = `${icon("refresh", 14)}Denetleniyor…`;
+    let reply;
+    try {
+      reply = await api.post("/api/update/check");
+    } catch (err) {
+      reply = { status: "error", reason: "app", detail: err.message };
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        button.innerHTML = original;
+      }
+    }
+    if (!box.isConnected) return;               // the dialog was closed meanwhile
+    box.hidden = false;
+    box.className = `update-result ${reply.status}`;
+    box.innerHTML = updateMessage(reply);
+  }
+
   /** Returns false only if the token was rejected; tools are never fatal to a save. */
   async _saveToken() {
     const input = this.el?.querySelector('[data-f="github_token"]');
@@ -411,6 +463,8 @@ export class SettingsDialog {
       return;
     }
     if (act === "restart-tools") return this._restartTools(e.target.closest("[data-act]"));
+    if (act === "check-update") return this._checkUpdate(e.target.closest("[data-act]"));
+    if (act === "release-notes") return openExternal(e.target.closest("[data-url]").dataset.url);
     if (!card) return;
     if (act === "apply-key") return this._applyIdentifiedKey(card);
     if (act === "apply-gemini-key") return this._applyIdentifiedKey(card, true);

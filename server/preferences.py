@@ -9,6 +9,7 @@ from pathlib import Path
 
 from server.errors import ApiError
 from server.providers import config_dir
+from server.store import read_json
 
 LANGUAGES = ("tr", "en", "de", "es", "fr")
 DEFAULTS = {"ui_language": "tr", "assistant_language": "tr"}
@@ -21,12 +22,7 @@ class Preferences:
     def __init__(self, path: Path | None = None):
         self.path = path or config_dir() / "preferences.json"
         self.data = {**DEFAULTS, **FLAGS}
-        try:
-            stored = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            stored = {}
-        if not isinstance(stored, dict):
-            stored = {}
+        stored = read_json(self.path) or {}     # a damaged file is set aside, not overwritten
         for key in DEFAULTS:
             if stored.get(key) in LANGUAGES:
                 self.data[key] = stored[key]

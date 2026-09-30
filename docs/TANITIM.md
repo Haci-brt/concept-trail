@@ -176,7 +176,7 @@ flowchart LR
 
 **Notlarım buluta gidiyor mu?** Uygulama bilgisayarında çalışır. Asistanın düşünmesi için notun, ayarlarda seçtiğin modele gönderilir. OpenRouter gibi bir bulut modeli seçtiysen oraya, yerel bir model seçtiysen hiçbir yere. Başına `private: true` yazdığın notlar uzak modellere hiç gitmez.
 
-**Ücretli mi?** Uygulama ücretsizdir; kaynak kodu GitHub'da. Bulut modeli kullanırsan sağlayıcının ücretini ödersin; GPT-4o-mini ile bir tur yaklaşık $0,0002'dir ve günlük harcama sınırı (varsayılan $0,50) ayarlardan değiştirilir. Yerel modelle ücret yoktur.
+**Ücretli mi?** Uygulamanın kendisi ücretsizdir. Bulut modeli kullanırsan sağlayıcının ücretini ödersin; GPT-4o-mini ile bir tur yaklaşık $0,0002'dir ve günlük harcama sınırı (varsayılan $0,50) ayarlardan değiştirilir. Yerel modelle ücret yoktur.
 
 **Hangi dilleri destekliyor?** Arayüz ve asistan Türkçe, English, Deutsch, Español ve Français konuşur; asistanın dili arayüzden ayrı seçilebilir. Master prompt da bu beş dilden birinde hazırlanır.
 

@@ -23,6 +23,11 @@ class Broker:
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._clients.discard(queue)
 
+    @property
+    def listening(self) -> bool:
+        """Would a publish reach an open page right now?"""
+        return self._loop is not None and bool(self._clients)
+
     @staticmethod
     def format(kind: str, data) -> str:
         return f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"

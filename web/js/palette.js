@@ -1,7 +1,7 @@
 // Ctrl+P: fuzzy note switcher, full-text + #tag search, and ">" commands.
 import { api } from "./api.js";
 import { icon } from "./icons.js";
-import { debounce, esc, fold, fuzzyScore, html } from "./util.js";
+import { debounce, esc, fold, fuzzyScore, html, trapFocus } from "./util.js";
 
 function highlight(name, query) {
   const i = fold(name).indexOf(fold(query));
@@ -41,6 +41,7 @@ export class Palette {
       </div>
     </div>`);
     document.body.append(this.overlay, this.el);
+    this._releaseFocus = trapFocus(this.el);
     this.input = this.el.querySelector("input");
     this.list = this.el.querySelector(".pal-list");
     this.input.value = query;
@@ -66,6 +67,7 @@ export class Palette {
     this.el.remove();
     this.overlay.remove();
     this.el = null;
+    this._releaseFocus?.();
   }
 
   _update() {

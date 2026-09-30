@@ -3,14 +3,21 @@
 Concept Trail gives each job its own system prompt; this reads which job a
 request is from that prompt and answers in the form the job's parser expects:
 decision-ladder lines drawn from the note itself, curiosity questions, a chat
-that understands a full answer and asks again on a short one, text for the
-note, the rest of a line, a master prompt with every section, a course
-correction plan. It is predictable rather than clever — which is what a test
-wants, and enough to click through every screen of the app.
+that understands a full answer, asks again on a short one, offers options to
+a writer who does not know and takes the one they pick, text for the note,
+the rest of a line, a master prompt with every section, a course correction
+plan — and, when asked to (extras=True), the model's own suggestion through
+the pass's lens and a research proposal. It is predictable rather than
+clever — which is what a test wants, and enough to click through every
+screen of the app.
 
     model = FakeModel(delay=0.3).start()      # model.base_url -> http://127.0.0.1:<port>
     ...
     model.stop()
+
+GET /calls lists the latest requests: the job, the model name it was sent to
+(REMOTE_MODEL_ID when it came through the provider bound as remote) and the
+note it was about.
 """
 import json
 import re
@@ -19,9 +26,12 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from server import ladder
-from server.vault import fold
+from server.vault import fold, plain
 
 MODEL_ID = "sahte-model"
+# the same stand-in bound as a remote provider (python -m testkit --uzak): the
+# name its requests carry is the only thing that tells them apart
+REMOTE_MODEL_ID = "sahte-uzak-model"
 
 # phrases that settle a decision when the note has them; the value given back
 # is the note's own sentence, so the app's grounding check accepts it
@@ -53,6 +63,55 @@ SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
 # words too common to ask about
 FILLER = {"istiyorum", "olacak", "olsun", "yapmak", "olmalı", "kullanacak", "herkes", "bunun", "şeyin", "kadar",
           "because", "should", "would", "which", "there", "their", "about", "möchte", "werden"}
+PUNCT = ".,;:!?()«»\"'“”"
+
+# the model's own suggestion, one for each lens (server/ladder.py LENSES):
+# what two things the note says ({a}, {b}) lead to together
+SUGGESTIONS = {
+    "tr": {
+        "mimar": "«{a}» ile «{b}» aynı kayıtlara dokunacağı için ekranlar veriye tek bir kayıt katmanı "
+                 "üzerinden ulaşmalı.",
+        "urun": "İlk sürüm yalnız «{a}» işini uçtan uca yapmalı; «{b}» ile ilgili geri kalan her şey ikinci "
+                "sürüme kalmalı.",
+        "guvenlik": "«{a}» ve «{b}» bir araya gelince kayıtlar cihazda şifreli durmalı ve silinen bir kayıt "
+                    "yedekten de silinmeli.",
+        "gelistirici": "«{a}» ve «{b}» için gerçek hesaba bağlanmadan sahte verilerle çalışan bir deneme modu "
+                       "olmalı.",
+    },
+    "en": {
+        "mimar": "“{a}” and “{b}” touch the same records, so every screen should reach the data through one "
+                 "storage layer.",
+        "urun": "The first version should do “{a}” end to end; everything else about “{b}” waits for the second.",
+        "guvenlik": "With “{a}” and “{b}” together, records should stay encrypted on the device and a deleted "
+                    "record should leave the backup too.",
+        "gelistirici": "“{a}” and “{b}” need a demo mode that runs on made-up data without a real account.",
+    },
+}
+# what the model asks to research: a capability others have already solved,
+# chosen by what the note is about — (tr, en) topic and reason
+RESEARCH = (
+    (("bitki", "sula", "plant", "water"),
+     ("zamanlanmış hatırlatma bildirimleri", "Uygulama kapalıyken de zamanında haber vermek hazır çözülmüş bir iş."),
+     ("scheduled reminder notifications", "Firing on time while the app is closed is a solved problem.")),
+    (("harcama", "fiş", "expense", "receipt"),
+     ("fiş fotoğrafından tutar okuma", "Fişten tutarı ve tarihi okuyan hazır OCR kütüphaneleri var."),
+     ("reading totals from receipt photos", "Ready OCR libraries read the total and the date off a receipt.")),
+    (("internet yokken", "çevrimdışı", "offline", "without internet"),
+     ("iki cihaz arası çevrimdışı senkron", "Bağlantı yokken yapılan değişiklikleri birleştirmek hazır çözülmüş bir iş."),
+     ("offline sync between two devices", "Merging changes made without a connection is a solved problem.")),
+)
+OTHER_RESEARCH = (("benzer uygulamaların veri modeli", "Aynı işi yapan projelerin neyi nasıl sakladığını görmek "
+                   "ilk kararları hızlandırır."),
+                  ("data model of similar apps", "How similar projects store their data speeds up the first decisions."))
+
+# the options the chat offered, as the app keeps them: "- " lines, the
+# "FİKİR:" tag already taken off
+OPTION_LINE = re.compile(r"^\s*[-*•]\s+(.+?)\s*$", re.M)
+# how a writer takes one of them (matched on plain()): by its place, or the
+# one the model said it would choose
+BY_PLACE = ((re.compile(r"\b(ilk|birinci|first)"), 0), (re.compile(r"\b(ikinci|second)"), 1),
+            (re.compile(r"\b(ucuncu|third)"), 2), (re.compile(r"\b(sonuncu|last)\b"), -1))
+AS_ADVISED = re.compile(r"\b(onerdig|sectig|dedig|tavsiye|o olsun|o olur|tamam|aynen)|\b(olur|evet|ok|okay|yes)\b")
 
 
 def language_of(system: str) -> str:
@@ -156,7 +215,100 @@ def search_terms_reply(user: str) -> str:
     return f"ANAHTAR: {anahtar}\nKONU: {konu}\nBILESEN: {bilesen}\nOZET: {ozet}"
 
 
-def answer(messages: list[dict]) -> str:
+def note_phrases(note: str, count: int = 2) -> list[str]:
+    """Short phrases in the note's own words, each from a sentence of its own
+    (two long words side by side in one clause, else one long word): what a
+    suggestion says it follows from, so the app's check that both are in the
+    note holds."""
+    sentences = note_sentences(note)
+    phrases = []
+    for sentence in sentences:
+        words = sentence.split()
+        pairs = ((a.strip(PUNCT), b.strip(PUNCT)) for a, b in zip(words, words[1:]) if a == a.rstrip(PUNCT))
+        pair = next((f"{a} {b}" for a, b in pairs
+                     if min(len(a), len(b)) >= 5 and not {fold(a), fold(b)} & FILLER
+                     and ladder.grounded(f"{a} {b}", note)), None)
+        if pair:
+            phrases.append(pair)
+        if len(phrases) == count:
+            return phrases
+    words = sorted({w.strip(PUNCT) for s in sentences for w in s.split()}, key=lambda w: (-len(w), w))
+    for word in words:
+        if len(phrases) == count:
+            break
+        if len(word) >= 6 and fold(word) not in FILLER and ladder.grounded(word, note) \
+                and not any(fold(word) in fold(p) for p in phrases):
+            phrases.append(word)
+    return phrases
+
+
+def extras_reply(user: str, lang: str) -> str:
+    """The model's own suggestion, seen through this pass's lens, and a
+    research proposal: the ÖNERİ and ARAŞTIR lines the app's parser takes."""
+    note = re.split(r"\[YOL HARİTASI\]|\[BAKIŞ AÇISI\]", user, maxsplit=1)[0]
+    lens = next((lens_id for lens_id, label, _ in ladder.LENSES if f"Bu turda {label} gözüyle" in user), "mimar")
+    code = "tr" if lang == "tr" else "en"
+    lines = []
+    phrases = note_phrases(note)
+    if len(phrases) == 2:
+        a, b = (p[:40] for p in phrases)
+        lines.append(f"ÖNERİ: {SUGGESTIONS[code][lens].format(a=a, b=b)} | {a} + {b}")
+    text = fold(note)
+    tr, en = next(((tr, en) for keys, tr, en in RESEARCH if any(fold(k) in text for k in keys)), OTHER_RESEARCH)
+    topic, why = tr if code == "tr" else en
+    lines.append(f"ARAŞTIR: {topic} | {why}")
+    return "\n".join(lines)
+
+
+def _stems(text: str) -> set[str]:
+    return {w[:4] for w in re.findall(r"\w+", plain(text)) if len(w) >= 4}
+
+
+def chosen_option(messages: list[dict]) -> str | None:
+    """The option the writer's last message takes — "ilkini yapalım",
+    "önerdiğin olsun", "tamam" — when the model's turn just before it offered
+    some. A long message is an answer of its own, not a pick."""
+    said = [m for m in messages if m["role"] in ("user", "assistant")]
+    if len(said) < 2 or said[-1]["role"] != "user" or said[-2]["role"] != "assistant":
+        return None
+    offered = said[-2]["content"] or ""
+    options = OPTION_LINE.findall(offered)
+    reply = plain(said[-1]["content"] or "")
+    if len(options) < 2 or len(reply.split()) > 8:
+        return None
+    for pattern, index in BY_PLACE:
+        if pattern.search(reply) and index < len(options):
+            return options[index]
+    if not AS_ADVISED.search(reply):
+        return None
+    # the one the model said it would choose: its name comes back in the lines after the options
+    advice = _stems(" ".join(line for line in offered.splitlines() if not OPTION_LINE.match(line)))
+    scores = [len(_stems(option.split(":", 1)[0]) & advice) for option in options]
+    return options[scores.index(max(scores))]
+
+
+def as_decision(option: str, lang: str) -> str:
+    """"- Bir görev listesi: herkes kendi işini alır" as a line for the note."""
+    name, _, detail = option.replace("**", "").partition(":")
+    name, detail = name.strip(), detail.strip().rstrip(".")
+    lead = "Karar" if lang == "tr" else "Decision"
+    return f"{lead}: {name} — {detail}." if detail else f"{lead}: {name}."
+
+
+def note_title(messages: list[dict]) -> str:
+    """The note a request is about, by its heading — for /calls."""
+    ordered = [m for m in messages if m["role"] != "system"] + [m for m in messages if m["role"] == "system"]
+    for message in ordered:
+        found = re.search(r"^#\s+(.+)$", message.get("content") or "", re.M)
+        if found:
+            return found.group(1).strip()[:80]
+    return ""
+
+
+def answer(messages: list[dict], extras_given: set[str] | None = None) -> str:
+    """extras_given: the note texts that have had their suggestion and research
+    proposal — each gets them once, so a sandbox does not fill up with them.
+    None: that job is answered "YOK", as the browser tests expect."""
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
     user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
     lang = language_of(system)
@@ -175,12 +327,19 @@ def answer(messages: list[dict]) -> str:
     if "SORU[derinlestirme]" in system:
         return idea_reply(user, lang)
     if "İki şey arıyorsun" in system:
-        return "YOK"
+        note = re.split(r"\[YOL HARİTASI\]|\[BAKIŞ AÇISI\]", user, maxsplit=1)[0].strip()
+        if extras_given is None or note in extras_given:
+            return "YOK"
+        extras_given.add(note)
+        return extras_reply(user, lang)
     if "TEK bir soru sordun" in system and "[BU TUR]" in system:
         return ("FİKİR:\n- Ortak bir klasör: kolay kurulur, ama aynı dosyaya iki araç birden yazabilir.\n"
                 "- Bir görev listesi: herkes kendi işini alır, ama listeyi biri güncel tutmalı.\n"
                 "Bu proje için görev listesini seçerdim, çünkü iki araç aynı anda çalışacak. Hangisi sana uyar?")
     if "TEK bir soru sordun" in system:
+        picked = chosen_option(messages)
+        if picked:
+            return f"ANLADIM\nNOT: {as_decision(picked, lang)}"
         return f"ANLADIM\nNOT: {user.strip()}" if len(user.split()) >= 3 else \
             "SORU: Bunu biraz daha açar mısın? Bir örnek verebilir misin?"
     if "SANA soru soruyor" in system:
@@ -203,11 +362,16 @@ def answer(messages: list[dict]) -> str:
 
 class FakeModel:
     """The server, on its own thread. delay: seconds before each answer, so
-    the app's spinners and streaming can be seen."""
+    the app's spinners and streaming can be seen. extras: also offer the
+    model's own suggestion and a research proposal, once per note text (the
+    sandbox does; the browser tests leave it off, so their panels hold only
+    what they ask for)."""
 
-    def __init__(self, delay: float = 0.0, host: str = "127.0.0.1", port: int = 0):
+    def __init__(self, delay: float = 0.0, host: str = "127.0.0.1", port: int = 0, extras: bool = False):
         self.delay = delay
         self.calls: list[dict] = []
+        self.extras_given: set[str] | None = set() if extras else None
+        self.lock = threading.Lock()
         model = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -237,10 +401,13 @@ class FakeModel:
                     return
                 payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                 messages = payload.get("messages") or []
-                text = answer(messages)
-                model.calls.append({"at": time.time(), "system": next((m["content"][:80] for m in messages
-                                                                      if m["role"] == "system"), ""),
-                                    "reply": text[:200]})
+                with model.lock:
+                    text = answer(messages, model.extras_given)
+                    model.calls.append({"at": time.time(), "model": payload.get("model") or "",
+                                        "note": note_title(messages),
+                                        "system": next(((m["content"] or "")[:80] for m in messages
+                                                        if m["role"] == "system"), ""),
+                                        "reply": text[:200]})
                 if model.delay:
                     time.sleep(model.delay)
                 usage = {"prompt_tokens": sum(len(m.get("content") or "") for m in messages) // 4,

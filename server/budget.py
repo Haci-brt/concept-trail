@@ -15,10 +15,14 @@ restarts and stay with the notes they belong to; the limits the writer sets
 are kept beside it (usage-limits.json).
 """
 import json
+import math
 import os
 import threading
 from datetime import date
 from pathlib import Path
+
+from server.errors import ApiError
+from server.store import read_json
 
 DEFAULT_LIMITS = {
     "daily_usd": 0.50,          # a few thousand passes of a cheap model; a loop stops here
@@ -43,20 +47,14 @@ class Budget:
         self.data = self._read()
 
     def _read_limits(self) -> dict:
-        try:
-            saved = json.loads(self.limits_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        saved = read_json(self.limits_path) or {}   # a damaged file is set aside, not overwritten
         return {key: value for key, value in saved.items()
-                if key in DEFAULT_LIMITS and isinstance(value, (int, float))} if isinstance(saved, dict) else {}
+                if key in DEFAULT_LIMITS and isinstance(value, (int, float))}
 
     def _read(self) -> dict:
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and data.get("day") == str(date.today()):
-                return {**_empty(), **data}
-        except (OSError, json.JSONDecodeError):
-            pass
+        data = read_json(self.path)
+        if data and data.get("day") == str(date.today()):
+            return {**_empty(), **data}
         return _empty()
 
     def _roll_day(self) -> None:
@@ -120,10 +118,19 @@ class Budget:
             return {**self.data, "limits": self.limits}
 
     def set_limits(self, limits: dict) -> dict:
-        with self.lock:
-            for key in DEFAULT_LIMITS:
-                if key in limits:
+        if not isinstance(limits, dict):
+            raise ApiError(400, "Geçersiz sınır verisi.")
+        values = {}
+        for key in DEFAULT_LIMITS:
+            if key in limits:
+                try:
                     value = float(limits[key]) if key in FLOAT_LIMITS else int(limits[key])
-                    self.limits[key] = max(0, value)
+                except (TypeError, ValueError, OverflowError):
+                    raise ApiError(400, "Kullanım sınırları sayı olmalı.")
+                if not math.isfinite(value):
+                    raise ApiError(400, "Kullanım sınırları sayı olmalı.")
+                values[key] = max(0, value)
+        with self.lock:
+            self.limits.update(values)       # all or nothing: one bad field changes none
             self._write(self.limits_path, self.limits)
             return self.public()

@@ -15,9 +15,11 @@ export const LANGUAGES = [
 ];
 const KEY = "fikir.ui-lang.v1";
 const ATTRS = ["title", "placeholder", "aria-label"];
-// the writer's and the model's words, and the editor (which redraws on every key)
+// the writer's and the model's words: the editor's mirror (which redraws on
+// every key) and the note's own headings in its chapter picker — the editor's
+// chrome around them (labels, placeholder, "Başlangıç") is translated
 const SKIP = [
-  ".editor-host", ".preview-body", ".md", ".mp-raw", ".mp-assumed li", ".tn-body", ".tn-thread", ".tn-diff", ".tn-root-title",
+  ".md-mirror", ".md-chapter-picker option:not([value=\"start\"])", ".preview-body", ".md", ".mp-raw", ".mp-assumed li", ".tn-body", ".tn-thread", ".tn-diff", ".tn-root-title",
   ".tn-section-name", ".cv-tip span", ".msg.user", ".msg.assistant:not(.steps):not(.thinking)",
   ".msg.thinking .body", ".p-text", ".h-text", ".h-reply", ".note-heading h1", ".tab .name", ".sidebar .name",
   ".crumbs", ".tv-note", "[translate=\"no\"]", "code", "pre", "kbd", "script", "style",

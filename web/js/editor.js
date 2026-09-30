@@ -2,6 +2,7 @@
 // mirror. Typing, undo, IME and selection stay native; the mirror only adds
 // color. Edits go through execCommand("insertText") so toolbar actions and
 // assistant edits land on the normal undo stack.
+import { t } from "./i18n.js";
 import { esc, mod } from "./util.js";
 
 const TR = "A-Za-zÇĞİÖŞÜçğıöşü";
@@ -166,7 +167,8 @@ export function renderLines(text, flash, written) {
     if (flash && line.trim() && end >= flash[0] && start < flash[1]) cls += " flash";
     const byAi = line.trim() && ai.some(([a, b]) => end > a && start < b);
     if (byAi) cls += " ai";
-    out[i] = `<div class="${cls}"${byAi ? ' title="Asistanın yazdığı, senin onayladığın metin"' : ""}>`
+    // the mirror is not translated as a whole (it is the note): its one label is
+    out[i] = `<div class="${cls}"${byAi ? ` title="${esc(t("Asistanın yazdığı, senin onayladığın metin"))}"` : ""}>`
       + `<span class="tx">${body}</span></div>`;
   }
   return out;

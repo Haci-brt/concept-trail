@@ -7,7 +7,7 @@
 import { api, streamPost } from "./api.js";
 import { icon } from "./icons.js";
 import { LANGUAGES, lang as uiLang, locale } from "./i18n.js";
-import { esc, html, toast } from "./util.js";
+import { esc, html, toast, trapFocus } from "./util.js";
 
 const LANG_KEY = "fikir.master.lang.v1";
 const SECTIONS = ["Ajan kuralları", "Ürün özeti", "Kullanıcılar", "Kapsam", "Platform", "Teknoloji yığını",
@@ -71,6 +71,7 @@ export class MasterPromptDialog {
       <footer class="mp-foot"></footer>
     </section>`);
     document.body.append(this.overlay, this.el);
+    this._releaseFocus = trapFocus(this.el);
     requestAnimationFrame(() => { this.overlay.classList.add("in"); this.el.classList.add("in"); });
     this.el.addEventListener("click", (e) => this._click(e));
     this.overlay.addEventListener("mousedown", () => this.close());
@@ -103,6 +104,7 @@ export class MasterPromptDialog {
     clearInterval(this._clock);
     const el = this.el, overlay = this.overlay;
     this.el = null;
+    this._releaseFocus?.();
     el.classList.remove("in");
     overlay.classList.remove("in");
     setTimeout(() => { el.remove(); overlay.remove(); }, 260);

@@ -1,6 +1,6 @@
 // A direct way for the writer to correct the project's course at any point.
 import { api } from "./api.js";
-import { esc, html, toast } from "./util.js";
+import { esc, html, toast, trapFocus } from "./util.js";
 
 const OPTIONS = [
   { id: "amac", label: "Amaç", example: "Bu proje otomatik karar vermesin; seçenekleri gerekçeleriyle sunsun." },
@@ -48,6 +48,7 @@ export class DirectionDialog {
         </div>
       </div>`);
       document.body.append(this.overlay, this.dialog);
+      this._releaseFocus = trapFocus(this.dialog);
       this.textarea = this.dialog.querySelector("textarea");
       this.textarea.value = direction?.text || "";
       this.dialog.querySelector(".direction-current").textContent = direction
@@ -57,7 +58,17 @@ export class DirectionDialog {
       this.dialog.querySelector(".direction-options").innerHTML = OPTIONS.map((o) =>
         `<button class="direction-option" type="button" data-category="${o.id}">${esc(o.label)}</button>`).join("");
       this.dialog.addEventListener("click", (e) => this._click(e));
-      this.overlay.addEventListener("mousedown", () => this.close());
+      // a click beside the dialog must not throw away what was typed: it
+      // closes only while there is nothing of the writer's in it yet
+      this.initialText = this.textarea.value;
+      this.overlay.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const typed = this.textarea.value.trim() && this.textarea.value !== this.initialText;
+        if (!typed && this.dialog.querySelector(".direction-review").hidden) { this.close(); return; }
+        this.dialog.classList.remove("nudge");
+        void this.dialog.offsetWidth;                 // restart the nudge animation
+        this.dialog.classList.add("nudge");
+      });
       this._key = (e) => { if (e.key === "Escape") { e.preventDefault(); this.close(); } };
       document.addEventListener("keydown", this._key, true);
       this._select(this.category);
@@ -83,16 +94,18 @@ export class DirectionDialog {
    *  and decisions: a short summary of the new course and exactly what it
    *  would reopen or close. Nothing changes before "Yönü kaydet". */
   async _review() {
+    const dialog = this.dialog;
     const text = this.textarea.value.trim();
-    const error = this.dialog.querySelector(".field-error");
+    const error = dialog.querySelector(".field-error");
     if (!this.category) { error.textContent = "Önce neyi düzeltmek istediğini seç."; return; }
     if (!text) { error.textContent = "İstediğin yönü bir cümleyle yaz."; this.textarea.focus(); return; }
     error.textContent = "";
-    const next = this.dialog.querySelector('[data-act="next"]');
+    const next = dialog.querySelector('[data-act="next"]');
     next.disabled = true;
     next.textContent = "Etkisi inceleniyor…";
+    let plan;
     try {
-      this.plan = await api.post("/api/assistant/direction/preview", {
+      plan = await api.post("/api/assistant/direction/preview", {
         path: this.path, category: this.category, text,
       });
     } catch (err) {
@@ -102,20 +115,30 @@ export class DirectionDialog {
       next.disabled = false;
       next.textContent = "Önizle";
     }
+    // closed (or opened again for another note) while the model was reading
+    if (this.dialog !== dialog) return;
+    this.plan = plan;
     const option = OPTIONS.find((o) => o.id === this.category);
     const group = (title, ids) => ids.length ? `<div class="direction-group"><b>${title}</b>
         ${ids.map((id) => `<label class="direction-item"><input type="checkbox" data-plan-id="${esc(id)}" checked>
           <span>${esc(this.plan.items[id] || id)}</span></label>`).join("")}</div>` : "";
     const review = this.dialog.querySelector(".direction-review");
+    const nothing = !Object.keys(this.plan.update || {}).length && !this.plan.reopen.length && !this.plan.drop_questions.length
+      && !this.plan.drop_proposals.length && !(this.plan.ask || []).length;
+    // Without a model the server's summary is its cautious rule ("everything
+    // waiting closes"); it must not stand next to lists that say otherwise.
+    const summary = !this.plan.fallback ? this.plan.summary
+      : nothing ? "Model şu an ulaşılamadı. Bekleyen soru, öneri ya da verilmiş karar olmadığı için hiçbir şey kapanmayacak; yalnız yeni yön kaydedilecek."
+      : "Model şu an ulaşılamadığı için etkiler tek tek değerlendirilemedi. Aşağıdakiler temkinli bir tahmin; tutmak istediklerinin işaretini kaldır.";
     review.innerHTML = `<strong>Yeni gidişat</strong>
-      <p>${esc(this.plan.summary)}</p>
+      <p>${esc(summary)}</p>
       <p class="direction-said"><b>${esc(option.label)}:</b> ${esc(text)}</p>
       ${group("Güncellenecek kararlar", Object.keys(this.plan.update || {}))}
       ${group("Yeniden sorulacak kararlar", this.plan.reopen)}
       ${group("Kapanacak sorular", this.plan.drop_questions)}
       ${group("Kaldırılacak öneriler", this.plan.drop_proposals)}
       ${group("Hemen sorulacak yeni sorular", (this.plan.ask || []).map((q) => q.id))}
-      ${!Object.keys(this.plan.update || {}).length && !this.plan.reopen.length && !this.plan.drop_questions.length && !this.plan.drop_proposals.length && !(this.plan.ask || []).length
+      ${nothing && !this.plan.fallback
         ? "<p class=\"direction-none\">Verilmiş kararlar ve bekleyen sorular bu yönle çelişmiyor; hepsi korunacak.</p>" : ""}
       <p class="direction-hint">İşaretini kaldırdığın kalem olduğu gibi kalır. Sonraki sorular bu yöne göre gelecek.</p>`;
     review.hidden = false;
@@ -159,14 +182,15 @@ export class DirectionDialog {
       drop_proposals: this.plan.drop_proposals.filter((id) => kept.has(id)),
       ask: (this.plan.ask || []).filter((q) => kept.has(q.id)).map((q) => q.text),
     };
+    const { dialog, path } = this;
     try {
       const result = await api.post("/api/assistant/direction", {
-        path: this.path, category: this.category, text: this.textarea.value.trim(), plan,
+        path, category: this.category, text: this.textarea.value.trim(), plan,
       });
-      this.close();
-      this.onSaved?.(this.path, result);
+      if (this.dialog === dialog) this.close();
+      this.onSaved?.(path, result);
     } catch (err) {
-      this.dialog.querySelector(".field-error").textContent = err.message;
+      dialog.querySelector(".field-error").textContent = err.message;
       button.disabled = false;
     }
   }
@@ -176,5 +200,7 @@ export class DirectionDialog {
     this.overlay?.remove();
     this.dialog?.remove();
     this.overlay = this.dialog = null;
+    this._releaseFocus?.();
+    this._releaseFocus = null;
   }
 }

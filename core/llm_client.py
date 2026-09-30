@@ -263,6 +263,7 @@ def _raise_for_api(response) -> None:
     status = response.status_code
     friendly = {
         401: "API anahtarı reddedildi.",
+        402: "Sağlayıcı hesabında kredi kalmadı.",
         403: "Bu anahtarın bu modele erişimi yok.",
         404: "Model ya da adres bulunamadı.",
         429: "Kota ya da hız sınırına takıldı.",
@@ -283,15 +284,38 @@ def default_provider():
 
 
 def is_server_up(provider=None, timeout: float = 2.0) -> bool:
+    return check_server(provider, timeout)["up"]
+
+
+def check_server(provider=None, timeout: float = 2.0) -> dict:
+    """Is it there, and will it take our calls? {"up": bool, "problem": None,
+    "key", "credit" or "down"}. OpenRouter hands its model list to anyone,
+    a dead key included — measured: a rejected key kept the light green all
+    day while every pass failed quietly. Its /key endpoint checks the key."""
     provider = provider or default_provider()
-    url = provider.health_url
+    base = provider.base_url.rstrip("/")
+    openrouter = "openrouter.ai" in base and bool(provider.api_key)
+    url = f"{base}/v1/key" if openrouter else provider.health_url
     if url is None:
-        return True  # no health endpoint (most remote APIs): calls themselves will tell us
+        return {"up": True, "problem": None}  # no health endpoint: calls themselves will tell us
     try:
         r = requests.get(url, headers=provider.headers(), timeout=timeout)
-        return r.status_code == 200
     except requests.RequestException:
-        return False
+        return {"up": False, "problem": "down"}
+    if r.status_code in (401, 403):
+        return {"up": False, "problem": "key"}
+    if r.status_code == 402:
+        return {"up": False, "problem": "credit"}
+    if r.status_code != 200:
+        return {"up": False, "problem": "down"}
+    if openrouter:
+        try:
+            left = (r.json().get("data") or {}).get("limit_remaining")
+            if left is not None and float(left) <= 0:
+                return {"up": False, "problem": "credit"}   # the key's own spending limit is used up
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return {"up": True, "problem": None}
 
 
 def supports_tools(provider, timeout: float = 4.0) -> bool | None:

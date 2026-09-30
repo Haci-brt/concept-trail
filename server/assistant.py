@@ -288,8 +288,20 @@ OPEN_QUESTION_FUSE = 12
 # writer is not keeping up — and a pass adds at most one question. A writer
 # who answers is never held back by it.
 BACKLOG = 5
-HEALTH_INTERVAL_UP_S = 15
-HEALTH_INTERVAL_DOWN_S = 5
+HEALTH_INTERVAL_UP_S = 30
+HEALTH_INTERVAL_DOWN_S = 5          # doubles while it stays down, up to the max
+HEALTH_INTERVAL_MAX_S = 60
+ROLES_WATCHED = ("analysis", "chat", "summary", "complete", "compare", "master")
+# what a refused call says about the provider, in the writer's words
+PROBLEM_OF_STATUS = {401: "key", 402: "credit", 403: "access", 429: "rate"}
+PROBLEM_STATUS = {kind: status for status, kind in PROBLEM_OF_STATUS.items()}
+PROBLEMS = {
+    "key": "API anahtarı reddedildi. Ayarlar → Sihirbazla bağla ile yeni bir anahtar gir.",
+    "credit": "Sağlayıcı hesabında kredi kalmadı. Kredi yükle ya da başka bir modele bağlan.",
+    "access": "Bu anahtarın seçili modele erişimi yok. Ayarlar'dan başka bir model seç.",
+    "rate": "Sağlayıcının hız sınırına takıldı; biraz sonra yeniden denenecek.",
+}
+RATE_PROBLEM_S = 90                 # a rate limit passes: shown only this long
 LAUNCH_TIMEOUT_S = 240  # a 75 GB MoE checkpoint needs ~1 min cold, more on a busy disk
 
 
@@ -537,6 +549,44 @@ class Assistant:
         self._tasks: set[asyncio.Task] = set()
         self._wake = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        # provider id -> what stops it (see PROBLEMS); shown until a call gets through
+        self.problems: dict[str, dict] = {}
+        record = self.budget.record
+
+        def recorded(provider, *args, **kwargs):
+            # a call that got an answer: whatever stopped this provider is over
+            if self.problems.pop(provider.id, None) is not None:
+                self._publish_status()
+            return record(provider, *args, **kwargs)
+
+        self.budget.record = recorded
+
+    def note_problem(self, provider, status: int | None) -> str | None:
+        """A refused call that will not fix itself by waiting — a dead key,
+        no credit — stays on show instead of each pass failing unseen.
+        Returns the words for the writer, or None when it is no such refusal."""
+        kind = PROBLEM_OF_STATUS.get(status)
+        if kind is None or provider is None:
+            return None
+        known = self.problems.get(provider.id)
+        self.problems[provider.id] = {"kind": kind, "message": PROBLEMS[kind], "provider": provider.label,
+                                      "at": time.monotonic()}
+        if not known or known["kind"] != kind:
+            self._publish_status()
+        return PROBLEMS[kind]
+
+    def problem(self) -> dict | None:
+        """What stops the assistant now, for the status bar: the provider the
+        jobs go to, then the day's budget."""
+        for role in ("analysis", "chat"):
+            for provider in self.providers.chain(role)[:1]:
+                found = self.problems.get(provider.id)
+                if found and not (found["kind"] == "rate" and time.monotonic() - found["at"] > RATE_PROBLEM_S):
+                    return {key: value for key, value in found.items() if key != "at"}
+                blocked = self.budget.check(provider)
+                if blocked:
+                    return {"kind": "budget", "message": blocked, "provider": provider.label}
+        return None
 
     # ---- snapshot / publishing ----
     def usage(self) -> dict:
@@ -559,6 +609,7 @@ class Assistant:
             # one model does everything: the UI shows one light, not two
             "shared_model": bool(analysis and chat and analysis.id == chat.id),
             "usage": self.budget.public(),
+            "problem": self.problem(),
             "busy": self.busy,
             "busy_quiet": bool(self.busy) and self._busy_quiet,
         }
@@ -620,7 +671,7 @@ class Assistant:
         try:
             meta, _, _ = split_frontmatter(self.vault.read_note(rel)["content"])
         except Exception:
-            return False
+            return True     # unreadable: fail closed rather than send it out
         value = meta.get("gizli", meta.get("private", ""))
         return str(value).strip().lower() in ("true", "evet", "yes", "1")
 
@@ -697,23 +748,35 @@ class Assistant:
             task.cancel()
 
     async def _health_loop(self):
+        down_for = 0
         while True:
-            providers = self.providers.all()
+            # only providers a job is bound to: a default nobody uses kept the
+            # loop at its fast pace all day, fetching a model catalogue each time
+            bound = {pid for role in ROLES_WATCHED for pid in self.providers.roles.get(role, [])}
+            providers = [p for p in self.providers.all() if p.id in bound]
             results = await asyncio.gather(
-                *(asyncio.to_thread(llm_client.is_server_up, provider) for provider in providers),
+                *(asyncio.to_thread(llm_client.check_server, provider) for provider in providers),
                 return_exceptions=True,
             )
             changed = False
-            for provider, up in zip(providers, results):
-                changed |= self.providers.set_health(provider.id, up is True)
+            for provider, result in zip(providers, results):
+                up = isinstance(result, dict) and result["up"]
+                changed |= self.providers.set_health(provider.id, up)
+                problem = result.get("problem") if isinstance(result, dict) else None
+                if problem in ("key", "credit"):
+                    self.note_problem(provider, PROBLEM_STATUS[problem])
+                elif up and self.problems.get(provider.id, {}).get("kind") in ("key", "access"):
+                    self.problems.pop(provider.id, None)       # a new key went in
+                    changed = True
             if changed:
                 self._publish_status()
                 self.broker.publish("providers", self.providers.public())
             all_up = all(self.providers.health.get(p.id) for p in providers) if providers else False
+            down_for = 0 if all_up else down_for + 1
             self._wake.clear()
             try:
-                await asyncio.wait_for(self._wake.wait(),
-                                       HEALTH_INTERVAL_UP_S if all_up else HEALTH_INTERVAL_DOWN_S)
+                await asyncio.wait_for(self._wake.wait(), HEALTH_INTERVAL_UP_S if all_up else
+                                       min(HEALTH_INTERVAL_DOWN_S * 2 ** min(down_for - 1, 4), HEALTH_INTERVAL_MAX_S))
             except asyncio.TimeoutError:
                 pass
 
@@ -883,11 +946,20 @@ class Assistant:
                 return
             except llm_client.ProviderError as exc:
                 # the watch retries at the next pause; only a pass you asked
-                # for owes you an explanation
+                # for owes you an explanation — and a dead key or no credit
+                # stays in the status bar either way (note_problem)
+                told = self.note_problem(provider, exc.status)
                 if not self._busy_quiet:
                     self.broker.publish("flash", {"kind": "error", "path": rel,
-                                                  "title": "Model isteği reddedildi", "body": str(exc)})
+                                                  "title": "Model isteği reddedildi", "body": told or str(exc)})
                 self.check_now()
+                return
+            except ApiError as exc:
+                # no provider bound, or the day's budget spent: say that, not "not answering"
+                if not self._busy_quiet:
+                    self.broker.publish("flash", {"kind": "error", "path": rel,
+                                                  "title": "Asistan çalışamadı", "body": exc.message})
+                self._publish_status()
                 return
             except Exception:
                 if not self._busy_quiet:
@@ -910,6 +982,8 @@ class Assistant:
                     pass
                 if cancelled():
                     return
+            # renamed while the model read it: the questions go to the note where it is now
+            rel = self.notes.current(rel)
             self._apply_result(rel, content, span, result, open_nodes, mode, quiet=self._busy_quiet)
         finally:
             self._cancelled.discard(run_id)
@@ -1506,6 +1580,29 @@ class Assistant:
         self._publish_hud()
         return {"ok": True}
 
+    def decide_node(self, rel: str, node_id: str, action: str) -> dict:
+        """Approve or reject a proposal by its node — the tree's way in. Its
+        history event may be gone (an old vault, one trimmed before waiting
+        events were kept); one is made from the node, so it is decided
+        exactly as from the card or the panel."""
+        if action not in ("approve", "reject"):
+            raise ApiError(400, "Bilinmeyen işlem.")
+        node = self.notes.find_node(rel, node_id)
+        if node is None or node["type"] not in ("summary", "edit"):
+            raise ApiError(404, "Öneri bulunamadı.")
+        event = self.history.find_by_node(rel, node_id, node["type"])
+        if event is None:
+            if node.get("status") != "pending":
+                raise ApiError(409, "Bu öneri zaten sonuçlandı.")
+            fields = ({"original": node.get("original", ""), "replacement": node.get("replacement", ""),
+                       "reason": node.get("reason", "")} if node["type"] == "edit" else {"text": node["text"]})
+            parent = self.notes.find_node(rel, node.get("parentId")) if node.get("parentId") else None
+            if parent and parent["type"] == "question":
+                fields.update(question_id=parent["id"], question=parent["text"])
+            event = self._event(node["type"], rel, node_id=node_id, status="pending", **fields)
+            self.history.add(event)
+        return self.hud_action(event["id"], action)
+
     def claim(self, event_id: str) -> bool:
         """Several open pages hear the same apply_edit — only the first one applies it."""
         if event_id in self._claims:
@@ -1592,6 +1689,7 @@ class Assistant:
         async def answer():
             # saving happens here rather than in the generator, so the reply
             # is kept even if the page is closed while the model is writing
+            nonlocal rel
             try:
                 provider = self.provider_for("chat", rel)
             except ApiError as exc:
@@ -1627,11 +1725,17 @@ class Assistant:
             if raw is None:
                 try:
                     raw = await reply(wants_ideas)
+                except llm_client.ProviderError as exc:
+                    self.check_now()
+                    told = self.note_problem(provider, exc.status)
+                    await updates.put(("error", told or f"Model isteği reddedildi: {exc}"))
+                    return
                 except Exception:
                     self.check_now()
                     await updates.put(("error", "Model yanıt vermedi, model çalışıyor mu kontrol et."))
                     return
 
+            rel = self.notes.current(rel)          # renamed while the model was writing
             if user_asked:
                 # the user asked something: answer it, keep the question open,
                 # write nothing to the note
@@ -1733,12 +1837,15 @@ class Assistant:
         question, messages = self._conversation(rel, node_id)
         if not any(n["type"] == "chat-user" for n in self.notes.thread(rel, node_id)):
             raise ApiError(400, "Önce biraz sohbet et — nota yazılacak bir sonuç yok.")
+        provider = self.provider_for("summary", rel)
         try:
             direction = (self.notes.load(rel).get("direction") or {}).get("text", "")
             with self._conversing():
                 text = (await asyncio.to_thread(llm_client.summarize_for_note, messages,
-                                                self.provider_for("summary", rel), self.budget.record,
-                                                direction)).strip()
+                                                provider, self.budget.record, direction)).strip()
+        except llm_client.ProviderError as exc:
+            self.check_now()
+            raise ApiError(502, self.note_problem(provider, exc.status) or f"Model isteği reddedildi: {exc}")
         except Exception:
             self.check_now()
             raise ApiError(502, "Model yanıt vermedi, model çalışıyor mu kontrol et.")

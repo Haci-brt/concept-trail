@@ -1276,8 +1276,8 @@ class ResearchRunner:
         meta, _, _ = split_frontmatter(content)
         private_value = meta.get("gizli", meta.get("private", ""))
         if self.is_private(rel) or str(private_value).strip().lower() in {"true", "evet", "yes", "1"}:
-            raise ApiError(403, "Bu not gizli: fikri aratmak onu disari gonderir. "
-                                "Arastirmak icin notun basindaki 'gizli' satirini kaldir.")
+            raise ApiError(403, "Bu not gizli: fikri aratmak onu dışarı gönderir. "
+                                "Araştırmak için notun başındaki 'gizli' satırını kaldır.")
 
     async def start(self, rel, content, focus=None, web=True):
         if self.busy(rel):
@@ -1285,7 +1285,7 @@ class ResearchRunner:
         self._assert_public(rel, content)
         registry = getattr(self.tool_hub, "registry", {}) if self.tool_hub else {}
         if not registry or not ({"git_search", "web_search"} & set(registry)):
-            raise ApiError(503, "Arastirma sunuculari calismiyor.")
+            raise ApiError(503, "Araştırma sunucuları çalışmıyor.")
         if not web and "git_search" not in registry:
             raise ApiError(503, "GitHub araması çalışmıyor; web araması kapalıyken aranacak yer kalmadı.")
         (self.web_off.discard if web else self.web_off.add)(rel)
@@ -1326,7 +1326,7 @@ class ResearchRunner:
                        rank(candidates, keywords=terms.get("keywords"), terms=terms)])
             await timed("adjacent", self._adjacent(rel, terms, content, queries, sources))
             if not any(entry.get("ok") for entry in queries):
-                raise ApiError(502, "Arastirma kaynaklari yanit vermedi; eslesme yok sonucu cikarilamaz.")
+                raise ApiError(502, "Araştırma kaynakları yanıt vermedi; eşleşme yok sonucu çıkarılamaz.")
             await timed("web_reads", self._fetch_sources(rel, content, sources, terms,
                                                         helpers=helpers, query_log=queries))
             await timed("readmes", self._fetch_helper_docs(rel, content, helpers, sources,
@@ -1360,17 +1360,17 @@ class ResearchRunner:
             self._progress(rel, "hata", str(exc)[:200])
 
     async def _terms(self, rel, content):
-        self._progress(rel, "terimler", "Fikirden arama terimleri cikariliyor")
+        self._progress(rel, "terimler", "Fikirden arama terimleri çıkarılıyor")
         provider = self.provider_for("analysis", rel)
         terms = await asyncio.to_thread(llm_client.extract_search_terms, content, provider,
                                         self.record_usage)
         if not any(terms.get(key) for key in ("keywords", "topics", "components")):
-            raise ApiError(422, "Fikirden arama terimi cikarilamadi; notu biraz daha yaz.")
+            raise ApiError(422, "Fikirden arama terimi çıkarılamadı; notu biraz daha yaz.")
         profile = await self._research_profile(rel, content, terms)
         if profile:
             terms = {**terms, "profile": profile}
         self._save(rel, terms=terms)
-        self._progress(rel, "terimler", "Terimler hazir.", terms=terms)
+        self._progress(rel, "terimler", "Terimler hazır.", terms=terms)
         return terms
 
     async def _search(self, rel, terms, content, query_log):
@@ -1491,7 +1491,7 @@ class ResearchRunner:
                 continue
             if detail.get("ok"):
                 merge(candidates, "web", [payload_of(detail)])
-        self._progress(rel, "web", "Web " + str(len(repos)) + " depo onerdi.")
+        self._progress(rel, "web", "Web " + str(len(repos)) + " depo önerdi.")
         self._save(rel, candidates=[c.public() for c in rank(candidates, keywords=terms.get("keywords"), terms=terms)],
                    sources=sources, queries=query_log)
         return sources
@@ -1521,7 +1521,7 @@ class ResearchRunner:
                                              terms.get("components"), terms.get("summary"),
                                              _profile(terms)):
                 self._assert_public(rel, content)
-                self._progress(rel, "kaynaklar", "Yardimci araclar ve uygulama ornekleri araniyor")
+                self._progress(rel, "kaynaklar", "Yardımcı araçlar ve uygulama örnekleri aranıyor")
                 record = {"purpose": "support", "style": "web", "query": query, "ok": False}
                 query_log.append(record)
                 try:
@@ -1607,7 +1607,7 @@ class ResearchRunner:
         async def read(source):
             async with gate:
                 self._assert_public(rel, content)
-                self._progress(rel, "kaynaklar", "Kaynak sayfasi okunuyor: " + source["title"][:80])
+                self._progress(rel, "kaynaklar", "Kaynak sayfası okunuyor: " + source["title"][:80])
                 query = source.get("query") or " ".join(_keywords(terms.get("keywords"), 3))
                 try:
                     outcome = await self.tool_hub.call("web_fetch", {
@@ -1874,7 +1874,7 @@ class ResearchRunner:
 
     async def _judge(self, rel, content, ranked, helpers, sources, terms, queries,
                      timings=None):
-        self._progress(rel, "degerlendirme", "Bulunanlar fikirle karsilastiriliyor")
+        self._progress(rel, "degerlendirme", "Bulunanlar fikirle karşılaştırılıyor")
         listed = [c.public() for c in ranked]
         prior_provider = self.provider_for("analysis", rel)
         recommend_provider = self.provider_for("chat", rel)
@@ -1884,12 +1884,12 @@ class ResearchRunner:
                                              self.record_usage, sources=sources)
         else:
             result = {"same": [], "adjacent": [],
-                      "verdict": "Benzer proje aramasi tamamlanamadi; eslesme yok sonucu cikarilamaz."}
+                      "verdict": "Benzer proje araması tamamlanamadı; eşleşme yok sonucu çıkarılamaz."}
         if timings is not None:
             timings["prior_judge"] = round(time.perf_counter() - prior_started, 2)
             self._save(rel, timings=dict(timings))
         result = calibrate_prior_art(result, ranked, sources, terms)
-        self._progress(rel, "oneriler", "Yardimci araclar ve gelistirme firsatlari degerlendiriliyor")
+        self._progress(rel, "oneriler", "Yardımcı araçlar ve geliştirme fırsatları değerlendiriliyor")
         helper_rows = [c.public() for c in helpers]
         grounded_sources = [source for source in sources if source.get("verified") and
                             int(source.get("relevance") or 0) >= 2]
