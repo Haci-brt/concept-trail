@@ -197,3 +197,19 @@ async def test_without_a_model_the_preview_says_so_and_stays_cautious(writer, mo
     monkeypatch.setattr(llm_client, "plan_direction", down)
     preview = await assistant.preview_direction(rel, "kapsam", "İlk sürüm çok küçük olsun.")
     assert preview["fallback"] is True and preview["reopen"] == ["amac"]
+
+
+def test_updates_that_repeat_a_decision_or_were_never_said_are_dropped():
+    """Measured on DeepSeek V4 Flash for "Sipariş kısmı olmasın, sadece stok takibi
+    yapalım": guncelle came back with every decision as it was, plus a platform
+    of "stok takibi yapılacak" and parts of "Sadece biz iki çalışan"."""
+    decisions = {"kullanici": "Kapsam · Kullanıcı = iki kişilik ekip kullanacak",
+                 "platform": "Kapsam · Platform = telefon ve tezgâh ekranı",
+                 "parcalar": "Mimari · Ana parçalar = Sadece biz iki çalışan kullanacak",
+                 "amac": "Kapsam · Amaç = sipariş ve stok takibi"}
+    raw = ('{"ozet": "Yalnız stok takibi.", "guncelle": {"kullanici": "iki kişilik ekip kullanacak", '
+           '"platform": "stok takibi yapılacak", "parcalar": "Sadece biz iki çalışan kullanacak", '
+           '"amac": "sadece stok takibi"}, "kararlar": [], "sorular": [], "oneriler": []}')
+    plan = llm_client.parse_direction_plan(raw, decisions, {}, {}, "kapsam",
+                                           correction="Sipariş kısmı olmasın, sadece stok takibi yapalım.")
+    assert plan["update"] == {"amac": "sadece stok takibi"}

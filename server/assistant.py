@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -250,12 +251,28 @@ QUESTION_PARTICLE = re.compile(r"\bm[iu](s[iu]n|s[iu]n[iu]z|y[iu]m|y[iu]z|d[iu]r
 # have their not knowing written down as a decision
 WANTS_IDEAS = re.compile(r"\b(bilmiyorum|bilmiyor olmam|bilemedim|bilmem\b|fikrim yok|hic fikrim|emin degilim|"
                          r"karar veremedim|karar veremiyorum|fikir ver|fikrin|fikirlerin|onerin|onerilerin|"
-                         r"ne onerirsin|sen oner|onerir misin|ne yapilabilir|ne yapabiliriz|yardim et)")
+                         r"ne onerirsin|sen oner|onerir misin|ne yapilabilir|ne yapabiliriz|yardim et)"
+                         # the writers of the other UI languages say the same (seen: an
+                         # English "I don't know, any ideas?" was taken for a question)
+                         r"|\b(i don'?t know|dunno|not sure|no idea|any ideas?|suggest|what would you|"
+                         r"help me (decide|choose)|you decide|weiss (ich )?nicht|keine ahnung|nicht sicher|"
+                         r"ideen?\b|vorschlag|schlag (du )?(etwas )?vor|no lo se|no se que|ni idea|no estoy segur|"
+                         r"alguna idea|sugier|recomiend|je ne sais pas|aucune idee|pas sur\b|une idee|"
+                         r"des idees|conseill)")
 # a write-up that files the not knowing itself ("has no technical knowledge,
 # needs guidance", "not settled yet, looking for ideas") — measured on
 # DeepSeek V4 Flash — is not a decision
 UNDECIDED_NOTE = re.compile(r"bilmiyor|bilmedig|emin degil|bilgisi yok|bilgiye sahip degil|sahip olmadig|"
-                            r"rehberlig|fikir ariyor|netlesmedi|karar vermedi|karar veremedi")
+                            r"rehberlig|fikir ariyor|netlesmedi|karar vermedi|karar veremedi"
+                            r"|does(n'?t| not) know|is unsure|needs guidance|not (yet )?decided|"
+                            r"weiss nicht|ist unsicher|noch nicht entschieden|no sabe|no esta segur|sin decidir|"
+                            r"ne sait pas|pas encore decid")
+
+
+def ascii_fold(text: str) -> str:
+    """plain() and the other UI languages' accents too: "idée" is "idee",
+    "weiß" is "weiss" — the patterns above are written without them."""
+    return "".join(c for c in unicodedata.normalize("NFKD", plain(text)) if not unicodedata.combining(c))
 
 
 def looks_like_question(text: str) -> bool:
@@ -264,9 +281,8 @@ def looks_like_question(text: str) -> bool:
     return (stripped.endswith("?") or stripped.startswith(QUESTION_STARTS)
             or bool(QUESTION_PARTICLE.search(plain(stripped))))
 
-
 def asks_for_ideas(text: str) -> bool:
-    return bool(WANTS_IDEAS.search(plain(text)))
+    return bool(WANTS_IDEAS.search(ascii_fold(text)))
 
 
 def under_path(path: str, prefix: str) -> bool:
@@ -544,6 +560,7 @@ class Assistant:
         self._next_force: tuple[str, str] | None = None  # asked for while a stale pass was stopping
         self._chatting = 0        # conversations in flight: they have the model, the watch waits
         self._claims: set[str] = set()
+        self._focus: str | None = None   # the note the writer last asked about: its items lead the card
         self._run_id = 0          # bumped to abandon an analysis whose answer is stale
         self._cancelled: set[int] = set()
         self._tasks: set[asyncio.Task] = set()
@@ -726,10 +743,24 @@ class Assistant:
             at = next((i for i, e in enumerate(self.queue)
                        if asked and e["type"] == "question" and e.get("path") == event.get("path")
                        and e.get("node_id") == asked), None)
-            if at is None:
-                self.queue.append(event)
-            else:
+            if at is not None:
                 self.queue[at] = event
+            elif event.get("path") and event.get("path") == self._focus:
+                # the note you just asked about comes first, after its own earlier items
+                lead = next((i for i, e in enumerate(self.queue) if e.get("path") != self._focus), len(self.queue))
+                self.queue.insert(lead, event)
+            else:
+                self.queue.append(event)
+            self._publish_hud()
+
+    def focus_card(self, rel: str) -> None:
+        """You asked about this note: its waiting items move to the front of
+        the card (seen: Ctrl+Enter on one note, the card kept showing another
+        note's question with "+19")."""
+        self._focus = rel
+        mine = [e for e in self.queue if e.get("path") == rel]
+        if mine and self.queue[0].get("path") != rel:
+            self.queue = mine + [e for e in self.queue if e.get("path") != rel]
             self._publish_hud()
 
     def _drop_from_queue(self, predicate) -> None:
@@ -867,6 +898,10 @@ class Assistant:
             return {"status": "started"}
         if not force and self._chatting:
             return {"status": "busy"}
+        if force:
+            self.focus_card(rel)
+        if ladder.is_brief(content):
+            return {"status": "brief"}
         if not content.strip():
             return {"status": "skipped"}
 
@@ -1491,7 +1526,9 @@ class Assistant:
     def written(self, rel: str) -> list[str]:
         return list(self.notes.load(rel).get("assistant_text") or [])
 
-    def resolve(self, rel: str, node_id: str, by: str = "user") -> dict:
+    def resolve(self, rel: str, node_id: str, by: str = "user", value: str = "") -> dict:
+        """value: what the decision now says — the write-up the writer
+        approved. Without one, the last thing they said in the thread."""
         node = self.notes.find_node(rel, node_id)
         if node is None or node["type"] != "question":
             raise ApiError(404, "Soru bulunamadı.")
@@ -1502,8 +1539,11 @@ class Assistant:
         if node.get("kind") in ladder.DECISIONS:
             # the writer answered the question that asked for this decision;
             # the answer is its value, so the next questions build on it
+            # the approved write-up is the decision; the last chat line could
+            # be "ilkini yapalım" or about something else altogether (measured:
+            # a users answer under the parts question became "parts = we two")
             answers = [n.get("text", "") for n in self.notes.thread(rel, node_id) if n["type"] == "chat-user"]
-            value = " ".join(answers[-1].split())[:160] if answers else ""
+            value = " ".join((value or (answers[-1] if answers else "")).split())[:160]
             self.set_decisions(rel, {node["kind"]: True}, by="cevap", question=node_id,
                                values={node["kind"]: value} if value else None)
         question_event = self.history.find_by_node(rel, node_id, "question")
@@ -1521,7 +1561,8 @@ class Assistant:
             raise ApiError(404, "Öneri bulunamadı.")
 
         if action == "dismiss":
-            self.queue.clear()
+            # closes this note's items; other notes' questions still wait their turn
+            self.queue = [e for e in self.queue if e.get("path") != event.get("path")]
         elif action == "next":
             # passed over, not settled: it waits at the back of the line
             passed = [e for e in self.queue if e["id"] == event_id]
@@ -1556,7 +1597,7 @@ class Assistant:
                 self.broker.publish("append_note", event)
                 if event.get("question_id"):
                     try:
-                        self.resolve(event["path"], event["question_id"], by="chat")
+                        self.resolve(event["path"], event["question_id"], by="chat", value=event.get("text", ""))
                     except ApiError:
                         pass
         elif action in ("approve", "reject"):
@@ -1750,14 +1791,14 @@ class Assistant:
                 return
 
             result = llm_client.parse_chat_reply(raw)
-            if result["type"] == "understood" and UNDECIDED_NOTE.search(plain(result["note"])):
+            if result["type"] == "understood" and UNDECIDED_NOTE.search(ascii_fold(result["note"])):
                 # it filed the writer's not knowing: ask once more, for options
                 try:
                     if not wants_ideas:
                         result = llm_client.parse_chat_reply(await reply(True))
                 except Exception:
                     pass
-                if result["type"] == "understood" and UNDECIDED_NOTE.search(plain(result["note"])):
+                if result["type"] == "understood" and UNDECIDED_NOTE.search(ascii_fold(result["note"])):
                     result = {"type": "ideas", "text": ""}
             if result["type"] == "ideas":
                 # options offered: nothing for the note until one is chosen

@@ -71,6 +71,7 @@ export class MasterPromptDialog {
       <footer class="mp-foot"></footer>
     </section>`);
     document.body.append(this.overlay, this.el);
+    document.body.classList.add("mp-open");        // toasts then sit below the sheet, not over its footer
     this._releaseFocus = trapFocus(this.el);
     requestAnimationFrame(() => { this.overlay.classList.add("in"); this.el.classList.add("in"); });
     this.el.addEventListener("click", (e) => this._click(e));
@@ -104,6 +105,7 @@ export class MasterPromptDialog {
     clearInterval(this._clock);
     const el = this.el, overlay = this.overlay;
     this.el = null;
+    document.body.classList.remove("mp-open");
     this._releaseFocus?.();
     el.classList.remove("in");
     overlay.classList.remove("in");
@@ -293,7 +295,9 @@ export class MasterPromptDialog {
     } else if (act === "save") {
       const dir = this.path.includes("/") ? this.path.slice(0, this.path.lastIndexOf("/")) : "";
       try {
-        const { path } = await api.post("/api/notes/create", { dir, name: `${this.name} — master prompt`, content: text });
+        // marked as the assistant's output, so it is never asked about as a new idea
+        const content = text.startsWith("---") ? text : `---\ntur: master-prompt\n---\n\n${text}`;
+        const { path } = await api.post("/api/notes/create", { dir, name: `${this.name} — master prompt`, content });
         toast(`“${path.split("/").pop()}” olarak kaydedildi.`, "success");
         this.close();
         this.h.openNote?.(path);

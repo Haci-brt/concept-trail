@@ -93,3 +93,19 @@ def test_close_still_clears_the_card(assistant):
     next_(assistant)
     assistant.hud_action(assistant.hud()["event"]["id"], "dismiss")
     assert assistant.hud() == {"event": None, "remaining": 0}
+
+
+def test_the_note_you_ask_about_leads_and_closing_it_leaves_the_others(assistant):
+    """Seen: Ctrl+Enter on one note, the card kept showing another note's
+    question; "Kapat" then wiped every note's waiting items."""
+    other = asked(assistant)
+    mine = assistant.vault.create_note("", "kahve", "# Kahve\n\nSipariş ekranı.")
+    assistant.focus_card(mine)
+    content = assistant.vault.read_note(mine)["content"]
+    assistant._apply_result(mine, content, None, {"type": "questions",
+                                                  "questions": [{"text": "Siparişi kim alacak?"}]}, [])
+    assert assistant.hud()["event"]["path"] == mine
+    assistant.hud_action(assistant.hud()["event"]["id"], "dismiss")
+    assert assistant.queue and {e["path"] for e in assistant.queue} == {other}
+    assistant.focus_card(other)
+    assert assistant.hud()["event"]["path"] == other

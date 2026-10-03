@@ -104,3 +104,19 @@ class Page:
 
     def ghost(self):
         return self.page.evaluate("document.querySelector('.md-mirror .ghost')?.textContent ?? null")
+
+
+# Turkish that went into the interface and is not in web/locales/en.json yet.
+# The English-interface tests add these to the dictionary the page loads, so
+# they test the app and not the day somebody last filled the dictionary; once
+# an entry is in the file, delete it here.
+# strings a change adds before its translations are in the files; empty when they all are
+PENDING_EN: dict[str, str] = {}
+
+
+def merge_pending_en(page) -> None:
+    """Serve en.json with PENDING_EN added; the file's own entries win."""
+    def serve(route):
+        route.fulfill(json={**PENDING_EN, **route.fetch().json()})
+
+    page.route("**/static/locales/en.json", serve)

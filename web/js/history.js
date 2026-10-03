@@ -60,6 +60,16 @@ export class HistoryPanel {
 
   setItems(items) { this.items = items; this.render(); }
 
+  /** Puts the cursor in the answer box of the first waiting question, in the
+   *  order the list shows them; false when none is waiting here. */
+  focusNextAnswer() {
+    const box = this.listEl.querySelector(".h-item.open .h-answer textarea");
+    if (!box) return false;
+    box.scrollIntoView({ block: "nearest" });
+    box.focus();
+    return true;
+  }
+
   /** What waits for you in the panel's scope (this note, or every note). */
   waitingItems() { return this._mine().filter(waiting); }
 

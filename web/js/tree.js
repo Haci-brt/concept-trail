@@ -441,7 +441,7 @@ export class IdeaTree {
           <div class="tn-diff full"><del>${esc(n.original)}</del><ins>${esc(n.replacement)}</ins></div>
           ${n.reason ? `<div class="tn-reason">${esc(n.reason)}</div>` : ""}
           <div class="tn-foot"><span class="chip ${chip[0]}">${chip[1]}</span>
-            ${n.status === "pending" ? `<button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}Onayla</button><button class="btn btn-sm" data-act="reject">Reddet</button>` : ""}
+            ${n.status === "pending" ? `<button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}Nota ekle</button><button class="btn btn-sm" data-act="reject">Vazgeç</button>` : ""}
           </div>`;
       }
       case "thread": {
@@ -461,7 +461,7 @@ export class IdeaTree {
           ${n.why ? `<div class="tn-reason">Notta dayandığı: ${esc(n.why)}</div>` : ""}
           <div class="tn-body full">${esc(n.text)}</div>
           <div class="tn-foot"><span class="chip ${state[0]}">${state[1]}</span>
-            ${n.status === "pending" ? `<button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}Ekle</button><button class="btn btn-sm" data-act="reject">Vazgeç</button>` : ""}
+            ${n.status === "pending" ? `<button class="btn btn-sm btn-accent" data-act="approve">${icon("check", 13)}Nota ekle</button><button class="btn btn-sm" data-act="reject">Vazgeç</button>` : ""}
           </div>`;
       }
       case "ghost":

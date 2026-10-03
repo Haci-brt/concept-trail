@@ -140,3 +140,23 @@ async def test_choosing_an_offered_option_is_the_decision(assistant, monkeypatch
     done = await chat(assistant, rel, question, "ilkini yapalım")
     assert done["understood"] is True and "API sözleşmesi" in done["proposal"]["text"]
     assert any("API sözleşmesi" in m["content"] for m in seen["history"] if m["role"] == "assistant")
+
+
+@pytest.mark.parametrize("message", ["I don't know, any ideas?", "Not sure, what would you suggest?",
+                                     "Keine Ahnung, schlag was vor", "No lo sé, ¿alguna idea?",
+                                     "Je ne sais pas, une idée ?"])
+def test_the_other_ui_languages_ask_for_ideas_too(message):
+    assert asks_for_ideas(message)
+
+
+@pytest.mark.parametrize("message", ["The family will use it", "Wir nutzen es zu zweit",
+                                     "Las ideas del cliente se guardan aquí", "Sur le bureau"])
+def test_an_answer_in_another_language_is_no_call_for_ideas(message):
+    assert not asks_for_ideas(message)
+
+
+def test_a_write_up_of_not_knowing_is_caught_in_any_language():
+    from server.assistant import UNDECIDED_NOTE, ascii_fold
+    assert UNDECIDED_NOTE.search(ascii_fold("The user doesn't know how the tools will talk."))
+    assert UNDECIDED_NOTE.search(ascii_fold("L'utilisateur ne sait pas encore."))
+    assert not UNDECIDED_NOTE.search(ascii_fold("The app is not online; data stays on the phone."))

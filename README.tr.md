@@ -152,6 +152,7 @@ docs/         tanıtım, baştan sona bir örnekle (TANITIM.md, INTRODUCTION.md)
 install.ps1   Windows'ta tek komutla kurulum; install.sh macOS / Linux için
 uninstall.ps1 kaldırma (Windows); uninstall.sh macOS / Linux için
 CHANGELOG.md  sürümler ve değişiklikler; sürümün tek kaynağı server/settings.py (VERSION)
+RESEARCH_EVALUATION.md  araştırma kalitesinin ölçümleri
 tests/        pytest; tests/e2e gerçek tarayıcıda uçtan uca testler
 testkit/      test ortamı (python -m testkit): sahte model ve örnek notlar
 .github/      CI: kurulum betikleri ve testler Ubuntu, macOS ve Windows'ta

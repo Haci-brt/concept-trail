@@ -12,7 +12,11 @@ Depo klasöründe:
 python -m testkit
 ```
 
-Tarayıcıda örnek notlarla dolu ayrı bir Concept Trail açılır. Cevapları **sahte bir model** verir: API anahtarı, ücret ve internet gerekmez (araştırma hariç). Sahte model akıllı değildir ama her zaman aynı biçimde cevap verir; bu yüzden her ekran ve her düğme denenebilir.
+Tarayıcıda örnek notlarla dolu ayrı bir Concept Trail açılır. Cevapları **sahte bir model** verir: API anahtarı, ücret ve internet gerekmez (araştırma hariç). Sahte model akıllı değildir ama her zaman aynı biçimde cevap verir; bu yüzden her ekran ve her düğme denenebilir. Neler yapabildiği:
+
+- **Seçenek sunma ve seçme.** Sohbette "bilmiyorum" ya da "fikrin var mı" yazınca iki seçenek sunar (Ortak bir klasör / Bir görev listesi). Ardından kısa bir seçim ("ilkini yapalım", "ikincisi", "önerdiğin olsun", "tamam o olsun") seçileni karar olarak nota önerir: `Karar: Bir görev listesi — …`. Uzun bir cümle seçim sayılmaz, normal cevap gibi okunur; seçenek sunulmadıysa "tamam" da bir şey seçmez.
+- **Kendi önerisi ve araştırma teklifi.** Her notun metni için bir kez, o turun bakış açısıyla (mimar, ürün, güvenlik, geliştirici) notun kendi sözlerine dayanan bir öneri ve araştırılacak bir konu sunar. Aynı metin yeniden incelenirse yeni bir şey çıkmaz; notu değiştirirsen yeniden gelir. Tarayıcı testlerinde bu kapalıdır, panelde yalnız sorulanlar görünür.
+- **Uzak sağlayıcı.** `--uzak` ile bağlanan uzak kopya istekleri `"model": "sahte-uzak-model"` adıyla gönderir; hangi isteğin nereye gittiğini `<adres>/calls` listesinde görürsün (yerel olan `sahte-model`).
 
 | Komut | Ne yapar |
 |---|---|
@@ -22,6 +26,8 @@ Tarayıcıda örnek notlarla dolu ayrı bir Concept Trail açılır. Cevapları 
 | `python -m testkit --gercek-model` | Sahte model yerine kendi model ayarlarınla açar; notlar yine ayrı kalır |
 | `python -m testkit --sifirla` | Örnek notları ve test ayarlarını baştan kurar |
 | `python -m testkit --sunucu` | Hiç pencere açmaz; yazdığı adresi kendin açarsın |
+| `python -m testkit --uzak` | Sahte modeli aynı zamanda **uzak** bir sağlayıcı gibi bağlar (önce o, yedekte yerel): `gizli: true` notun ona gitmediğini dene |
+| `python -m testkit --yalniz-uzak` | Sahte modeli yalnız uzak sağlayıcı olarak bağlar: gizli notun hiç modeli olmaz, asistan sessiz kalır |
 | `python -m testkit --gecikme 1` | Sahte modelin cevabını 1 saniye geciktirir (bekleme animasyonlarını görmek için) |
 
 Her şey kod klasörünün yanındaki `.sandbox/` içinde durur: notlar `.sandbox/kasa`, ayarlar `.sandbox/ayar`. Git bu klasörü görmez. Durdurmak için komut penceresinde **Ctrl+C**.
@@ -58,6 +64,7 @@ Tarayıcı testleri için bir kez `python -m playwright install chromium` gereki
 - fikir ağacı: 100+ yıldız, akan animasyon, kenardan uzaklaşınca yıldızların savrulmaması
 - yedi tema ve her birinin gökyüzü
 - İngilizce arayüzde Türkçe kalmış arayüz metni olmaması (not adları ve model metni hariç)
+- sohbette "bilmiyorum" → seçenekler → "ilkini yapalım" → karar önerisi
 - master prompt: 19 bölüm ve modelin verdiği kararlar
 - `tur: fikir` notunda karar merdiveni yerine merak soruları
 - hız: uzun notta tuş başına süre, büyük ağaçta fizik adımı
@@ -121,8 +128,10 @@ Test ortamında sırayla dene. Her maddede **ne yapacağın → ne görmen gerek
 - [ ] Üstteki dünya düğmesi → English → arayüz İngilizce; not adları ve notların içeriği değişmez.
 - [ ] Asistan dilini ayrı seç (ör. Deutsch) → yeni sorular o dilde (sahte modelde soru metinleri şablondur; gerçek dil kalitesi için `--gercek-model`).
 
-**Gizlilik** (`--gercek-model` ve uzak bir sağlayıcıyla)
-- [ ] Maaş planı notunda Ctrl+Enter → uzak modele gitmez; yalnız yerel model varsa o kullanılır, yoksa sessiz kalır.
+**Gizlilik** (`python -m testkit --uzak` ya da `--yalniz-uzak`)
+- [ ] `--uzak`: Maaş planı notunda Ctrl+Enter → soru gelir ve `<adres>/calls` listesinde isteğin modeli `sahte-model` (yerel); Harcama takibinde aynısı `sahte-uzak-model` ile görünür.
+- [ ] `--yalniz-uzak`: Maaş planı notunda Ctrl+Enter → hiçbir istek gitmez, asistan sessiz kalır; Harcama takibi normal çalışır.
+- [ ] Gerçek bir uzak sağlayıcıyla denemek için `--gercek-model`.
 
 **Hız** (Uzun not)
 - [ ] Notun ortasında hızlı yaz → takılma yok.

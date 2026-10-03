@@ -2,6 +2,8 @@
 their skies, and the interface in another language."""
 import pytest
 
+from harness import merge_pending_en
+
 # the running tree, caught as it draws its first frame
 HOOK = """async () => {
   const m = await import('/static/js/tree.js');
@@ -66,6 +68,7 @@ def test_each_theme_gives_the_tree_its_own_sky(page, theme, mood):
 
 def test_the_interface_speaks_english_with_nothing_left_in_turkish(page, app):
     app.api.put("/api/preferences", json={"ui_language": "en"})
+    merge_pending_en(page.page)             # words of the newest changes that en.json does not have yet
     try:
         page.page.reload()
         page.page.wait_for_selector(".sidebar .name", state="attached")

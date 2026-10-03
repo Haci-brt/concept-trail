@@ -21,7 +21,7 @@ def test_the_wizard_leads_from_nothing_to_a_connected_model(fresh, fake_model):
     sheet = p.locator(".su-sheet")
     sheet.wait_for(timeout=15000)
     assert "Asistanı bir modele bağla" in sheet.inner_text()
-    assert sheet.locator(".su-card").count() == 3
+    assert sheet.locator(".su-card").count() == 4
 
     sheet.locator('[data-act="later"]').click()                    # put aside ...
     p.wait_for_selector(".su-sheet", state="detached")

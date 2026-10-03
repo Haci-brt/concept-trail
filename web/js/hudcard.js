@@ -134,8 +134,8 @@ export class HudCard {
         </div>
       </div>
       <div class="hud-actions">
-        <button class="btn btn-accent btn-sm" data-act="approve">${icon("check", 14)}Onayla</button>
-        <button class="btn btn-sm" data-act="reject">Reddet</button>
+        <button class="btn btn-accent btn-sm" data-act="approve">${icon("check", 14)}Nota ekle</button>
+        <button class="btn btn-sm" data-act="reject">Vazgeç</button>
         <span class="spacer"></span>
         ${this.hud.remaining ? '<button class="btn btn-sm btn-ghost" data-act="next">Sonraki</button>' : ""}
       </div>

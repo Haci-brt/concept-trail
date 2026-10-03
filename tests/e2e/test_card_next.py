@@ -21,8 +21,11 @@ def clear_card(app) -> None:
     deadline = time.monotonic() + 20
     while app.api.get("/api/state").json()["status"]["busy"] and time.monotonic() < deadline:
         time.sleep(0.2)
-    event = app.api.get("/api/state").json()["hud"]["event"]
-    if event:
+    # "Kapat" closes one note's items at a time
+    for _ in range(50):
+        event = app.api.get("/api/state").json()["hud"]["event"]
+        if not event:
+            break
         app.api.post("/api/assistant/hud", json={"event_id": event["id"], "action": "dismiss"})
 
 

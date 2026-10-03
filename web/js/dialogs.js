@@ -156,6 +156,9 @@ const SHORTCUTS = [
   ["Bağlantı", "Ctrl K"],
   ["Girinti", "Tab · Shift Tab"],
   ["Kenar çubuğu / panel", "Ctrl \\ · Ctrl Shift \\"],
+  ["Liste, not ve panel arasında gez", "F6 · Shift F6"],
+  ["Sıradaki soruyu cevapla (komut)", "Ctrl P"],
+  ["Rotayı düzelt (komut)", "Ctrl P"],
 ];
 
 export function shortcutsDialog() {

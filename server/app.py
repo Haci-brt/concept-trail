@@ -153,6 +153,7 @@ class DecisionBody(BaseModel):
     path: str
     decision: str
     decided: bool = True
+    value: str = ""         # what was decided, in the writer's words (optional)
 
 
 class DirectionBody(BaseModel):
@@ -711,7 +712,8 @@ def create_app(settings: Settings) -> FastAPI:
         misread the note, and the ladder is the writer's to correct."""
         if body.decision not in ladder.DECISIONS:
             raise ApiError(400, "Bilinmeyen karar.")
-        return assistant.set_decisions(body.path, {body.decision: body.decided}, by="sen")
+        return assistant.set_decisions(body.path, {body.decision: body.decided}, by="sen",
+                                       values={body.decision: body.value.strip()[:160]} if body.value.strip() else None)
 
     @app.post("/api/assistant/analyze")
     async def analyze(body: AnalyzeBody):

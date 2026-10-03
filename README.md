@@ -2,7 +2,7 @@
 
 # Concept Trail
 
-**English** · [Türkçe](README.tr.md) · **[Introduction: what it solves, with a worked example](docs/INTRODUCTION.md)**
+**English** · [Türkçe](README.tr.md) · **[Introduction: what it solves, with a worked example](docs/INTRODUCTION.md)** · [Changelog](CHANGELOG.md)
 
 *A thinking workspace for software ideas: it asks the open questions before you build, researches who already built it, and never writes into your notes without your approval.*
 
@@ -108,9 +108,30 @@ irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.ps1 | 
 curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/install.sh | bash
 ```
 
-The command downloads the app (to `%LOCALAPPDATA%\Programs\ConceptTrail` on Windows, `~/.local/share/concept-trail` elsewhere), sets up its own Python environment, puts **a Concept Trail shortcut with the app icon on the desktop and in the Start menu**, and opens the app. It needs Python 3.10+; on Windows it offers to install it with winget if it is missing. Your notes live in **Documents\Concept Trail**. To update, run the same command again — the code is replaced, your notes and the environment are kept. To uninstall, delete the app folder and the shortcuts; your notes stay where they are.
+The command downloads the app (to `%LOCALAPPDATA%\Programs\ConceptTrail` on Windows, `~/.local/share/concept-trail` elsewhere), sets up its own Python environment, puts **a Concept Trail shortcut with the app icon on the desktop and in the Start menu**, and opens the app. It needs Python 3.10+; on Windows it offers to install it with winget if it is missing. Your notes live in **Documents\Concept Trail**. To update, run the same command again — the code is replaced, your notes and the environment are kept; if the app is open, the command asks you to close it first. You can also ask the app whether a newer version is out: Settings → Version → **Check for updates** (the app never does this by itself). What changed: [CHANGELOG.md](CHANGELOG.md). To remove it, see [Uninstall](#uninstall) below.
 
 > Tested on Windows, and on Linux end to end (a clean Debian: install, shortcuts, server, the desktop window on a virtual screen). Every push runs the installers on real Ubuntu, macOS and Windows machines (`.github/workflows/kurulum.yml`). On a Linux without the system libraries Qt's web view needs, the app opens in your browser instead of its own window. Web search works everywhere: with a Chromium-family browser if there is one, without a browser if not.
+
+### Uninstall
+**Windows** (paste into PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/Haci-brt/concept-trail/main/uninstall.ps1 | iex
+```
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Haci-brt/concept-trail/main/uninstall.sh | bash
+```
+
+The copy in the app folder does the same: `powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\ConceptTrail\uninstall.ps1"` or `bash ~/.local/share/concept-trail/uninstall.sh`.
+
+- It removes the app folder and the shortcuts the installer made (desktop, Start menu, the application menu on Linux). A shortcut that opens some other folder is left alone.
+- Close the app first: if it is running, the script stops without deleting anything and asks you to close it.
+- It asks before deleting the settings folder (the default answer is "no"): `%APPDATA%\ConceptTrail` on Windows, `~/.config/ConceptTrail` on macOS and Linux. Your model providers, **API keys** and preferences live there; keep it and a reinstall picks up where you left off.
+- **It never touches your notes.** Documents\Concept Trail stays where it is. If your notes are inside the app folder (`notes`, when you ran the app without `--vault`), deleting them needs a separate answer: type `sil` (Turkish for "delete"); anything else keeps them.
+- If you gave `CT_APP_DIR` at install time, give the same one here. Like the installer, it refuses to delete a folder that does not look like a Concept Trail install.
 
 ### By hand (for development)
 
@@ -141,6 +162,9 @@ assets/icon/  app icon: the concept-trail.png master; build_icons.py makes every
 scripts/      make_shortcut.py: desktop / Start menu shortcut
 docs/         the introduction, with a worked example (INTRODUCTION.md, TANITIM.md); testing (TEST.md)
 install.ps1   one-command install for Windows; install.sh for macOS / Linux
+uninstall.ps1 uninstall for Windows; uninstall.sh for macOS / Linux
+CHANGELOG.md  releases and changes; the version has one source, server/settings.py (VERSION)
+RESEARCH_EVALUATION.md  measurements of the research quality (in Turkish)
 tests/        pytest; tests/e2e runs the real app in a real browser
 testkit/      the test environment (python -m testkit): a stand-in model and sample notes
 .github/      CI: the installers and the tests on Ubuntu, macOS and Windows

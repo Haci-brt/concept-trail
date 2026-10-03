@@ -13,6 +13,8 @@ enough to start building, and the writer is told so.
 Nothing here talks to a model or the disk: it is the rulebook the assistant,
 the prompt and the panel all read from.
 """
+import re
+
 from server.vault import fold, plain, split_frontmatter
 
 # (level id, label, ((decision id, label, what deciding it means), ...))
@@ -189,6 +191,36 @@ def grounded(value: str, note: str) -> bool:
     return bool(claimed & _stems(note))
 
 
+# What a value has to be about to answer these decisions at all. Measured on
+# DeepSeek V4 Flash: a café note's "Süt azalınca uyarsın" was filed as the
+# working environment and "müşteri telefondan sipariş verecek" as the
+# platform, so the whole first rung counted as decided and never got asked.
+TOPIC_WORDS = {
+    "kullanici": ("kisi", "kullanic", "ben", "biz", "kendim", "yalniz", "ekip", "takim", "aile", "musteri",
+                  "calisan", "personel", "ogrenci", "herkes", "halk", "sirket", "kurum", "user", "team",
+                  "family", "customer", "staff", "only me", "myself", "everyone", "nutzer", "usuario",
+                  "utilisateur"),
+    "platform": ("web", "site", "tarayici", "masaust", "desktop", "mobil", "telefon", "android", "ios",
+                 "iphone", "tablet", "komut", "terminal", "cli", "kutuphane", "library", "servis", "service",
+                 "api", "bot", "eklenti", "extension", "browser", "windows", "linux", "mac", "konsol",
+                 "phone", "computer", "pc", "app store", "play store"),
+    "calisma": ("cevrimici", "cevrimdisi", "internet", "online", "offline", "cihaz", "yerel", "local",
+                "sunucu", "server", "bulut", "cloud", "senkron", "sync", "ag ", "network", "wifi",
+                "baglanti", "bilgisayar", "telefonda", "lokal"),
+}
+
+
+def fits(decision: str, value: str) -> bool:
+    """Does the value talk about what the decision asks? Only the decisions
+    with a closed vocabulary are checked; the rest are the model's to judge."""
+    words = TOPIC_WORDS.get(decision)
+    if not words:
+        return True
+    text = plain(value)
+    # at a word's start: "yapılacak" holds "api" and is no platform
+    return any(re.search(r"\b" + re.escape(word.strip()), text) for word in words)
+
+
 def note_mode(content: str) -> str:
     """'yazilim' unless the note says otherwise: this is a notebook for people
     designing software, so the ladder is the default and `tur: fikir` the
@@ -196,6 +228,16 @@ def note_mode(content: str) -> str:
     meta = split_frontmatter(content or "")[0]
     declared = _key(meta.get("tur") or meta.get("tip") or "")
     return "fikir" if declared in {_key(t) for t in IDEA_TYPES} else "yazilim"
+
+
+BRIEF_TYPES = {"master-prompt", "master prompt", "masterprompt"}
+
+
+def is_brief(content: str) -> bool:
+    """A master prompt saved as a note: the assistant's own output, not an
+    idea — asked about, it started the ladder over ("Bunu kim kullanacak?")."""
+    meta = split_frontmatter(content or "")[0]
+    return _key(meta.get("tur") or meta.get("tip") or "") in {_key(t) for t in BRIEF_TYPES}
 
 
 def state(decided: dict | None) -> dict:

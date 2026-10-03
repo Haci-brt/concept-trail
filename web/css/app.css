@@ -1090,3 +1090,91 @@ body {
 .research .r-rest summary { cursor: pointer; color: var(--text-faint); font-size: 11.5px; padding: 2px 0; }
 .research .r-rest[open] { display: flex; flex-direction: column; gap: 4px; }
 .research .btn { align-self: flex-start; }
+
+/* ---------- narrow windows: the panel over the note, its badge, the focus ring ---------- */
+/* too narrow for a third column: the panel opens over the note, from its toggle */
+.app.panel-overlay .rightpanel {
+  visibility: visible;
+  position: fixed;
+  z-index: 60;
+  top: 64px;
+  right: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  box-shadow: var(--shadow-pop);
+  overflow-y: auto;
+  animation: panel-over-in 0.18s var(--ease-out);
+}
+@keyframes panel-over-in { from { opacity: 0; transform: translateX(10px); } }
+
+/* what waits in the panel, on its toggle while the panel is out of sight */
+#togglePanel { position: relative; }
+#togglePanel.has-badge::after {
+  content: attr(data-badge);
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: 700 10px/16px var(--font-ui);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+#togglePanel.pulse { animation: badge-pulse 1.3s ease-out 3; }
+@keyframes badge-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 11px transparent; }
+}
+
+/* F6 goes round the note list, the writing area and the assistant panel */
+.f6-ring { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-lg); }
+#sidebar:focus, #rightpanel:focus, #treeView:focus, #welcome:focus { outline: none; }
+#sidebar.f6-ring:focus, #rightpanel.f6-ring:focus, #treeView.f6-ring:focus, #welcome.f6-ring:focus { outline: 2px solid var(--accent); }
+
+/* the editor's toolbar: nothing shrinks, what does not fit goes into "…" */
+.toolbar > * { flex: none; }
+.toolbar .grow { flex: 1 1 0; min-width: 0; }
+.toolbar .tb-more { color: var(--text-muted); }
+
+/* the assistant's answer box: the whole prompt stays readable, on the card's full width */
+.h-item .h-answer { padding-left: 11px; }
+.h-answer textarea { min-width: 0; padding-inline: 8px; text-overflow: ellipsis; }
+.h-answer textarea::placeholder { font-size: 12px; }
+
+/* a toast with something to press ("Geri al", "Paneli aç") takes clicks */
+.toast.actionable { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
+.toast.clickable { cursor: pointer; }
+.toast-action {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--accent-border, var(--border-strong));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-strong);
+  font: 650 12px var(--font-ui);
+  cursor: pointer;
+}
+.toast-action:hover { background: var(--accent-soft); }
+
+/* the assistant's bubbles: lists and bold as markup (util.miniMarkdown), not one pre-wrapped line */
+.msg.assistant.rich { white-space: normal; }
+.msg.rich p, .h-reply p { margin: 0; }
+.msg.rich p + p, .msg.rich p + ul, .msg.rich p + ol, .msg.rich ul + p, .msg.rich ol + p { margin-top: 6px; }
+.msg.rich ul, .msg.rich ol, .h-reply ul, .h-reply ol { margin: 4px 0 0; padding-left: 18px; }
+.msg.rich li + li, .h-reply li + li { margin-top: 2px; }
+.center { grid-template-columns: minmax(0, 1fr); }
+
+/* the status bar never widens the window: on a narrow one the reading time and the format name give way */
+.statusbar { min-width: 0; overflow: hidden; }
+.statusbar .item { white-space: nowrap; flex: none; }
+@media (max-width: 1000px) {
+  #stRead, #stRead + .sepv, #stRead + .sepv + .item { display: none; }
+}

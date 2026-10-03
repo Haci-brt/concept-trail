@@ -116,3 +116,32 @@
 .direction-item input { margin-top: 2px; accent-color: var(--accent); }
 .direction-said { color: var(--text-2) !important; font-size: 11.5px; }
 .direction-none, .direction-hint { color: var(--text-muted) !important; font-size: 11px; }
+
+/* a decision chip's popover: what is recorded, who recorded it, the one change that applies */
+.lg-pop {
+  position: fixed;
+  z-index: 950;
+  width: min(300px, calc(100vw - 16px));
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card-bg, var(--bg-surface));
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.lg-pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lg-pop-state { padding: 1px 8px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.lg-pop-state.y { background: color-mix(in srgb, var(--green, #4ade80) 16%, transparent); color: var(--green, #4ade80); }
+.lg-pop-hint { margin: 0; color: var(--text-muted); line-height: 1.45; }
+.lg-pop-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; }
+.lg-pop-facts dt { color: var(--text-faint); }
+.lg-pop-facts dd { margin: 0; overflow-wrap: anywhere; }
+.lg-pop-value { width: 100%; }
+.lg-pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* the correction dialog shakes a little when a click beside it would have lost the text */
+.direction-dialog.nudge { animation: dialog-nudge 0.3s ease; }
+@keyframes dialog-nudge { 25% { transform: translateX(calc(-50% - 5px)); } 75% { transform: translateX(calc(-50% + 5px)); } }

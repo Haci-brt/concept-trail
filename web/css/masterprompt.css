@@ -183,3 +183,7 @@
   .mp-sections span { opacity: 1; transform: none; }
   .mp-sheet { transition: opacity .15s ease; }
 }
+
+/* a toast over the open sheet sits below it, not on its footer */
+.mp-open .mp-sheet { top: calc(50% - 24px); height: min(calc(100vh - 104px), 920px); }
+.mp-open .toasts { bottom: 14px; }

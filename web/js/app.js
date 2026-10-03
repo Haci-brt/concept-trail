@@ -523,6 +523,8 @@ function setView(view) {
 function setPreview(mode) {
   state.preview = mode;
   shown.preview = true;       // asked for in so many words: the window's width does not overrule it
+  widthBucket = null;
+  fitColumnsToWindow();
   updateLayout();
   renderPreview(true);
   saveSession();
@@ -557,32 +559,127 @@ function setFocusMode(next) {
   activeTab()?.editor.focus();
 }
 
-// state.sidebar/panel are what the user chose; on small windows they are
-// auto-hidden until the window grows back past the breakpoint.
+// state.sidebar/panel/preview are what the user chose; on small windows they
+// give way in this order — the preview first (a laptop keeps its note list),
+// then the sidebar, then the assistant panel (which can still open over the
+// note) — and come back when the window grows past the breakpoint.
 const SIDEBAR_MIN_W = 900;
 const PANEL_MIN_W = 1180;
-const PREVIEW_SIDEBAR_MIN_W = 1500;
-const shown = { sidebar: true, panel: true };
+const PREVIEW_MIN_W = 1500;
+// `preview`: the writer asked for the preview in so many words, so the window's
+// width does not overrule it (until the width crosses a breakpoint).
+// `overlay`: the panel is open over the note because the window has no room for it.
+const shown = { sidebar: true, panel: true, preview: false, overlay: false };
 let widthBucket = null;
+let widthSteps = null;
+
+function previewMode() {
+  if (state.preview === "hidden") return "hidden";
+  return shown.preview || innerWidth >= PREVIEW_MIN_W ? state.preview : "hidden";
+}
+const panelVisible = () => (shown.panel || shown.overlay) && !focusMode;
 
 function setSidebar(on) { state.sidebar = shown.sidebar = on; renderColumns(); saveSession(); }
-function setPanel(on) { state.panel = shown.panel = on; renderColumns(); saveSession(); }
+function setPanel(on) {
+  if (innerWidth < PANEL_MIN_W) {
+    // no room beside the note: the panel opens over it and the choice is kept as it was
+    if (focusMode && on) setFocusMode(false);
+    shown.overlay = on;
+    renderColumns();
+    if (on) $("#history .h-answer textarea, #history .h-head")?.focus();
+    return;
+  }
+  state.panel = shown.panel = on;
+  shown.overlay = false;
+  renderColumns();
+  saveSession();
+}
 
 function fitColumnsToWindow() {
-  const needsTwoColumns = state.preview !== "hidden";
-  const bucket = `${innerWidth >= SIDEBAR_MIN_W}${innerWidth >= PANEL_MIN_W}${innerWidth >= PREVIEW_SIDEBAR_MIN_W}${needsTwoColumns}`;
+  const wide = innerWidth >= PREVIEW_MIN_W;
+  const steps = `${innerWidth >= SIDEBAR_MIN_W}${innerWidth >= PANEL_MIN_W}${wide}`;
+  if (steps !== widthSteps) { widthSteps = steps; shown.preview = false; shown.overlay = false; }
+  const twoColumns = previewMode() !== "hidden";
+  const bucket = `${steps}${twoColumns}`;
   if (bucket === widthBucket) return;
+  const hadPreview = widthBucket !== null && widthBucket.endsWith("true");
   widthBucket = bucket;
-  shown.sidebar = state.sidebar && innerWidth >= (needsTwoColumns ? PREVIEW_SIDEBAR_MIN_W : SIDEBAR_MIN_W);
+  // an explicit preview on a window too narrow for three columns still takes
+  // the note list's place
+  shown.sidebar = state.sidebar && innerWidth >= (twoColumns && !wide ? PREVIEW_MIN_W : SIDEBAR_MIN_W);
   shown.panel = state.panel && innerWidth >= PANEL_MIN_W;
   renderColumns();
+  if (twoColumns && !hadPreview) renderPreview(true);
 }
 
 function renderColumns() {
   $("#app").classList.toggle("no-sidebar", !shown.sidebar);
   $("#app").classList.toggle("no-panel", !shown.panel);
+  $("#app").classList.toggle("panel-overlay", shown.overlay && !shown.panel);
+  $("#panes").classList.toggle("editor-only", previewMode() === "hidden");
+  document.querySelectorAll("[data-pv]").forEach((b) => b.classList.toggle("on", b.dataset.pv === previewMode()));
   $("#toggleSidebar").classList.toggle("active", shown.sidebar);
-  $("#togglePanel").classList.toggle("active", shown.panel);
+  $("#togglePanel").classList.toggle("active", panelVisible());
+  renderPanelBadge();
+}
+
+// What waits in the assistant panel, on the panel's own toggle while the panel
+// is out of sight: a count, a pulse when more arrive, and — once — a toast.
+let badgeCount = 0;
+let badgeToasted = false;
+function renderPanelBadge() {
+  const toggle = $("#togglePanel");
+  if (!toggle || !historyPanel) return;
+  const count = historyPanel.waitingItems().filter((e) => e.type === "question").length;
+  const hidden = !panelVisible();
+  toggle.classList.toggle("has-badge", hidden && count > 0);
+  toggle.dataset.badge = hidden && count > 0 ? String(count) : "";
+  const base = "Öneri paneli (Ctrl+Shift+\\)";
+  toggle.title = hidden && count > 0 ? `${base} · ${count} soru bekliyor` : base;
+  toggle.setAttribute("aria-label", toggle.title);
+  if (hidden && count > badgeCount) {
+    toggle.classList.remove("pulse");
+    void toggle.offsetWidth;            // restart the pulse
+    toggle.classList.add("pulse");
+    if (!badgeToasted) {
+      badgeToasted = true;
+      // a pass brings its questions one after another: say how many once they have settled
+      setTimeout(() => {
+        const waiting = historyPanel.waitingItems().filter((e) => e.type === "question").length;
+        if (!panelVisible() && waiting) toast(`Asistanın ${waiting} sorusu var — paneli aç`, "info", 7000, { onClick: () => setPanel(true) });
+      }, 1500);
+    }
+  }
+  if (!hidden || !count) toggle.classList.remove("pulse");
+  badgeCount = hidden ? count : 0;
+}
+
+// The editor's toolbar on a narrow editor: what does not fit moves into a "…"
+// menu from the end of the formatting tools, so the assistant's buttons on
+// the right (Rotayı düzelt among them) are never cut off.
+function fitToolbar() {
+  const bar = $("#toolbar");
+  const more = $("#toolbarMore");
+  if (!bar || !more) return;
+  const items = [...bar.querySelectorAll("[data-tool], .sep")];
+  items.forEach((el) => { el.hidden = false; });
+  more.hidden = true;
+  const over = () => bar.scrollWidth > bar.clientWidth + 1;
+  if (!bar.clientWidth || !over()) return;
+  more.hidden = false;
+  for (let i = items.length - 1; i >= 0 && over(); i--) items[i].hidden = true;
+  const last = items.filter((el) => !el.hidden).at(-1);
+  if (last?.classList.contains("sep")) last.hidden = true;
+}
+
+function openToolbarMore(button, tools) {
+  const tab = activeTab();
+  const r = button.getBoundingClientRect();
+  const left = [...$("#toolbar").querySelectorAll("[data-tool]")].filter((el) => el.hidden);
+  openMenu(r.left, r.bottom + 4, left.map((el) => {
+    const [name, title, run] = tools[Number(el.dataset.tool)];
+    return { label: title, icon: name.startsWith("H") ? null : name, action: () => { if (tab) { run(tab.editor); tab.editor.focus(); } } };
+  }));
 }
 
 window.addEventListener("resize", fitColumnsToWindow);
@@ -1071,6 +1168,7 @@ async function analyze(tab) {
     }
     else if (status === "busy") toast("Asistan şu an başka bir notla meşgul.");
     else if (status === "skipped") toast("İncelenecek metin yok.");
+    else if (status === "brief") toast("Bu not bir master prompt; asistan onu yeni bir fikir gibi incelemez.");
   } catch (err) {
     toast(err.message, "error");
   }
@@ -1150,7 +1248,7 @@ async function applyApprovedEdit(event) {
     const { ok } = await api.post("/api/assistant/claim", { event_id: event.id });
     if (!ok) return;
     if (tab.editor.applyEdit(event.original, event.replacement)) {
-      toast("Düzenleme uygulandı. Geri almak için Ctrl+Z.", "success");
+      toast(`Düzenleme “${tab.name}” notuna uygulandı. Geri almak için Ctrl+Z.`, "success");
       saveTab(tab);
     } else {
       toast("Önerilen metin notta artık bulunamadı.", "error");
@@ -1177,7 +1275,7 @@ async function appendAssistantText(event) {
     if (!ok) return;
     tab.editor.appendText(event.text);
     saveTab(tab);
-    toast("Asistan sonucu notuna ekledi.", "success");
+    toast(`Asistan sonucu “${tab.name}” notuna ekledi.`, "success");
     return;
   }
   // give pages that have the note open a moment to claim it first
@@ -1258,7 +1356,7 @@ let previewSeq = 0;
 async function renderPreview(resetScroll = false) {
   const tab = activeTab();
   const body = $("#preview");
-  if (!tab || state.preview === "hidden") return;
+  if (!tab || previewMode() === "hidden") return;
   if (state.preview === "source") {
     body.className = "preview-body source";
     body.textContent = tab.editor.value;
@@ -1278,7 +1376,7 @@ async function renderPreview(resetScroll = false) {
 }
 
 function syncPreviewScroll(tab) {
-  if (state.preview !== "preview") return;
+  if (previewMode() !== "preview") return;
   const body = $("#preview");
   if (tab.editor.scrollFraction() > 0.99) { body.scrollTop = body.scrollHeight; return; }
   const line = tab.editor.topLine();
@@ -1396,6 +1494,51 @@ window.__requestClose = async () => {
   desktopCall("closeNow");
 };
 
+// ---------------------------------------------------------------- focus regions
+// F6 / Shift+F6 go round the note list, the writing area and the assistant
+// panel; the region that has focus wears a ring so it is clear where the keys go.
+let ringed = null;
+function ringRegion(el) {
+  ringed?.classList.remove("f6-ring");
+  ringed = el;
+  el?.classList.add("f6-ring");
+}
+document.addEventListener("focusin", (e) => { if (ringed && !ringed.contains(e.target)) ringRegion(null); });
+document.addEventListener("mousedown", (e) => {
+  if (ringed && !ringed.contains(e.target)) ringRegion(null);
+  // the panel opened over the note closes when the writer goes back to it
+  if (shown.overlay && !shown.panel && !e.target.closest("#rightpanel, #togglePanel, .menu, .dialog, .toasts")) setPanel(false);
+}, true);
+
+function cycleRegion(step) {
+  const tab = activeTab();
+  const stage = !tab ? $("#welcome") : state.view === "tree" ? $("#treeView") : $(".editor-card");
+  const regions = [
+    { el: $("#sidebar"), ok: shown.sidebar && !focusMode, go: () => $("#sidebar") },
+    { el: stage, ok: true, go: () => (tab && state.view !== "tree" ? (tab.editor.focus(), null) : stage) },
+    // a panel only hidden by a narrow window opens over the note; one the writer closed stays closed
+    { el: $("#rightpanel"), ok: !focusMode && (panelVisible() || innerWidth < PANEL_MIN_W), go: () => {
+      if (!panelVisible()) setPanel(true);
+      return $("#history .h-item.open textarea") || $("#rightpanel");
+    } },
+  ].filter((r) => r.ok);
+  const here = regions.findIndex((r) => r.el.contains(document.activeElement));
+  const next = here < 0 ? regions.find((r) => r.el === stage) : regions[(here + step + regions.length) % regions.length];
+  const target = next.go();
+  if (target) { target.tabIndex = target.matches("textarea, input, button") ? target.tabIndex : -1; target.focus({ preventScroll: true }); }
+  ringRegion(next.el);
+}
+
+/** The next waiting question's answer box, in the order the panel lists them. */
+function answerNext() {
+  if (!panelVisible()) setPanel(true);
+  if (!historyPanel.focusNextAnswer()) {
+    toast(historyPanel.allNotes ? "Bekleyen soru yok." : "Bu notta bekleyen soru yok.");
+    return;
+  }
+  ringRegion($("#rightpanel"));
+}
+
 // ---------------------------------------------------------------- commands & keys
 function commands() {
   const tab = activeTab();
@@ -1404,6 +1547,7 @@ function commands() {
     { label: "Yeni klasör", icon: "folderPlus", action: () => newFolder("") },
     { label: "Önceki sürümler", icon: "history", action: () => showVersions(tab) },
     { label: "Asistana şimdi sor", icon: "sparkles", hint: "Ctrl Enter", action: () => tab && analyze(tab, true) },
+    { label: "Sıradaki soruyu cevapla", icon: "questionSquare", action: () => answerNext() },
     { label: "Açık notu araştır", icon: "search", action: () => research.open() },
     { label: "Master prompt hazırla", icon: "wand", hint: "Ctrl Shift M", action: () => openMaster() },
     { label: state.liveWatch ? "Canlı izlemeyi kapat" : "Canlı izlemeyi aç", icon: state.liveWatch ? "eyeOff" : "eye", action: () => setLiveWatch(!state.liveWatch) },
@@ -1411,13 +1555,13 @@ function commands() {
     { label: state.view === "tree" ? "Editöre dön" : "Fikir ağacını göster", icon: state.view === "tree" ? "file" : "tree", hint: "Ctrl G", action: () => setView(state.view === "tree" ? "editor" : "tree") },
     ...(canLaunch() ? [{ label: "Modeli başlat", icon: "play", action: () => launchModel() }] : []),
     { label: "Model durumunu yenile", icon: "refresh", action: () => api.post("/api/model/check").catch(() => {}) },
-    { label: state.preview === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(state.preview === "hidden" ? "preview" : "hidden") },
+    { label: previewMode() === "hidden" ? "Önizlemeyi aç" : "Önizlemeyi kapat", icon: "columns", action: () => setPreview(previewMode() === "hidden" ? "preview" : "hidden") },
     { label: focusMode ? "Odak kipinden çık" : "Odak kipine geç", icon: "fit", hint: "Ctrl Shift F", action: () => setFocusMode(!focusMode) },
     { label: "Tema seç…", icon: "sparkles", action: () => openThemePicker($("#themeBtn"), theme, setTheme) },
     { label: "Dil seç…", icon: "globe", action: () => openLanguagePicker($("#langBtn")) },
     ...THEMES.filter((t) => t.id !== theme).map((t) => ({ label: `Tema: ${t.label}`, icon: t.dark ? "moon" : "sun", action: () => setTheme(t.id) })),
     { label: "Kenar çubuğunu aç/kapat", icon: "panelLeft", hint: "Ctrl \\", action: () => setSidebar(!shown.sidebar) },
-    { label: "Öneri panelini aç/kapat", icon: "panelRight", hint: "Ctrl Shift \\", action: () => setPanel(!shown.panel) },
+    { label: "Öneri panelini aç/kapat", icon: "panelRight", hint: "Ctrl Shift \\", action: () => setPanel(!panelVisible()) },
     { label: "Modeller ve anahtarlar", icon: "settings", hint: "Ctrl ,", action: () => settings.open() },
     { label: "Modeli bağla (kurulum sihirbazı)", icon: "sparkles", action: () => setupWizard.open() },
     { label: "Klavye kısayolları", icon: "keyboard", action: shortcutsDialog },
@@ -1425,6 +1569,7 @@ function commands() {
   if (tab) {
     list.push(
       { label: state.pinned.includes(tab.path) ? "Sabitlemeyi kaldır" : "Notu sabitle", icon: "star", action: () => togglePin(tab.path) },
+      { label: "Rotayı düzelt", icon: "wand", action: () => direction.open(tab.path) },
       { label: "Notu yeniden adlandır", icon: "rename", action: () => renameItem(tab.path, tab.name, "note") },
       { label: "Nota etiket ekle", icon: "tag", action: addTag },
       { label: "Notu çöpe taşı", icon: "trash", action: () => trashItem(tab.path, tab.name, "note") },
@@ -1443,6 +1588,7 @@ document.addEventListener("keydown", (e) => {
     if (mod(e) && e.key === "," && !settings.isOpen) { e.preventDefault(); settings.open(); }
     return;
   }
+  if (e.key === "F6" && !mod(e) && !e.altKey) { e.preventDefault(); cycleRegion(e.shiftKey ? -1 : 1); return; }
   if (tree.visible && !mod(e) && tree.handleKey(e)) { e.preventDefault(); return; }
   if (e.key === "Escape" && chat.isOpen && !palette.isOpen) { chat.close(); return; }
   if (!mod(e)) return;
@@ -1456,7 +1602,7 @@ document.addEventListener("keydown", (e) => {
   else if (key === "g") { e.preventDefault(); if (tab) setView(state.view === "tree" ? "editor" : "tree"); }
   else if (key === "f" && e.shiftKey) { e.preventDefault(); setFocusMode(!focusMode); }
   else if (key === "m" && e.shiftKey) { e.preventDefault(); openMaster(); }
-  else if (e.code === "Backslash") { e.preventDefault(); if (e.shiftKey) setPanel(!shown.panel); else setSidebar(!shown.sidebar); }
+  else if (e.code === "Backslash") { e.preventDefault(); if (e.shiftKey) setPanel(!panelVisible()); else setSidebar(!shown.sidebar); }
   else if (e.key === "Tab") { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); }
   else if (e.key === "Enter" && tab && !e.target.closest("textarea, input")) { e.preventDefault(); analyze(tab, true); }
 });

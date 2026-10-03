@@ -2,7 +2,7 @@
 // stored on the question node, so reopening it continues the conversation.
 import { api, streamPost } from "./api.js";
 import { icon } from "./icons.js";
-import { esc, html, toast } from "./util.js";
+import { esc, html, miniMarkdown, toast } from "./util.js";
 
 // What each research tool is doing, in the user's words. web_search says out
 // loud that a browser opens, so the window appearing is never a surprise.
@@ -22,6 +22,9 @@ const TOOL_LABELS = {
 };
 
 const toolLabel = (name) => TOOL_LABELS[name] || name;
+/** An assistant bubble's text: "- " / "1. " lists and **bold** as markup, every
+ *  other character escaped — the model's words never become raw HTML. */
+const setRich = (el, text) => { el.classList.add("rich"); el.innerHTML = miniMarkdown(text); };
 const threadKey = (path, nodeId) => `${path}\n${nodeId}`;
 
 export class ChatDrawer {
@@ -192,7 +195,8 @@ export class ChatDrawer {
   _bubble(role, text) {
     this.log.querySelector(".chat-empty")?.remove();
     const el = html(`<div class="msg ${role}"></div>`);
-    el.textContent = text;
+    if (role === "assistant") setRich(el, text);
+    else el.textContent = text;
     this.log.append(el);
     this._scroll();
     return el;
@@ -291,14 +295,14 @@ export class ChatDrawer {
         } else if (u.type === "progress") {
           if (u.phase === "writing" && u.text) {
             pending.className = "msg assistant";
-            pending.textContent = u.text;
+            setRich(pending, u.text);
           } else {
             pending.querySelector(".body")?.replaceChildren(document.createTextNode(u.text || ""));
           }
           this._scroll();
         } else if (u.type === "done") {
           pending.className = "msg assistant";
-          pending.textContent = u.node.text;
+          setRich(pending, u.node.text);
           if (u.proposal) this._proposal(u.proposal);
           else if (!u.understood) pending.classList.add(u.answered ? "answered" : "followup");
           this._scroll();

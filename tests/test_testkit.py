@@ -103,6 +103,10 @@ def test_an_option_chosen_after_ideas_becomes_the_decision(provider):
     advised = chat("bilmiyorum", options, "önerdiğin olsun")     # the one it said it would choose
     assert advised["type"] == "understood" and advised["note"].startswith("Karar: Bir görev listesi — ")
     assert chat("bilmiyorum", options, "tamam") == chat("bilmiyorum", options, "ikincisi olsun") == advised
+    assert chat("bilmiyorum", options, "tamam o olsun") == advised
+    assert chat("bilmiyorum", options, "ilk seçenek olsun")["note"].startswith("Karar: Ortak bir klasör")
+    long = "Bence ikisi de olmaz, çünkü ben her şeyi telefonda tutmak istiyorum ve kimseyle paylaşmayacağım"
+    assert chat("bilmiyorum", options, long)["note"] == long             # a full answer is not a pick
     assert chat("bilmiyorum", options, "hmm")["type"] == "question"             # no pick: asked again
     assert chat("Bilmem", "Kim kullanacak?", "tamam")["type"] == "question"      # nothing was offered
 

@@ -13,7 +13,7 @@ import time
 import requests
 
 from server import tools as tools_module
-from server.ladder import DECISION_IDS, grounded, normalize_decision
+from server.ladder import DECISION_IDS, fits, grounded, normalize_decision
 from server.vault import fold, plain
 
 # Who serves a request is decided by server/providers.py; this module only
@@ -165,7 +165,10 @@ CHAT_SYSTEM_PROMPT = (
     "kısa madde işaretleri>\n\n"
     "B) Cevap gerçekten anlaşılmıyorsa — boş, konu dışı, çelişkili ya da soruyu cevapsız "
     "bırakıyorsa — tam olarak şunu yaz:\n"
-    "SORU: <aynı konuyu netleştiren, tek cümlelik yeni soru>\n\n"
+    "SORU: <aynı konuyu netleştiren, tek cümlelik yeni soru>\n"
+    "Cevap sorduğun şeyi değil başka bir konuyu anlatıyorsa (ör. 'ana parçalar neler?' sorusuna "
+    "kimin kullanacağını anlatıyorsa) bu da anlaşılmayan bir cevaptır: SORU ile sorunun neyi "
+    "sorduğunu kısa bir örnekle yeniden sor.\n\n"
     "C) Kullanıcı bilmediğini ya da emin olmadığını söylüyorsa, veya senden fikir, öneri, "
     "yardım istiyorsa tam olarak şunu yaz:\n"
     "FİKİR: <nota uyan 2-3 somut seçenek, her biri '- ' ile başlayan ayrı bir satırda ve kısa "
@@ -1025,7 +1028,7 @@ def parse_ladder(raw: str, open_decisions=None, note: str | None = None) -> dict
             if len(value) > 5:
                 text = value if asks(value) else value.rstrip(" .") + "?"
                 questions.append({"text": text[0].upper() + text[1:], "kind": decision})
-        elif note is None or grounded(value, note):
+        elif (note is None or grounded(value, note)) and fits(decision, value):
             # the model wrote what the note says, and the note does say it
             known.append(decision)
             values[decision] = value[:160]
@@ -1746,7 +1749,8 @@ DIRECTION_PROMPT = (
 )
 
 
-def parse_direction_plan(raw: str, decisions, questions, proposals, category: str = "") -> dict | None:
+def parse_direction_plan(raw: str, decisions, questions, proposals, category: str = "",
+                         correction: str = "") -> dict | None:
     """Keep only ids that really exist, each placed by what it is. None when
     the reply is no plan at all.
 
@@ -1780,8 +1784,17 @@ def parse_direction_plan(raw: str, decisions, questions, proposals, category: st
             value = value.split(" = ", 1)[1].strip()
         if key not in DECISION_IDS and category in DECISION_IDS:
             key = category                  # a copied placeholder: the correction's own field
-        if key in DECISION_IDS and value:
-            updates[key] = value
+        if key not in DECISION_IDS or not value or not fits(key, value):
+            continue
+        # measured on DeepSeek V4 Flash: guncelle filled with the decisions as
+        # they already were, and with values the correction never said
+        # ("platform: stok takibi yapılacak" for "only stock tracking")
+        said = str(decisions.get(key, "")).split(" = ", 1)[-1]
+        if plain(said).strip(" .") == plain(value).strip(" ."):
+            continue
+        if correction and not grounded(value, correction):
+            continue
+        updates[key] = value
     # the questions the new course itself raises: without them a correction
     # that stales nothing changed nothing the writer could see, since the
     # ladder only lets a pass ask about the rung's own decisions
@@ -1817,7 +1830,7 @@ def plan_direction(note_text: str, category: str, text: str, decisions: dict, qu
         [{"role": "system", "content": localized(DIRECTION_PROMPT)},
          {"role": "user", "content": "\n\n".join(parts)}],
         temperature=0.2, max_tokens=RESEARCH_MAX_TOKENS, provider=provider, on_usage=on_usage)
-    return parse_direction_plan(content, decisions, questions, proposals, category)
+    return parse_direction_plan(content, decisions, questions, proposals, category, correction=text)
 
 
 # ---------------------------------------------------------------- competitor analysis

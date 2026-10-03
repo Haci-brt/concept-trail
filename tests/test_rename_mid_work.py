@@ -86,3 +86,13 @@ def test_a_new_note_under_the_old_name_starts_clean(assistant):
     assert again == rel
     assert assistant.notes.load(again)["nodes"] == []
     assert len(assistant.notes.load(new)["nodes"]) == 1
+
+
+@pytest.mark.anyio
+async def test_a_saved_master_prompt_is_not_asked_about_as_a_new_idea(assistant):
+    from server import ladder
+    brief = "---\ntur: master-prompt\n---\n\n## 0. Amaç\n\nKafe için sipariş ekranı.\n"
+    rel = assistant.vault.create_note("", "Kafe — master prompt", brief)
+    assert ladder.is_brief(brief) and not ladder.is_brief(NOTE)
+    assert await assistant.analyze(rel, brief, force=True) == {"status": "brief"}
+    assert not assistant.notes.load(rel)["nodes"]

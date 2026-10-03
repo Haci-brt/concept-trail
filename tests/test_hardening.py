@@ -398,6 +398,30 @@ def test_a_good_provider_timeout_is_kept(tmp_path):
     assert registry.get("yerel").timeout == 120.0
 
 
+# ---------------------------------------------------------------- privacy
+def test_a_note_that_cannot_be_read_counts_as_private(tmp_path, monkeypatch):
+    from server.assistant import Assistant
+
+    class Silent:
+        def publish(self, *args):
+            pass
+
+    vault = Vault(tmp_path / "vault")
+    (vault.root / "açık.md").write_text("# Herkese açık\n", encoding="utf-8")
+    (vault.root / "gizli.md").write_text("---\ngizli: true\n---\n# Maaş\n", encoding="utf-8")
+    assistant = Assistant(vault, NoteStore(vault), HistoryStore(vault), Silent(),
+                          ProviderRegistry(path=tmp_path / "providers.json"))
+    assert assistant.is_private("açık.md") is False
+    assert assistant.is_private("gizli.md") is True
+
+    def unreadable(rel):
+        raise OSError("disk okunamadı")
+
+    monkeypatch.setattr(vault, "read_note", unreadable)
+    assert assistant.is_private("açık.md") is True        # unknown: kept off remote providers
+    assert assistant.is_private("yok.md") is True
+
+
 # ---------------------------------------------------------------- the preview
 def test_raw_html_in_a_note_is_shown_not_run():
     out = render('<script>alert(1)</script>\n\nMetin <img src=x onerror="alert(1)"> ve '
